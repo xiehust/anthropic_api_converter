@@ -6,6 +6,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
 import { Construct } from 'constructs';
 import { EnvironmentConfig } from '../config/config';
 import * as path from 'path';
@@ -38,8 +39,16 @@ export class ECSStack extends cdk.Stack {
     this.cluster = new ecs.Cluster(this, 'Cluster', {
       clusterName: `anthropic-proxy-${config.environmentName}`,
       vpc,
-      containerInsights: config.enableContainerInsights,
     });
+
+    // Enable Container Insights at CloudFormation level (avoiding deprecated L2 property)
+    if (config.enableContainerInsights) {
+      const cfnCluster = this.cluster.node.defaultChild as ecs.CfnCluster;
+      cfnCluster.clusterSettings = [{
+        name: 'containerInsights',
+        value: 'enabled',
+      }];
+    }
 
     // Create ALB
     this.alb = new elbv2.ApplicationLoadBalancer(this, 'ALB', {
@@ -50,7 +59,7 @@ export class ECSStack extends cdk.Stack {
       vpcSubnets: {
         subnetType: ec2.SubnetType.PUBLIC,
       },
-      deletionProtection: config.environmentName === 'prod',
+      deletionProtection: false,
     });
 
     // Create Target Group
@@ -65,7 +74,7 @@ export class ECSStack extends cdk.Stack {
         interval: cdk.Duration.seconds(config.healthCheckInterval),
         timeout: cdk.Duration.seconds(config.healthCheckTimeout),
         healthyThresholdCount: config.healthCheckHealthyThreshold,
-        unhealthyThresholdCount: config.healthCheckUnhealthyThreshold,
+        unhealthyThresholdCount: 5, // Increase from 3 to 5 to be more tolerant
         healthyHttpCodes: '200',
       },
       deregistrationDelay: cdk.Duration.seconds(30),
@@ -144,6 +153,11 @@ export class ECSStack extends cdk.Stack {
     masterApiKeySecret.grantRead(taskRole);
 
     // Create Task Definition
+    // Map platform string to ECS CpuArchitecture
+    const cpuArchitecture = config.platform === 'arm64'
+      ? ecs.CpuArchitecture.ARM64
+      : ecs.CpuArchitecture.X86_64;
+
     this.taskDefinition = new ecs.FargateTaskDefinition(this, 'TaskDefinition', {
       family: `anthropic-proxy-${config.environmentName}`,
       cpu: config.ecsCpu,
@@ -151,16 +165,23 @@ export class ECSStack extends cdk.Stack {
       executionRole: taskExecutionRole,
       taskRole: taskRole,
       runtimePlatform: {
-        cpuArchitecture: ecs.CpuArchitecture.X86_64,
+        cpuArchitecture,
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
       },
     });
 
     // Add Container
+    // Map platform string to Docker Platform
+    const dockerPlatform = config.platform === 'arm64'
+      ? Platform.LINUX_ARM64
+      : Platform.LINUX_AMD64;
+
     const container = this.taskDefinition.addContainer('app', {
       containerName: 'anthropic-proxy',
       image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../'), {
         file: 'Dockerfile',
+        exclude: ['cdk/cdk.out', 'cdk/node_modules', 'cdk/.git'],
+        platform: dockerPlatform,
       }),
       logging: ecs.LogDriver.awsLogs({
         streamPrefix: 'anthropic-proxy',
@@ -172,14 +193,14 @@ export class ECSStack extends cdk.Stack {
         AWS_DEFAULT_REGION: config.region,
 
         // Environment
-        ENVIRONMENT: config.environmentName,
+        ENVIRONMENT: config.environmentName === 'prod' ? 'production' : 'development',
         LOG_LEVEL: config.environmentName === 'prod' ? 'INFO' : 'DEBUG',
 
         // DynamoDB Tables
-        DYNAMODB_TABLE_API_KEYS: apiKeysTable.tableName,
-        DYNAMODB_TABLE_USAGE: usageTable.tableName,
-        DYNAMODB_TABLE_CACHE: cacheTable.tableName,
-        DYNAMODB_TABLE_MODEL_MAPPING: modelMappingTable.tableName,
+        DYNAMODB_API_KEYS_TABLE: apiKeysTable.tableName,
+        DYNAMODB_USAGE_TABLE: usageTable.tableName,
+        DYNAMODB_CACHE_TABLE: cacheTable.tableName,
+        DYNAMODB_MODEL_MAPPING_TABLE: modelMappingTable.tableName,
 
         // Authentication
         API_KEY_HEADER: 'x-api-key',
@@ -215,12 +236,12 @@ export class ECSStack extends cdk.Stack {
       healthCheck: {
         command: [
           'CMD-SHELL',
-          `python -c "import urllib.request; urllib.request.urlopen('http://localhost:${config.containerPort}/health')" || exit 1`,
+          `curl -f http://localhost:${config.containerPort}/health || exit 1`,
         ],
         interval: cdk.Duration.seconds(30),
-        timeout: cdk.Duration.seconds(10),
+        timeout: cdk.Duration.seconds(5),
         retries: 3,
-        startPeriod: cdk.Duration.seconds(60),
+        startPeriod: cdk.Duration.seconds(90),
       },
     });
 
@@ -235,7 +256,7 @@ export class ECSStack extends cdk.Stack {
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
       },
-      healthCheckGracePeriod: cdk.Duration.seconds(60),
+      healthCheckGracePeriod: cdk.Duration.seconds(180),
       circuitBreaker: {
         rollback: true,
       },

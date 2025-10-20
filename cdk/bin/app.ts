@@ -4,17 +4,15 @@ import * as cdk from 'aws-cdk-lib';
 import { DynamoDBStack } from '../lib/dynamodb-stack';
 import { NetworkStack } from '../lib/network-stack';
 import { ECSStack } from '../lib/ecs-stack';
-import { CloudFrontStack } from '../lib/cloudfront-stack';
 import { getConfig } from '../config/config';
 
 const app = new cdk.App();
 
-// Get environment from context
-const environmentName = app.node.tryGetContext('environment') || 'dev';
+// Get environment from context or environment variable
+const contextEnv = app.node.tryGetContext('environment');
+const envVar = process.env.CDK_ENVIRONMENT;
+const environmentName = contextEnv || envVar || 'dev';
 const config = getConfig(environmentName);
-
-console.log(`Deploying to environment: ${environmentName}`);
-console.log(`Region: ${config.region}`);
 
 // Stack naming
 const stackPrefix = `AnthropicProxy-${config.environmentName}`;
@@ -62,24 +60,6 @@ const ecsStack = new ECSStack(app, `${stackPrefix}-ECS`, {
 // Add dependencies
 ecsStack.addDependency(dynamoDBStack);
 ecsStack.addDependency(networkStack);
-
-// Deploy CloudFront Stack (if enabled)
-if (config.enableCloudFront) {
-  const cloudFrontStack = new CloudFrontStack(app, `${stackPrefix}-CloudFront`, {
-    env: {
-      account: env.account,
-      region: 'us-east-1', // CloudFront resources must be in us-east-1
-    },
-    config,
-    alb: ecsStack.alb,
-    stackName: `${stackPrefix}-CloudFront`,
-    description: `CloudFront distribution for Anthropic proxy ${config.environmentName}`,
-    tags: config.tags,
-    crossRegionReferences: true,
-  });
-
-  cloudFrontStack.addDependency(ecsStack);
-}
 
 // Add tags to all stacks
 Object.entries(config.tags).forEach(([key, value]) => {

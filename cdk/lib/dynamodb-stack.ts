@@ -33,9 +33,10 @@ export class DynamoDBStack extends cdk.Stack {
       readCapacity: config.dynamodbReadCapacity,
       writeCapacity: config.dynamodbWriteCapacity,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
-      pointInTimeRecovery: config.environmentName === 'prod',
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: config.environmentName === 'prod',
+      },
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
-      tags: config.tags,
     });
 
     // GSI for user_id lookups
@@ -66,10 +67,11 @@ export class DynamoDBStack extends cdk.Stack {
       readCapacity: config.dynamodbReadCapacity,
       writeCapacity: config.dynamodbWriteCapacity,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
-      pointInTimeRecovery: config.environmentName === 'prod',
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: config.environmentName === 'prod',
+      },
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
       timeToLiveAttribute: 'ttl',
-      tags: config.tags,
     });
 
     // GSI for request_id lookups
@@ -98,7 +100,6 @@ export class DynamoDBStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
       timeToLiveAttribute: 'ttl',
-      tags: config.tags,
     });
 
     // Model Mapping Table
@@ -116,7 +117,14 @@ export class DynamoDBStack extends cdk.Stack {
       writeCapacity: config.dynamodbWriteCapacity,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
-      tags: config.tags,
+    });
+
+    // Apply tags to all tables
+    Object.entries(config.tags).forEach(([key, value]) => {
+      cdk.Tags.of(this.apiKeysTable).add(key, value);
+      cdk.Tags.of(this.usageTable).add(key, value);
+      cdk.Tags.of(this.cacheTable).add(key, value);
+      cdk.Tags.of(this.modelMappingTable).add(key, value);
     });
 
     // Outputs

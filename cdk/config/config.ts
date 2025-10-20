@@ -10,6 +10,9 @@ export interface EnvironmentConfig {
   // Environment name
   environmentName: string;
 
+  // Platform architecture (set dynamically from CDK_PLATFORM env var)
+  platform: 'arm64' | 'amd64';
+
   // VPC Configuration
   vpcCidr: string;
   maxAzs: number;
@@ -29,12 +32,6 @@ export interface EnvironmentConfig {
   healthCheckTimeout: number;
   healthCheckHealthyThreshold: number;
   healthCheckUnhealthyThreshold: number;
-
-  // CloudFront Configuration
-  enableCloudFront: boolean;
-  cloudfrontPriceClass: string;
-  cloudfrontOriginTimeoutSeconds: number;
-  cloudfrontOriginKeepaliveTimeoutSeconds: number;
 
   // Application Configuration
   requireApiKey: boolean;
@@ -56,7 +53,10 @@ export interface EnvironmentConfig {
   tags: { [key: string]: string };
 }
 
-export const environments: { [key: string]: EnvironmentConfig } = {
+// Environment configurations without platform (platform is set at deployment time)
+type EnvironmentConfigWithoutPlatform = Omit<EnvironmentConfig, 'platform'>;
+
+export const environments: { [key: string]: EnvironmentConfigWithoutPlatform } = {
   dev: {
     region: process.env.AWS_REGION || 'us-west-2',
     environmentName: 'dev',
@@ -80,12 +80,6 @@ export const environments: { [key: string]: EnvironmentConfig } = {
     healthCheckTimeout: 10,
     healthCheckHealthyThreshold: 2,
     healthCheckUnhealthyThreshold: 3,
-
-    // CloudFront
-    enableCloudFront: true,
-    cloudfrontPriceClass: 'PriceClass_100',
-    cloudfrontOriginTimeoutSeconds: 60,
-    cloudfrontOriginKeepaliveTimeoutSeconds: 60,
 
     // Application
     requireApiKey: true,
@@ -133,12 +127,6 @@ export const environments: { [key: string]: EnvironmentConfig } = {
     healthCheckHealthyThreshold: 2,
     healthCheckUnhealthyThreshold: 3,
 
-    // CloudFront
-    enableCloudFront: true,
-    cloudfrontPriceClass: 'PriceClass_All',
-    cloudfrontOriginTimeoutSeconds: 60,
-    cloudfrontOriginKeepaliveTimeoutSeconds: 60,
-
     // Application
     requireApiKey: true,
     rateLimitEnabled: true,
@@ -169,5 +157,17 @@ export function getConfig(environmentName: string = 'dev'): EnvironmentConfig {
       `Unknown environment: ${environmentName}. Available: ${Object.keys(environments).join(', ')}`
     );
   }
-  return config;
+
+  // Get platform from environment variable (set by deploy script)
+  const platform = process.env.CDK_PLATFORM as 'arm64' | 'amd64';
+  if (!platform || !['arm64', 'amd64'].includes(platform)) {
+    throw new Error(
+      `Platform must be specified via CDK_PLATFORM environment variable. Valid values: arm64, amd64. Got: ${platform}`
+    );
+  }
+
+  return {
+    ...config,
+    platform,
+  };
 }

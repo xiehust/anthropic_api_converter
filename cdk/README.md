@@ -1,14 +1,12 @@
 # Anthropic-Bedrock API Proxy - CDK Infrastructure
 
-This directory contains AWS CDK infrastructure code for deploying the Anthropic-Bedrock API Proxy to AWS ECS Fargate with CloudFront distribution.
+This directory contains AWS CDK infrastructure code for deploying the Anthropic-Bedrock API Proxy to AWS ECS Fargate.
 
 ## Architecture
 
 ```
 Internet
     ↓
-CloudFront Distribution (Global CDN)
-    ↓ (Max timeout: 60s)
 Application Load Balancer (Regional)
     ↓
 ECS Fargate Service (Multi-AZ)
@@ -21,8 +19,7 @@ Container Tasks (Auto-scaling)
 
 ### Key Features
 
-- **CloudFront CDN**: Global edge caching with max timeout (60s), custom header forwarding
-- **Application Load Balancer**: Health checks, target group management
+- **Application Load Balancer**: HTTP endpoint with health checks and target group management
 - **ECS Fargate**: Serverless container orchestration with auto-scaling
 - **DynamoDB**: Four tables for API keys, usage tracking, caching, and model mapping
 - **VPC**: Multi-AZ deployment with public/private subnets
@@ -75,7 +72,6 @@ Container Tasks (Auto-scaling)
    - ECS, ECR (full)
    - EC2, VPC (full)
    - DynamoDB (full)
-   - CloudFront, WAF (full)
    - IAM (role creation)
    - Secrets Manager (create/read secrets)
    - CloudWatch Logs (create/write)
@@ -92,7 +88,7 @@ npm install
 ### 2. Deploy to Development
 
 ```bash
-./scripts/deploy.sh -e dev -r us-west-2
+./scripts/deploy.sh -e dev -r us-west-2 -p arm64
 ```
 
 This will deploy:
@@ -100,7 +96,6 @@ This will deploy:
 - VPC with NAT gateways
 - ECS Fargate cluster and service
 - Application Load Balancer
-- CloudFront distribution
 
 Deployment takes approximately **15-20 minutes**.
 
@@ -119,14 +114,14 @@ Save the generated API key securely - it won't be shown again.
 ### 4. Test the Deployment
 
 ```bash
-# Get the CloudFront URL from deployment output
-CLOUDFRONT_URL="https://d1234567890.cloudfront.net"
+# Get the ALB URL from deployment output
+ALB_URL="http://anthropic-proxy-dev-alb-123456789.us-west-2.elb.amazonaws.com"
 
 # Test health endpoint
-curl "${CLOUDFRONT_URL}/health"
+curl "${ALB_URL}/health"
 
 # Test with API key
-curl -X POST "${CLOUDFRONT_URL}/v1/messages" \
+curl -X POST "${ALB_URL}/v1/messages" \
   -H "x-api-key: sk-your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -137,6 +132,8 @@ curl -X POST "${CLOUDFRONT_URL}/v1/messages" \
     ]
   }'
 ```
+
+**Note:** For production, you should add HTTPS by configuring an SSL certificate on the ALB.
 
 ## Configuration
 
@@ -173,54 +170,14 @@ export const environments = {
 | `ecsMinCapacity` | 1 | 2 | Min auto-scaling tasks |
 | `ecsMaxCapacity` | 2 | 10 | Max auto-scaling tasks |
 | `maxAzs` | 2 | 3 | Availability zones |
-| `enableCloudFront` | true | true | Enable CloudFront |
 | `dynamodbBillingMode` | PAY_PER_REQUEST | PAY_PER_REQUEST | DynamoDB billing |
-
-## CloudFront Configuration
-
-### Timeout Settings
-
-CloudFront has a **maximum timeout of 60 seconds** for origin requests:
-- `readTimeout`: 60 seconds (maximum allowed)
-- `keepaliveTimeout`: 60 seconds (maximum allowed)
-
-For long-running streaming requests:
-1. Client must handle streaming responses
-2. Server sends data within 60-second intervals
-3. Connection remains open as long as data flows
-
-### Header Forwarding
-
-The following headers are forwarded to the origin:
-
-**Required for Anthropic API:**
-- `x-api-key` - API authentication
-- `anthropic-version` - API version
-- `anthropic-beta` - Beta features
-- `content-type` - Request content type
-- `accept` - Response content type
-
-**Standard Headers:**
-- `authorization` - Alternative auth header
-- `user-agent` - Client identification
-- `origin` - CORS origin
-- `referer` - Request referer
-
-All query strings and request methods are forwarded.
-
-### Cache Policy
-
-API requests are **not cached** to ensure fresh responses:
-- `defaultTtl`: 0 seconds
-- `minTtl`: 0 seconds
-- `maxTtl`: 1 second
 
 ## Deployment Options
 
 ### Deploy to Production
 
 ```bash
-./scripts/deploy.sh -e prod -r us-west-2
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64
 ```
 
 **Production differences:**
@@ -228,17 +185,13 @@ API requests are **not cached** to ensure fresh responses:
 - 3 availability zones
 - Container Insights enabled
 - 30-day log retention
-- WAF enabled with rate limiting
 - VPC endpoints for cost optimization
-- Deletion protection on resources
 
 ### Deploy to Specific Region
 
 ```bash
-./scripts/deploy.sh -e prod -r us-east-1
+./scripts/deploy.sh -e prod -r us-east-1 -p arm64
 ```
-
-**Note:** CloudFront stacks are always deployed to `us-east-1` (AWS requirement).
 
 ### Skip Build Step
 
@@ -338,28 +291,7 @@ Creates container orchestration:
 - **Scheme:** Internet-facing
 - **Health Check:** `/health` every 30s
 - **Deregistration Delay:** 30 seconds
-- **Deletion Protection:** Enabled in prod
-
-### 4. CloudFront Stack
-
-Creates global CDN:
-
-**Distribution:**
-- **Price Class:** `PriceClass_100` (dev), `PriceClass_All` (prod)
-- **HTTP Version:** HTTP/2 and HTTP/3
-- **Compression:** Enabled (gzip, brotli)
-- **Logging:** Enabled in prod
-
-**Origin Configuration:**
-- **Origin:** ALB (HTTP only)
-- **Timeout:** 60 seconds (maximum)
-- **Connection Attempts:** 3
-- **Connection Timeout:** 10 seconds
-
-**WAF (prod only):**
-- Rate limiting: 2000 req/5min per IP
-- AWS Managed Rules: Common Rule Set
-- AWS Managed Rules: Known Bad Inputs
+- **Deletion Protection:** Disabled
 
 ## IAM Roles and Permissions
 
@@ -423,12 +355,6 @@ View metrics in CloudWatch Console:
 - CPU, Memory, Network utilization
 - Task count, running tasks
 
-### CloudFront Metrics
-
-- Requests, Bytes downloaded
-- 4xx/5xx Error rates
-- Cache hit ratio (should be near 0% for API)
-
 ## Cost Optimization
 
 ### Development Environment
@@ -439,7 +365,6 @@ View metrics in CloudWatch Console:
 - ALB: 1 load balancer + LCU usage
 - NAT Gateway: 1 gateway + data transfer
 - DynamoDB: Pay-per-request (minimal)
-- CloudFront: First 1TB free, then $0.085/GB
 - CloudWatch: Logs and metrics
 
 ### Production Environment
@@ -451,16 +376,14 @@ View metrics in CloudWatch Console:
 - NAT Gateways: 3 (multi-AZ)
 - VPC Endpoints: ~$7 each
 - DynamoDB: Pay-per-request (scales with usage)
-- CloudFront: $0.085/GB (US/Europe)
-- WAF: $5/month + $1 per rule + $0.60 per million requests
 - Container Insights: ~$0.30 per GB ingested
 
 **Cost Optimization Tips:**
 1. Use VPC endpoints to avoid NAT gateway charges for AWS API calls
 2. Enable DynamoDB auto-scaling for predictable traffic
-3. Use CloudFront caching for static content (not API responses)
-4. Review CloudWatch log retention (7 days dev, 30 days prod)
-5. Use Fargate Spot for non-critical workloads (70% discount)
+3. Review CloudWatch log retention (7 days dev, 30 days prod)
+4. Use Fargate Spot for non-critical workloads (70% discount)
+5. Consider using ARM64 (Graviton2) for 20% cost savings
 
 ## Troubleshooting
 
@@ -512,35 +435,39 @@ ALB health checks fail if:
 - Security group blocking traffic
 - Container taking too long to start (increase grace period)
 
-### CloudFront 504 Errors
+### ALB 504 Errors
 
-CloudFront returns 504 if:
-- Origin takes > 60 seconds to respond
-- Origin is unhealthy
+ALB returns 504 if:
+- ECS tasks take too long to respond
+- Tasks are unhealthy
 - Network connectivity issues
 
 **Solutions:**
-- Check ALB target health
-- Review ECS task logs
-- Verify security groups allow traffic
-- For streaming: ensure data sent within 60s intervals
+- Check ECS task health and logs
+- Verify security groups allow traffic between ALB and ECS
+- Review container health check configuration
+- Increase ALB timeout if needed for long-running requests
 
 ## Advanced Configuration
 
 ### Custom Domain with HTTPS
 
-1. **Create ACM certificate in us-east-1:**
+1. **Create ACM certificate in your region:**
    ```bash
    aws acm request-certificate \
      --domain-name api.yourdomain.com \
      --validation-method DNS \
-     --region us-east-1
+     --region us-west-2
    ```
 
-2. **Update CloudFront stack:**
+2. **Add HTTPS listener to ALB:**
    ```typescript
-   certificate: acm.Certificate.fromCertificateArn(...),
-   domainNames: ['api.yourdomain.com'],
+   const httpsListener = alb.addListener('HttpsListener', {
+     port: 443,
+     protocol: ApplicationProtocol.HTTPS,
+     certificates: [certificate],
+     defaultTargetGroups: [targetGroup],
+   });
    ```
 
 3. **Create Route53 record:**
@@ -548,7 +475,7 @@ CloudFront returns 504 if:
    new route53.ARecord(this, 'AliasRecord', {
      zone: hostedZone,
      target: route53.RecordTarget.fromAlias(
-       new targets.CloudFrontTarget(distribution)
+       new targets.LoadBalancerTarget(alb)
      ),
    });
    ```

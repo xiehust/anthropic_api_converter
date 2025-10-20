@@ -13,6 +13,7 @@ NC='\033[0m' # No Color
 # Default values
 ENVIRONMENT="dev"
 REGION="${AWS_REGION:-us-west-2}"
+PLATFORM=""
 SKIP_BUILD=false
 DESTROY=false
 
@@ -26,19 +27,20 @@ Deploy Anthropic-Bedrock API Proxy to AWS using CDK
 OPTIONS:
     -e, --environment ENV    Environment to deploy (dev|prod) [default: dev]
     -r, --region REGION      AWS region [default: us-west-2]
+    -p, --platform PLATFORM  Platform architecture (arm64|amd64) [REQUIRED]
     -s, --skip-build         Skip npm install and build
     -d, --destroy            Destroy the stack instead of deploying
     -h, --help               Show this help message
 
 EXAMPLES:
-    # Deploy to dev environment
-    ./scripts/deploy.sh -e dev
+    # Deploy to dev environment with ARM64 (Graviton)
+    ./scripts/deploy.sh -e dev -p arm64
 
-    # Deploy to prod in us-east-1
-    ./scripts/deploy.sh -e prod -r us-east-1
+    # Deploy to prod with AMD64 in us-east-1
+    ./scripts/deploy.sh -e prod -r us-east-1 -p amd64
 
     # Destroy dev environment
-    ./scripts/deploy.sh -e dev -d
+    ./scripts/deploy.sh -e dev -p arm64 -d
 
 PREREQUISITES:
     - AWS CLI configured with appropriate credentials
@@ -61,6 +63,10 @@ while [[ $# -gt 0 ]]; do
             REGION="$2"
             shift 2
             ;;
+        -p|--platform)
+            PLATFORM="$2"
+            shift 2
+            ;;
         -s|--skip-build)
             SKIP_BUILD=true
             shift
@@ -79,6 +85,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Validate platform (required)
+if [[ -z "$PLATFORM" ]]; then
+    echo -e "${RED}Error: Platform is required. Use -p arm64 or -p amd64${NC}"
+    usage
+fi
+
+if [[ ! "$PLATFORM" =~ ^(arm64|amd64)$ ]]; then
+    echo -e "${RED}Error: Platform must be 'arm64' or 'amd64'${NC}"
+    exit 1
+fi
+
 # Validate environment
 if [[ ! "$ENVIRONMENT" =~ ^(dev|prod)$ ]]; then
     echo -e "${RED}Error: Environment must be 'dev' or 'prod'${NC}"
@@ -90,6 +107,7 @@ echo -e "${GREEN}Anthropic Proxy Deployment${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo -e "Environment: ${YELLOW}${ENVIRONMENT}${NC}"
 echo -e "Region: ${YELLOW}${REGION}${NC}"
+echo -e "Platform: ${YELLOW}${PLATFORM}${NC}"
 echo -e "Action: ${YELLOW}$([ "$DESTROY" = true ] && echo "DESTROY" || echo "DEPLOY")${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo
@@ -156,6 +174,13 @@ fi
 export AWS_REGION="$REGION"
 export CDK_DEFAULT_REGION="$REGION"
 export CDK_DEFAULT_ACCOUNT="$ACCOUNT_ID"
+export CDK_ENVIRONMENT="$ENVIRONMENT"
+export CDK_PLATFORM="$PLATFORM"
+
+# Clean cdk.out directory to prevent ENAMETOOLONG errors
+echo -e "${YELLOW}Cleaning previous CDK output...${NC}"
+rm -rf cdk.out
+echo -e "${GREEN}✓ Cleanup complete${NC}"
 
 # Perform action
 if [ "$DESTROY" = true ]; then

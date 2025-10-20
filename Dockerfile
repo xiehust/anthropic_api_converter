@@ -25,6 +25,7 @@ WORKDIR /app
 # Install runtime system dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -56,8 +57,8 @@ ENV PATH="/app/.venv/bin:$PATH" \
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
 # Run application directly from the virtual environment
 # Note: Using python -m uvicorn instead of uv run to avoid rebuild issues

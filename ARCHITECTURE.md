@@ -294,7 +294,7 @@ timestamp=2024-01-15 10:30:00 level=INFO logger=app.api.messages message="Reques
 | Threat | Mitigation |
 |--------|-----------|
 | API key theft | Key rotation, rate limiting, usage monitoring |
-| DDoS | Rate limiting, auto-scaling, CloudFront |
+| DDoS | Rate limiting, auto-scaling, ALB |
 | Injection attacks | Input validation, parameterized queries |
 | Credential exposure | Environment variables, secret managers |
 | Data leakage | API key masking, structured logging |

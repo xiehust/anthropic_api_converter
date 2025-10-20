@@ -2,9 +2,6 @@
   "name": "anthropic-proxy-cdk",
   "version": "1.0.0",
   "description": "CDK infrastructure for Anthropic-Bedrock API Proxy",
-  "bin": {
-    "cdk": "bin/app.js"
-  },
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
@@ -23,6 +20,7 @@
   },
   "dependencies": {
     "aws-cdk-lib": "^2.120.0",
-    "constructs": "^10.3.0"
+    "constructs": "^10.3.0",
+    "source-map-support": "^0.5.21"
   }
 }

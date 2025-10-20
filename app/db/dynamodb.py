@@ -83,7 +83,7 @@ class DynamoDBClient:
                 ],
                 AttributeDefinitions=[
                     {"AttributeName": "api_key", "AttributeType": "S"},
-                    {"AttributeName": "timestamp", "AttributeType": "N"},
+                    {"AttributeName": "timestamp", "AttributeType": "S"},  # Changed to S to match CDK
                     {"AttributeName": "request_id", "AttributeType": "S"},
                 ],
                 GlobalSecondaryIndexes=[
@@ -292,7 +292,8 @@ class UsageTracker:
             error_message: Error message if failed
             metadata: Optional metadata
         """
-        timestamp = int(time.time() * 1000)  # milliseconds
+        # Use string timestamp to match CDK table schema (STRING type)
+        timestamp = str(int(time.time() * 1000))  # milliseconds as string
 
         item = {
             "api_key": api_key,
@@ -329,8 +330,9 @@ class UsageTracker:
         if not end_time:
             end_time = datetime.now()
 
-        start_timestamp = int(start_time.timestamp() * 1000)
-        end_timestamp = int(end_time.timestamp() * 1000)
+        # Use string timestamps to match CDK table schema (STRING type)
+        start_timestamp = str(int(start_time.timestamp() * 1000))
+        end_timestamp = str(int(end_time.timestamp() * 1000))
 
         response = self.table.query(
             KeyConditionExpression="api_key = :api_key AND #ts BETWEEN :start AND :end",

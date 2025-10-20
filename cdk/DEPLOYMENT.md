@@ -21,23 +21,39 @@ npm install
 export AWS_REGION=us-west-2
 npx cdk bootstrap
 
-# 3. Deploy all stacks
-./scripts/deploy.sh -e dev -r us-west-2
+# 3. Deploy all stacks (ARM64 recommended for better price-performance)
+./scripts/deploy.sh -e dev -r us-west-2 -p arm64
 
 # 4. Create an API key
 ./scripts/create-api-key.sh -e dev -u admin@example.com -n "Dev Key"
 
 # 5. Test deployment
-curl https://YOUR_CLOUDFRONT_URL/health
+curl http://YOUR_ALB_URL/health
 ```
 
 **Time:** ~15-20 minutes for initial deployment
 
+## Platform Selection
+
+Choose your target architecture:
+
+- **`-p arm64`** (Recommended): AWS Graviton2 processors
+  - 20% cheaper than x86
+  - 40% better price-performance
+  - Best for most workloads
+
+- **`-p amd64`**: Traditional x86_64 architecture
+  - Use if you have specific x86 requirements
+  - Slightly higher cost
+
 ## Quick Deploy (Production)
 
 ```bash
-# Deploy to production with higher capacity
-./scripts/deploy.sh -e prod -r us-west-2
+# Deploy to production with higher capacity and ARM64
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64
+
+# Or deploy with AMD64 if needed
+./scripts/deploy.sh -e prod -r us-west-2 -p amd64
 ```
 
 **Differences from dev:**
@@ -78,7 +94,6 @@ CDK automatically handles dependencies, but stacks are deployed in this order:
 1. **DynamoDB Stack** - Creates database tables
 2. **Network Stack** - Creates VPC, subnets, security groups
 3. **ECS Stack** - Creates cluster, service, ALB, container tasks
-4. **CloudFront Stack** - Creates CDN distribution (optional)
 
 ## Configuration Quick Reference
 
@@ -102,7 +117,6 @@ Edit `config/config.ts` to customize:
   maxAzs: 2,                 // Availability zones
 
   // Features
-  enableCloudFront: true,    // CloudFront CDN
   enableMetrics: true,       // Prometheus metrics
   requireApiKey: true,       // API key auth
 }
@@ -115,7 +129,6 @@ The deployment script shows:
 ```
 Access URLs:
   ALB: http://anthropic-proxy-dev-alb-123456789.us-west-2.elb.amazonaws.com
-  CloudFront: https://d1234567890abc.cloudfront.net
 
 Master API Key Secret:
   Secret Name: anthropic-proxy-dev-master-api-key
@@ -132,7 +145,7 @@ Next Steps:
 ### 1. Health Check
 
 ```bash
-ENDPOINT="https://YOUR_CLOUDFRONT_URL"
+ENDPOINT="http://YOUR_ALB_URL"
 curl "${ENDPOINT}/health"
 ```
 
@@ -205,10 +218,11 @@ aws ecs describe-services \
 
 ### 504 Gateway Timeout
 
-CloudFront has a 60-second maximum timeout. For long-running requests:
+ALB may timeout for long-running requests. For long-running requests:
 - Use streaming responses
-- Ensure data is sent within 60-second intervals
-- Check if origin (ALB) is responding
+- Ensure data is sent within reasonable intervals
+- Check if ECS tasks are responding
+- Consider increasing ALB timeout if needed
 
 ## Cost Estimates
 
@@ -294,7 +308,7 @@ After deployment:
 
 2. **Configure custom domain:**
    - Create ACM certificate
-   - Update CloudFront distribution
+   - Add HTTPS listener to ALB
    - Add Route53 DNS record
 
 3. **Set up CI/CD:**

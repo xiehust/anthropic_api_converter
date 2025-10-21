@@ -4,6 +4,7 @@ Unit tests for format converters.
 Tests conversion between Anthropic and Bedrock formats.
 """
 import pytest
+from unittest.mock import patch
 
 from app.converters.anthropic_to_bedrock import AnthropicToBedrockConverter
 from app.converters.bedrock_to_anthropic import BedrockToAnthropicConverter
@@ -97,6 +98,101 @@ class TestAnthropicToBedrockConverter:
         assert "toolConfig" in bedrock_request
         assert "tools" in bedrock_request["toolConfig"]
         assert len(bedrock_request["toolConfig"]["tools"]) == 1
+
+    def test_anthropic_beta_features_enabled_for_claude(self):
+        """Test that anthropic_beta features are added for Claude models when enabled."""
+        request = MessageRequest(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=1024,
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Hello!",
+                }
+            ],
+        )
+
+        bedrock_request = self.converter.convert_request(request)
+
+        # Both features should be enabled by default
+        assert "additionalModelRequestFields" in bedrock_request
+        assert "anthropic_beta" in bedrock_request["additionalModelRequestFields"]
+        beta_features = bedrock_request["additionalModelRequestFields"]["anthropic_beta"]
+        assert "fine-grained-tool-streaming-2025-05-14" in beta_features
+        assert "interleaved-thinking-2025-05-14" in beta_features
+
+    @patch("app.converters.anthropic_to_bedrock.settings")
+    def test_anthropic_beta_features_disabled(self, mock_settings):
+        """Test that anthropic_beta features are not added when disabled."""
+        mock_settings.fine_grained_tool_streaming_enabled = False
+        mock_settings.interleaved_thinking_enabled = False
+        mock_settings.default_model_mapping = {
+            "claude-sonnet-4-5-20250929": "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+        }
+
+        request = MessageRequest(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=1024,
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Hello!",
+                }
+            ],
+        )
+
+        bedrock_request = self.converter.convert_request(request)
+
+        # anthropic_beta should not be present when both features are disabled
+        if "additionalModelRequestFields" in bedrock_request:
+            assert "anthropic_beta" not in bedrock_request["additionalModelRequestFields"]
+
+    @patch("app.converters.anthropic_to_bedrock.settings")
+    def test_anthropic_beta_only_fine_grained_tool_streaming(self, mock_settings):
+        """Test that only fine-grained tool streaming is added when enabled."""
+        mock_settings.fine_grained_tool_streaming_enabled = True
+        mock_settings.interleaved_thinking_enabled = False
+        mock_settings.default_model_mapping = {
+            "claude-sonnet-4-5-20250929": "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+        }
+
+        request = MessageRequest(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=1024,
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Hello!",
+                }
+            ],
+        )
+
+        bedrock_request = self.converter.convert_request(request)
+
+        assert "additionalModelRequestFields" in bedrock_request
+        assert "anthropic_beta" in bedrock_request["additionalModelRequestFields"]
+        beta_features = bedrock_request["additionalModelRequestFields"]["anthropic_beta"]
+        assert "fine-grained-tool-streaming-2025-05-14" in beta_features
+        assert "interleaved-thinking-2025-05-14" not in beta_features
+
+    def test_anthropic_beta_not_added_for_non_claude_models(self):
+        """Test that anthropic_beta features are not added for non-Claude models."""
+        request = MessageRequest(
+            model="meta.llama3-8b-instruct-v1:0",  # Non-Claude model
+            max_tokens=1024,
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Hello!",
+                }
+            ],
+        )
+
+        bedrock_request = self.converter.convert_request(request)
+
+        # anthropic_beta should not be present for non-Claude models
+        if "additionalModelRequestFields" in bedrock_request:
+            assert "anthropic_beta" not in bedrock_request["additionalModelRequestFields"]
 
 
 class TestBedrockToAnthropicConverter:

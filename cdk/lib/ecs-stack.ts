@@ -215,7 +215,9 @@ export class ECSStack extends cdk.Stack {
         ENABLE_TOOL_USE: 'True',
         ENABLE_EXTENDED_THINKING: 'True',
         ENABLE_DOCUMENT_SUPPORT: 'True',
-        PROMPT_CACHING_ENABLED: 'False',
+        PROMPT_CACHING_ENABLED: 'True',
+        FINE_GRAINED_TOOL_STREAMING_ENABLED: 'True',
+        INTERLEAVED_THINKING_ENABLED: 'True',
 
         // Metrics
         ENABLE_METRICS: config.enableMetrics.toString(),

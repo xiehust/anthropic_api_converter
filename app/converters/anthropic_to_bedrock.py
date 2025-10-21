@@ -95,6 +95,20 @@ class AnthropicToBedrockConverter:
             if thinking_config:
                 additional_fields.update(thinking_config)
 
+        # Add anthropic_beta features for Claude models
+        if self._is_claude_model():
+            anthropic_beta = []
+
+            if settings.fine_grained_tool_streaming_enabled:
+                anthropic_beta.append("fine-grained-tool-streaming-2025-05-14")
+
+            if settings.interleaved_thinking_enabled:
+                anthropic_beta.append("interleaved-thinking-2025-05-14")
+
+            if anthropic_beta:
+                additional_fields["anthropic_beta"] = anthropic_beta
+                print(f"[CONVERTER] Added anthropic_beta features: {anthropic_beta}")
+
         if additional_fields:
             bedrock_request["additionalModelRequestFields"] = additional_fields
 
@@ -127,6 +141,19 @@ class AnthropicToBedrockConverter:
                 self._logged_cache_skip = True
 
         return is_claude
+
+    def _is_claude_model(self) -> bool:
+        """
+        Check if the current model is a Claude model.
+
+        Returns:
+            True if the model is Claude/Anthropic, False otherwise
+        """
+        if not self._resolved_model_id:
+            return False
+
+        model_id_lower = self._resolved_model_id.lower()
+        return "anthropic" in model_id_lower or "claude" in model_id_lower
 
     def _convert_model_id(self, anthropic_model_id: str) -> str:
         """

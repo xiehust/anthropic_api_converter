@@ -96,9 +96,8 @@ class Settings(BaseSettings):
     cache_enabled: bool = Field(default=False, alias="CACHE_ENABLED")
     cache_ttl: int = Field(default=3600, alias="CACHE_TTL")  # seconds
     prompt_caching_enabled: bool = Field(
-        default=False, alias="PROMPT_CACHING_ENABLED"
+        default=True, alias="PROMPT_CACHING_ENABLED"
     )  # Bedrock prompt caching
-
     # Model Mapping
     default_model_mapping: Dict[str, str] = Field(
         default={
@@ -132,6 +131,12 @@ class Settings(BaseSettings):
     )
     enable_document_support: bool = Field(
         default=True, alias="ENABLE_DOCUMENT_SUPPORT"
+    )
+    fine_grained_tool_streaming_enabled: bool = Field(
+        default=True, alias="FINE_GRAINED_TOOL_STREAMING_ENABLED"
+    )
+    interleaved_thinking_enabled: bool = Field(
+        default=True, alias="INTERLEAVED_THINKING_ENABLED"
     )
 
     @field_validator("cors_origins", "cors_allow_methods", "cors_allow_headers", mode="before")

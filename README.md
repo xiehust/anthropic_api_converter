@@ -2,21 +2,6 @@
 
 A production-ready FastAPI service that converts AWS Bedrock model inference API to Anthropic-compatible API format, enabling seamless use of Bedrock models with the Anthropic Python SDK.
 
-## Table of Contents
-
-- [Features](#features)
-- [Architecture](#architecture)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [API Documentation](#api-documentation)
-- [Deployment](#deployment)
-- [Security](#security)
-- [Monitoring](#monitoring)
-- [Development](#development)
-- [Testing](#testing)
-- [Contributing](#contributing)
-- [License](#license)
-
 ## Features
 
 ### Core Functionality
@@ -43,12 +28,10 @@ A production-ready FastAPI service that converts AWS Bedrock model inference API
 - **Health Checks**: Kubernetes/ECS-ready health endpoints
 
 ### Supported Models
-- Claude 3.5 Sonnet (v1 & v2)
-- Claude 3 Opus
-- Claude 3 Sonnet
-- Claude 3 Haiku
-- Claude 2.1 / 2.0
-- Claude Instant 1.2
+- Claude 4.5/5 Sonnet
+- Claude 4.5 Haiku
+- Qwen3-coder-480b
+- Qwen3-235b-instruct
 - Any other Bedrock models supporting Converse API
 
 ## Architecture
@@ -185,7 +168,7 @@ API_KEY_HEADER=x-api-key
 #### Rate Limiting
 ```bash
 RATE_LIMIT_ENABLED=True
-RATE_LIMIT_REQUESTS=100  # requests per window
+RATE_LIMIT_REQUESTS=1000  # requests per window
 RATE_LIMIT_WINDOW=60     # window in seconds
 ```
 
@@ -204,103 +187,44 @@ PROMPT_CACHING_ENABLED=False
 #### POST /v1/messages
 
 Create a message (Anthropic-compatible).
-
 **Request Body**:
-```json
-{
-  "model": "claude-3-5-sonnet-20241022",
-  "max_tokens": 1024,
-  "messages": [
-    {
-      "role": "user",
-      "content": "Hello, Claude!"
-    }
-  ],
-  "stream": false
-}
+```bash
+curl http://localhost:8000/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: sk-xxx" \
+  -d '{
+    "model": "gqwen.qwen3-coder-480b-a35b-v1:00",
+    "max_tokens": 1024,
+    "messages": [
+      {"role": "user", "content": "Hello!"}
+    ]
+  }'
 ```
 
-**Response** (Non-streaming):
-```json
-{
-  "id": "msg_abc123",
-  "type": "message",
-  "role": "assistant",
-  "content": [
-    {
-      "type": "text",
-      "text": "Hello! How can I help you today?"
-    }
-  ],
-  "model": "claude-3-5-sonnet-20241022",
-  "stop_reason": "end_turn",
-  "usage": {
-    "input_tokens": 10,
-    "output_tokens": 20
-  }
-}
-```
-
-**Response** (Streaming):
-Server-Sent Events format:
-```
-event: message_start
-data: {"type":"message_start","message":{...}}
-
-event: content_block_start
-data: {"type":"content_block_start","index":0,...}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":0}
-
-event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},...}
-
-event: message_stop
-data: {"type":"message_stop"}
+```bash
+curl http://localhost:8000/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: sk-xxx" \
+  -d '{
+    "model": "claude-sonnet-4-5-20250929",
+    "max_tokens": 1024,
+    "stream":true,
+    "messages": [
+      {"role": "user", "content": "Write a sonnet about Summer"}
+    ]
+  }'
 ```
 
 #### GET /v1/models
 
 List available Bedrock models.
 
-**Response**:
-```json
-{
-  "object": "list",
-  "data": [
-    {
-      "id": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-      "name": "Claude 3.5 Sonnet",
-      "provider": "Anthropic",
-      "input_modalities": ["TEXT", "IMAGE"],
-      "output_modalities": ["TEXT"],
-      "streaming_supported": true
-    }
-  ]
-}
+**Request**:
+```bash
+curl http://localhost:8000/v1/models \
+  -H "x-api-key: sk-xxxx"
 ```
 
-#### GET /health
-
-Health check endpoint.
-
-**Response**:
-```json
-{
-  "status": "healthy",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "uptime_seconds": 3600,
-  "version": "1.0.0",
-  "services": {
-    "bedrock": {"status": "available"},
-    "dynamodb": {"status": "available"}
-  }
-}
-```
 
 ### Using with Anthropic SDK
 
@@ -315,7 +239,7 @@ client = Anthropic(
 
 # Use as normal
 message = client.messages.create(
-    model="claude-3-5-sonnet-20241022",
+    model="qwen.qwen3-coder-480b-a35b-v1:0",
     max_tokens=1024,
     messages=[
         {"role": "user", "content": "Hello, Claude!"}
@@ -329,7 +253,7 @@ print(message.content[0].text)
 
 ```python
 with client.messages.stream(
-    model="claude-3-5-sonnet-20241022",
+    model="qwen.qwen3-coder-480b-a35b-v1:0",
     max_tokens=1024,
     messages=[
         {"role": "user", "content": "Tell me a story"}
@@ -343,7 +267,7 @@ with client.messages.stream(
 
 ```python
 message = client.messages.create(
-    model="claude-3-5-sonnet-20241022",
+    model="qwen.qwen3-coder-480b-a35b-v1:0",
     max_tokens=1024,
     tools=[
         {
@@ -385,94 +309,40 @@ docker run -d \
   anthropic-bedrock-proxy:latest
 ```
 
-### AWS ECS Deployment
+### AWS ECS Deployment (Quick Start)
 
-1. **Create ECR repository**:
+#### More detail in [CDK Deployment](cdk/DEPLOYMENT.md)
+
+#### 1. Install Dependencies
+
 ```bash
-aws ecr create-repository --repository-name anthropic-bedrock-proxy
+cd cdk
+npm install
 ```
 
-2. **Build and push image**:
+#### 2. Deploy to Development
+
 ```bash
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <account-id>.dkr.ecr.us-east-1.amazonaws.com
-docker tag anthropic-bedrock-proxy:latest <account-id>.dkr.ecr.us-east-1.amazonaws.com/anthropic-bedrock-proxy:latest
-docker push <account-id>.dkr.ecr.us-east-1.amazonaws.com/anthropic-bedrock-proxy:latest
+./scripts/deploy.sh -e dev -r us-west-2 -p arm64
 ```
 
-3. **Create ECS task definition** with:
-   - Container image from ECR
-   - IAM role with Bedrock and DynamoDB permissions
-   - Environment variables from SSM Parameter Store
-   - Health check configured to `/health`
+This will deploy:
+- DynamoDB tables
+- VPC with NAT gateways
+- ECS Fargate cluster and service
+- Application Load Balancer
 
-4. **Create ECS service** with:
-   - Application Load Balancer
-   - Auto-scaling based on CPU/Memory
-   - Multiple availability zones
+Deployment takes approximately **15-20 minutes**.
+#### 3. You can find endpoint URL of ALB.
+![alt text](image.png)
 
-### AWS Lambda Deployment
+```text
+Master API Key Secret:  
+  Secret Name: anthropic-proxy-prod-master-api-key
+  Retrieve with: aws secretsmanager get-secret-value --secret-id anthropic-proxy-prod-master-api-key --region us-west-2
 
-Use AWS Lambda Web Adapter for serverless deployment:
-
-```dockerfile
-FROM public.ecr.aws/awsguru/aws-lambda-adapter:0.8.1 as lambda-adapter
-FROM anthropic-bedrock-proxy:latest
-
-COPY --from=lambda-adapter /lambda-adapter /opt/extensions/lambda-adapter
-ENV AWS_LWA_INVOKE_MODE=response_stream
-```
-
-### Kubernetes Deployment
-
-Example deployment manifest:
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: anthropic-bedrock-proxy
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: anthropic-bedrock-proxy
-  template:
-    metadata:
-      labels:
-        app: anthropic-bedrock-proxy
-    spec:
-      containers:
-      - name: api-proxy
-        image: anthropic-bedrock-proxy:latest
-        ports:
-        - containerPort: 8000
-        env:
-        - name: AWS_REGION
-          value: "us-east-1"
-        - name: MASTER_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: api-secrets
-              key: master-api-key
-        livenessProbe:
-          httpGet:
-            path: /liveness
-            port: 8000
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: 8000
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "250m"
-          limits:
-            memory: "1Gi"
-            cpu: "500m"
+Next Steps:
+  1. Create API keys using: ./scripts/create-api-key.sh
 ```
 
 ## Security

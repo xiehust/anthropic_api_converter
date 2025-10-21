@@ -234,7 +234,7 @@ from anthropic import Anthropic
 # Initialize client with custom base URL
 client = Anthropic(
     api_key="sk-your-api-key",
-    base_url="http://localhost:8000/v1"
+    base_url="http://localhost:8000"
 )
 
 # Use as normal

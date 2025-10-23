@@ -1,178 +1,250 @@
-# Anthropic-Bedrock API Proxy
+# Anthropic-Bedrock API 代理 [English](./README_EN.md)
 
-A production-ready FastAPI service that converts AWS Bedrock model inference API to Anthropic-compatible API format, enabling seamless use of Bedrock models with the Anthropic Python SDK.
+## 项目简介
 
-## Features
+这是一个轻量级的 API 代理服务，让你无需修改代码即可在 Anthropic SDK 中使用 AWS Bedrock 上的各种大语言模型。通过简单的环境变量配置，即可在 Claude Code、Claude Agent SDK 等工具中切换使用 Qwen3、Claude 等不同模型。
 
-### Core Functionality
-- **Anthropic API Compatibility**: Full support for Anthropic Messages API format
-- **Bidirectional Format Conversion**: Seamless conversion between Anthropic and Bedrock formats
-- **Streaming Support**: Server-Sent Events (SSE) for real-time streaming responses
-- **Non-Streaming Support**: Traditional request-response pattern
+**核心优势：**
+- 🔄 **零代码迁移** - 完全兼容 Anthropic API，无需修改现有代码
+- 🚀 **开箱即用** - 支持流式/非流式响应、工具调用、多模态等所有高级特性
+- 💰 **成本优化** - 灵活使用 Bedrock 上的开源模型，显著降低推理成本
+- 🔐 **企业级** - 内置 API 密钥管理、速率限制、使用追踪和监控指标
+- ☁️ **云原生** - 一键部署到 AWS ECS，自动扩展，高可用架构
+- 🎯 **场景广泛** - 适用于开发工具代理、应用集成、模型评测等多种场景
 
-### Advanced Features
-- **Tool Use (Function Calling)**: Convert and execute tool definitions
-- **Extended Thinking**: Support for thinking blocks in responses
-- **Multi-Modal Content**: Text, images, and document support
-- **System Messages**: Custom system prompts and instructions
-- **Stop Sequences**: Custom stop conditions
-- **Prompt Caching**: Map cache control hints (where supported)
+**典型应用：** 在**Claude Code** 中使用 Qwen3-Coder-480B 进行代码生成，或在使用**Claude Agent SDK**构建生产应用中混合使用不同模型以平衡性能和成本。
 
-### Infrastructure
-- **Authentication**: API key-based authentication with DynamoDB storage
-- **Rate Limiting**: Token bucket algorithm per API key
-- **Usage Tracking**: Comprehensive analytics and token usage tracking
-- **Caching**: Optional response caching with TTL
-- **Logging**: Structured logging with correlation IDs
-- **Metrics**: Prometheus-compatible metrics export
-- **Health Checks**: Kubernetes/ECS-ready health endpoints
+## 功能特性
 
-### Supported Models
+### 核心功能
+- **Anthropic API 兼容性**：完全支持 Anthropic Messages API 格式
+- **双向格式转换**：在 Anthropic 和 Bedrock 格式之间无缝转换
+- **流式传输支持**：支持服务器发送事件 (SSE) 实时流式响应
+- **非流式支持**：传统的请求-响应模式
+
+### 高级功能
+- **工具使用（函数调用）**：转换并执行工具定义
+- **扩展思考**：支持响应中的思考块
+- **多模态内容**：支持文本、图像和文档
+- **提示词缓存**：映射缓存控制提示（在支持的情况下）
+
+### 基础设施
+- **身份验证**：基于 API 密钥的身份验证，使用 DynamoDB 存储
+- **速率限制**：每个 API 密钥的令牌桶算法
+- **使用跟踪**：全面的分析和令牌使用跟踪
+
+### 支持的模型
 - Claude 4.5/5 Sonnet
 - Claude 4.5 Haiku
 - Qwen3-coder-480b
 - Qwen3-235b-instruct
-- Any other Bedrock models supporting Converse API
+- 任何其他支持 Converse API 的 Bedrock 模型
 
-## Architecture
+## 使用场景
+
+### 作为 Claude Code 的模型代理
+* 例如，您可以在启动 `claude` 之前设置以下环境变量，然后就可以在 `claude code` 中使用 Bedrock 中的任何模型（如 `qwen3-coder`）
+```bash
+export CLAUDE_CODE_USE_BEDROCK=0
+export ANTHROPIC_BASE_URL=http://anthropic-proxy-prod-alb-xxxx.elb.amazonaws.com
+export ANTHROPIC_API_KEY=sk-xxxx
+export ANTHROPIC_DEFAULT_SONNET_MODEL=qwen.qwen3-coder-480b-a35b-v1:0
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=qwen.qwen3-235b-a22b-2507-v1:0
+```
+![alt text](assets/image-1.png)
+
+* 如果您不像下面这样设置 `ANTHROPIC_DEFAULT_SONNET_MODEL` 和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`，那么代理将默认使用 Bedrock 中的 Claude sonnet 4.5 和 haiku 4.5/3.5。
+```bash
+export CLAUDE_CODE_USE_BEDROCK=0
+export ANTHROPIC_BASE_URL=http://anthropic-proxy-prod-alb-xxxx.elb.amazonaws.com
+export ANTHROPIC_API_KEY=sk-xxxx
+```
+
+### 作为 Claude Agent SDK 的模型代理
+- 相同的设置也适用于 Claude Agent SDK
+
+## 架构
 
 ```
 +----------------------------------------------------------+
-|              Client Application                          |
+|              客户端应用程序                               |
 |           (Anthropic Python SDK)                         |
 +---------------------------+------------------------------+
                             |
-                            | HTTP/HTTPS (Anthropic Format)
+                            | HTTP/HTTPS (Anthropic 格式)
                             |
                             v
 +----------------------------------------------------------+
-|          FastAPI API Proxy Service                       |
+|          FastAPI API 代理服务                             |
 |                                                           |
 |  +----------+  +-----------+  +----------------+         |
-|  |   Auth   |  |   Rate    |  |   Format       |         |
-|  |Middleware|->| Limiting  |->|  Conversion    |         |
+|  |   认证   |  |   速率    |  |   格式         |         |
+|  |  中间件  |->|   限制    |->|   转换         |         |
 |  +----------+  +-----------+  +----------------+         |
 +-------+---------------+---------------+------------------+
         |               |               |
         v               v               v
   +----------+    +----------+    +----------+
   | DynamoDB |    |   AWS    |    |CloudWatch|
-  |          |    | Bedrock  |    |   Logs/  |
-  | API Keys |    | Runtime  |    | Metrics  |
-  |  Usage   |    | Converse |    |          |
-  |  Cache   |    |          |    |          |
+  |          |    | Bedrock  |    |   日志/  |
+  | API 密钥 |    | Runtime  |    |   指标   |
+  |  使用量  |    | Converse |    |          |
+  |  缓存    |    |          |    |          |
   +----------+    +----------+    +----------+
 ```
 
-### Component Overview
+### 组件概述
 
-- **FastAPI Application**: Async web framework with automatic OpenAPI docs
-- **Format Converters**: Bidirectional conversion between Anthropic and Bedrock formats
-- **Authentication Middleware**: API key validation using DynamoDB
-- **Rate Limiting Middleware**: Token bucket algorithm with configurable limits
-- **Bedrock Service**: Interface to AWS Bedrock Converse/ConverseStream APIs
-- **DynamoDB Storage**: API keys, usage tracking, caching, model mappings
-- **Metrics Collection**: Prometheus-compatible metrics for monitoring
+- **FastAPI 应用程序**：异步 Web 框架，自动生成 OpenAPI 文档
+- **格式转换器**：在 Anthropic 和 Bedrock 格式之间进行双向转换
+- **身份验证中间件**：使用 DynamoDB 进行 API 密钥验证
+- **速率限制中间件**：令牌桶算法，可配置限制
+- **Bedrock 服务**：AWS Bedrock Converse/ConverseStream API 接口
+- **DynamoDB 存储**：API 密钥、使用跟踪、缓存、模型映射
+- **指标收集**：Prometheus 兼容的监控指标
 
-## Quick Start
+## 部署选项快速入门
 
-### Prerequisites
-
-- Python 3.12+
-- AWS Account with Bedrock access
-- AWS credentials configured
-- DynamoDB access (or local DynamoDB for development)
-
-### Installation
-
-1. **Clone the repository**:
+### 克隆仓库：
 ```bash
 git clone <repository-url>
 cd anthropic_api_proxy
 ```
 
-2. **Install dependencies using uv**:
+### 选项 1. AWS ECS 部署（推荐）
+
+#### 1. 安装依赖
+
 ```bash
-# Install uv if not already installed
+cd cdk
+npm install
+```
+
+#### 2. 部署到生产环境
+
+```bash
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64
+```
+
+这将部署：
+- DynamoDB 表
+- 带有 NAT 网关的 VPC
+- ECS Fargate 集群和服务
+- 应用程序负载均衡器
+
+部署大约需要 **15-20 分钟**。
+
+#### 3. 您可以找到 ALB 的端点 URL。
+![alt text](assets/image.png)
+
+```text
+主 API 密钥密钥：
+  密钥名称：anthropic-proxy-prod-master-api-key
+  检索命令：aws secretsmanager get-secret-value --secret-id anthropic-proxy-prod-master-api-key --region us-west-2
+
+后续步骤：
+  1. 使用以下命令创建 API 密钥：./scripts/create-api-key.sh
+```
+
+#### 更多详情请参见 [CDK 部署文档](cdk/DEPLOYMENT.md)
+
+### 选项 2. 运行 Docker
+
+使用 Docker 构建并运行：
+
+```bash
+# 构建镜像
+docker build -t anthropic-bedrock-proxy:latest .
+
+# 运行容器
+docker run -d \
+  -p 8000:8000 \
+  -e AWS_REGION=us-east-1 \
+  -e AWS_ACCESS_KEY_ID=your-key \
+  -e AWS_SECRET_ACCESS_KEY=your-secret \
+  -e MASTER_API_KEY=your-master-key \
+  --name api-proxy \
+  anthropic-bedrock-proxy:latest
+```
+
+## 选项 3. 本地启动
+
+### 前置要求
+
+- Python 3.12+
+- 具有 Bedrock 访问权限的 AWS 账户
+- 配置好的 AWS 凭证
+- DynamoDB 访问权限
+
+### 安装
+
+1. **使用 uv 安装依赖**：
+```bash
+# 如果尚未安装 uv，请先安装
 pip install uv
 
-# Install dependencies
+# 安装依赖
 uv sync
 ```
 
-3. **Configure environment**:
+2. **配置环境**：
 ```bash
 cp .env.example .env
-# Edit .env with your configuration
+# 编辑 .env 文件配置您的设置
 ```
 
-4. **Set up DynamoDB tables**:
+3. **设置 DynamoDB 表**：
 ```bash
 uv run scripts/setup_tables.py
 ```
 
-5. **Create an API key**:
+4. **创建 API 密钥**：
 ```bash
 uv run scripts/create_api_key.py --user-id dev-user --name "Development Key"
 ```
 
-6. **Run the service**:
+5. **运行服务**：
 ```bash
-uv run uvicorn app.main:app --reload  --port 8000
+uv run uvicorn app.main:app --reload --port 8000
 ```
 
-The service will be available at `http://localhost:8000`.
+服务将在 `http://localhost:8000` 上可用。
 
-### Using Docker Compose
+## 配置
 
-For a complete local development environment with DynamoDB Local:
+### 环境变量
 
-```bash
-docker-compose up -d
-```
+配置通过环境变量管理。所有选项请参见 `.env.example`。
 
-This starts:
-- API Proxy Service (port 8000)
-- DynamoDB Local (port 8001)
-- DynamoDB Admin UI (port 8002)
-- Prometheus (port 9090)
-- Grafana (port 3000)
-
-## Configuration
-
-### Environment Variables
-
-Configuration is managed through environment variables. See `.env.example` for all options.
-
-#### Application Settings
+#### 应用程序设置
 ```bash
 APP_NAME=Anthropic-Bedrock API Proxy
 ENVIRONMENT=development  # development, staging, production
 LOG_LEVEL=INFO
 ```
 
-#### AWS Settings
+#### AWS 设置
 ```bash
 AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=your-access-key
 AWS_SECRET_ACCESS_KEY=your-secret-key
 ```
 
-#### Authentication
+#### 身份验证
 ```bash
 REQUIRE_API_KEY=True
 MASTER_API_KEY=sk-your-master-key
 API_KEY_HEADER=x-api-key
 ```
 
-#### Rate Limiting
+#### 速率限制
 ```bash
 RATE_LIMIT_ENABLED=True
-RATE_LIMIT_REQUESTS=1000  # requests per window
-RATE_LIMIT_WINDOW=60     # window in seconds
+RATE_LIMIT_REQUESTS=1000  # 每个时间窗口的请求数
+RATE_LIMIT_WINDOW=60     # 时间窗口（秒）
 ```
 
-#### Feature Flags
+#### 功能开关
 ```bash
 ENABLE_TOOL_USE=True
 ENABLE_EXTENDED_THINKING=True
@@ -180,23 +252,24 @@ ENABLE_DOCUMENT_SUPPORT=True
 PROMPT_CACHING_ENABLED=False
 ```
 
-## API Documentation
+## API 文档
 
-### Endpoints
+### 端点
 
 #### POST /v1/messages
 
-Create a message (Anthropic-compatible).
-**Request Body**:
+创建消息（Anthropic 兼容）。
+
+**请求体**：
 ```bash
 curl http://localhost:8000/v1/messages \
   -H "Content-Type: application/json" \
   -H "x-api-key: sk-xxx" \
   -d '{
-    "model": "gqwen.qwen3-coder-480b-a35b-v1:00",
+    "model": "qwen.qwen3-coder-480b-a35b-v1:0",
     "max_tokens": 1024,
     "messages": [
-      {"role": "user", "content": "Hello!"}
+      {"role": "user", "content": "你好！"}
     ]
   }'
 ```
@@ -208,62 +281,61 @@ curl http://localhost:8000/v1/messages \
   -d '{
     "model": "claude-sonnet-4-5-20250929",
     "max_tokens": 1024,
-    "stream":true,
+    "stream": true,
     "messages": [
-      {"role": "user", "content": "Write a sonnet about Summer"}
+      {"role": "user", "content": "写一首关于夏天的十四行诗"}
     ]
   }'
 ```
 
 #### GET /v1/models
 
-List available Bedrock models.
+列出可用的 Bedrock 模型。
 
-**Request**:
+**请求**：
 ```bash
 curl http://localhost:8000/v1/models \
   -H "x-api-key: sk-xxxx"
 ```
 
-
-### Using with Anthropic SDK
+### 使用 Anthropic SDK
 
 ```python
 from anthropic import Anthropic
 
-# Initialize client with custom base URL
+# 使用自定义基础 URL 初始化客户端
 client = Anthropic(
     api_key="sk-your-api-key",
     base_url="http://localhost:8000"
 )
 
-# Use as normal
+# 正常使用
 message = client.messages.create(
     model="qwen.qwen3-coder-480b-a35b-v1:0",
     max_tokens=1024,
     messages=[
-        {"role": "user", "content": "Hello, Claude!"}
+        {"role": "user", "content": "你好，Claude！"}
     ]
 )
 
 print(message.content[0].text)
 ```
 
-### Streaming Example
+### 流式传输示例
 
 ```python
 with client.messages.stream(
     model="qwen.qwen3-coder-480b-a35b-v1:0",
     max_tokens=1024,
     messages=[
-        {"role": "user", "content": "Tell me a story"}
+        {"role": "user", "content": "给我讲个故事"}
     ]
 ) as stream:
     for text in stream.text_stream:
         print(text, end="", flush=True)
 ```
 
-### Tool Use Example
+### 工具使用示例
 
 ```python
 message = client.messages.create(
@@ -272,7 +344,7 @@ message = client.messages.create(
     tools=[
         {
             "name": "get_weather",
-            "description": "Get weather for a location",
+            "description": "获取某个位置的天气",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -283,95 +355,38 @@ message = client.messages.create(
         }
     ],
     messages=[
-        {"role": "user", "content": "What's the weather in SF?"}
+        {"role": "user", "content": "旧金山的天气怎么样？"}
     ]
 )
 ```
 
-## Deployment
+## 安全
 
-### Docker Deployment
+### 最佳实践
 
-Build and run with Docker:
+1. **API 密钥管理**：
+   - 永远不要将 API 密钥提交到版本控制
+   - 使用环境变量或密钥管理器
+   - 定期轮换密钥
+   - 为不同环境使用单独的密钥
 
-```bash
-# Build image
-docker build -t anthropic-bedrock-proxy:latest .
+2. **AWS 凭证**：
+   - 在 AWS 上运行时使用 IAM 角色（ECS、Lambda）
+   - 应用最小权限原则
+   - 启用 CloudTrail 日志记录
 
-# Run container
-docker run -d \
-  -p 8000:8000 \
-  -e AWS_REGION=us-east-1 \
-  -e AWS_ACCESS_KEY_ID=your-key \
-  -e AWS_SECRET_ACCESS_KEY=your-secret \
-  -e MASTER_API_KEY=your-master-key \
-  --name api-proxy \
-  anthropic-bedrock-proxy:latest
-```
+3. **网络安全**：
+   - 在生产环境中使用 HTTPS
+   - 适当配置 CORS
+   - 为 AWS 服务使用 VPC 端点
+   - 实施 WAF 规则
 
-### AWS ECS Deployment (Quick Start)
+4. **速率限制**：
+   - 为每个 API 密钥配置适当的限制
+   - 监控滥用模式
+   - 实施指数退避
 
-#### More detail in [CDK Deployment](cdk/DEPLOYMENT.md)
-
-#### 1. Install Dependencies
-
-```bash
-cd cdk
-npm install
-```
-
-#### 2. Deploy to Development
-
-```bash
-./scripts/deploy.sh -e dev -r us-west-2 -p arm64
-```
-
-This will deploy:
-- DynamoDB tables
-- VPC with NAT gateways
-- ECS Fargate cluster and service
-- Application Load Balancer
-
-Deployment takes approximately **15-20 minutes**.
-#### 3. You can find endpoint URL of ALB.
-![alt text](image.png)
-
-```text
-Master API Key Secret:  
-  Secret Name: anthropic-proxy-prod-master-api-key
-  Retrieve with: aws secretsmanager get-secret-value --secret-id anthropic-proxy-prod-master-api-key --region us-west-2
-
-Next Steps:
-  1. Create API keys using: ./scripts/create-api-key.sh
-```
-
-## Security
-
-### Best Practices
-
-1. **API Key Management**:
-   - Never commit API keys to version control
-   - Use environment variables or secret managers
-   - Rotate keys regularly
-   - Use separate keys for different environments
-
-2. **AWS Credentials**:
-   - Use IAM roles when running on AWS (ECS, Lambda)
-   - Apply least privilege principle
-   - Enable CloudTrail logging
-
-3. **Network Security**:
-   - Use HTTPS in production
-   - Configure CORS appropriately
-   - Use VPC endpoints for AWS services
-   - Implement WAF rules
-
-4. **Rate Limiting**:
-   - Configure appropriate limits per API key
-   - Monitor for abuse patterns
-   - Implement exponential backoff
-
-### Required IAM Permissions
+### 所需的 IAM 权限
 
 ```json
 {
@@ -405,119 +420,88 @@ Next Steps:
 }
 ```
 
-## Monitoring
+## 开发
 
-### Metrics
-
-The service exposes Prometheus metrics at `/metrics`:
-
-- **Request metrics**: Total requests, duration, status codes
-- **Bedrock metrics**: API calls, latency, errors
-- **Token usage**: Input/output/cached tokens per model
-- **Rate limiting**: Rejected requests per API key
-- **Authentication**: Failed auth attempts
-
-### Logging
-
-Structured logs include:
-- Request ID for correlation
-- API key (masked)
-- Model used
-- Token usage
-- Latency
-- Errors with stack traces
-
-### Alerts
-
-Recommended alerts:
-- High error rate (>5%)
-- Slow response time (p95 > 10s)
-- Rate limit exceeded frequency
-- Authentication failures spike
-- AWS service errors
-
-## Development
-
-### Project Structure
+### 项目结构
 
 ```
 anthropic_api_proxy/
-   app/
-      api/              # API route handlers
-         health.py     # Health check endpoints
-         messages.py   # Messages API
-         models.py     # Models API
-      converters/       # Format converters
-         anthropic_to_bedrock.py
-         bedrock_to_anthropic.py
-      core/             # Core functionality
-         config.py     # Configuration management
-         logging.py    # Logging setup
-         metrics.py    # Metrics collection
-      db/               # Database clients
-         dynamodb.py   # DynamoDB operations
-      middleware/       # Middleware components
-         auth.py       # Authentication
-         rate_limit.py # Rate limiting
-      schemas/          # Pydantic models
-         anthropic.py  # Anthropic API schemas
-         bedrock.py    # Bedrock API schemas
-      services/         # Business logic
-         bedrock_service.py
-      main.py           # Application entry point
-   tests/
-      unit/             # Unit tests
-      integration/      # Integration tests
-   scripts/              # Utility scripts
-   config/               # Configuration files
-   Dockerfile            # Docker image definition
-   docker-compose.yml    # Local development stack
-   pyproject.toml        # Project dependencies
-   README.md             # This file
+├── app/
+│   ├── api/              # API 路由处理器
+│   │   ├── health.py     # 健康检查端点
+│   │   ├── messages.py   # 消息 API
+│   │   └── models.py     # 模型 API
+│   ├── converters/       # 格式转换器
+│   │   ├── anthropic_to_bedrock.py
+│   │   └── bedrock_to_anthropic.py
+│   ├── core/             # 核心功能
+│   │   ├── config.py     # 配置管理
+│   │   ├── logging.py    # 日志设置
+│   │   └── metrics.py    # 指标收集
+│   ├── db/               # 数据库客户端
+│   │   └── dynamodb.py   # DynamoDB 操作
+│   ├── middleware/       # 中间件组件
+│   │   ├── auth.py       # 身份验证
+│   │   └── rate_limit.py # 速率限制
+│   ├── schemas/          # Pydantic 模型
+│   │   ├── anthropic.py  # Anthropic API 模式
+│   │   └── bedrock.py    # Bedrock API 模式
+│   ├── services/         # 业务逻辑
+│   │   └── bedrock_service.py
+│   └── main.py           # 应用程序入口点
+├── tests/
+│   ├── unit/             # 单元测试
+│   └── integration/      # 集成测试
+├── scripts/              # 实用脚本
+├── config/               # 配置文件
+├── Dockerfile            # Docker 镜像定义
+├── docker-compose.yml    # 本地开发堆栈
+├── pyproject.toml        # 项目依赖
+└── README.md             # 此文件
 ```
 
-### Running Tests
+### 运行测试
 
 ```bash
-# Run all tests
+# 运行所有测试
 pytest
 
-# Run with coverage
+# 带覆盖率运行
 pytest --cov=app --cov-report=html
 
-# Run specific test file
+# 运行特定测试文件
 pytest tests/unit/test_converters.py
 
-# Run with verbose output
+# 带详细输出运行
 pytest -v
 ```
 
-### Code Quality
+### 代码质量
 
 ```bash
-# Format code
+# 格式化代码
 black app tests
 
-# Lint code
+# 检查代码
 ruff check app tests
 
-# Type checking
+# 类型检查
 mypy app
 ```
 
-## Testing
+## 测试
 
-### Manual Testing
+### 手动测试
 
 ```bash
-# Health check
+# 健康检查
 curl http://localhost:8000/health
 
-# List models
+# 列出模型
 curl http://localhost:8000/v1/models \
   -H "x-api-key: sk-your-api-key"
 
-# Create message
+# 创建消息
 curl http://localhost:8000/v1/messages \
   -H "Content-Type: application/json" \
   -H "x-api-key: sk-your-api-key" \
@@ -525,11 +509,11 @@ curl http://localhost:8000/v1/messages \
     "model": "claude-3-5-sonnet-20241022",
     "max_tokens": 1024,
     "messages": [
-      {"role": "user", "content": "Hello!"}
+      {"role": "user", "content": "你好！"}
     ]
   }'
 
-# Streaming message
+# 流式消息
 curl http://localhost:8000/v1/messages \
   -H "Content-Type: application/json" \
   -H "x-api-key: sk-your-api-key" \
@@ -538,35 +522,21 @@ curl http://localhost:8000/v1/messages \
     "max_tokens": 1024,
     "stream": true,
     "messages": [
-      {"role": "user", "content": "Count to 10"}
+      {"role": "user", "content": "数到 10"}
     ]
   }'
 ```
 
-## Contributing
+## 贡献
 
-Contributions are welcome! Please:
+欢迎贡献！请：
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
+1. Fork 仓库
+2. 创建功能分支
+3. 进行更改
+4. 添加测试
+5. 提交拉取请求
 
-## License
+## 许可证
 
-[Your License Here]
-
-## Support
-
-For issues and questions:
-- GitHub Issues: [repository-url]/issues
-- Documentation: [docs-url]
-- Email: [support-email]
-
-## Acknowledgments
-
-Built with:
-- [FastAPI](https://fastapi.tiangolo.com/)
-- [AWS Bedrock](https://aws.amazon.com/bedrock/)
-- [Anthropic API](https://docs.anthropic.com/)
+MIT-0

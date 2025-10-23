@@ -103,7 +103,8 @@ class Settings(BaseSettings):
         default={
             # Anthropic model IDs -> Bedrock model ARNs
             "claude-sonnet-4-5-20250929": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
-            "claude-haiku-4-5-20251001": "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+            "claude-haiku-4-5-20251001": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "claude-3-5-haiku-20241022": "us.anthropic.claude-3-5-haiku-20241022-v1:0"
 
         },
         alias="DEFAULT_MODEL_MAPPING",

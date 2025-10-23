@@ -53,7 +53,7 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL=qwen.qwen3-235b-a22b-2507-v1:0
 ```
 ![alt text](assets/image-1.png)
 
-* 如果您不像下面这样设置 `ANTHROPIC_DEFAULT_SONNET_MODEL` 和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`，那么代理将默认使用 Bedrock 中的 Claude sonnet 4.5 和 haiku 4.5/3.5。
+* 如果您**不设置** `ANTHROPIC_DEFAULT_SONNET_MODEL` 和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`，那么代理将默认使用自动映射Claude sonnet 4.5 和 haiku 4.5/3.5 Model ID到Bedrock中对应的Model ID.
 ```bash
 export CLAUDE_CODE_USE_BEDROCK=0
 export ANTHROPIC_BASE_URL=http://anthropic-proxy-prod-alb-xxxx.elb.amazonaws.com
@@ -62,6 +62,37 @@ export ANTHROPIC_API_KEY=sk-xxxx
 
 ### 作为 Claude Agent SDK 的模型代理
 - 相同的设置也适用于 Claude Agent SDK
+例如在AgentCore Runtime中使用在Dockerfile，[参考项目链接](https://github.com/xiehust/agentcore_demo/tree/main/00-claudecode_agent). 
+
+```Dockerfile
+FROM --platform=linux/arm64 ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+
+WORKDIR /app
+
+# Install system dependencies including Node.js for playwright-mcp
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs zip \
+    && rm -rf /var/lib/apt/lists/*
+RUN npm install -g @anthropic-ai/claude-code
+# Copy entire project (respecting .dockerignore)
+COPY . .
+RUN mkdir -p workspace
+RUN uv sync 
+
+# Signal that this is running in Docker for host binding logic
+ENV DOCKER_CONTAINER=1
+ENV CLAUDE_CODE_USE_BEDROCK=0
+ENV ANTHROPIC_BASE_URL=http://anthropic-proxy-prod-alb-xxxx.elb.amazonaws.com
+ENV export ANTHROPIC_API_KEY=sk-xxxx
+
+EXPOSE 8080
+
+CMD [".venv/bin/python3", "claude_code_agent.py"]
+```
+
 
 ## 架构
 

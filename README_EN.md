@@ -53,7 +53,7 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL=qwen.qwen3-235b-a22b-2507-v1:0
 ```
 ![alt text](assets/image-1.png)
 
-* If you don't set `ANTHROPIC_DEFAULT_SONNET_MODEL` and `ANTHROPIC_DEFAULT_HAIKU_MODEL` as below, then the proxy will use the Claude sonnet 4.5 and haiku 4.5/3.5 in the bedrock by default.
+* If you **DON'T** set `ANTHROPIC_DEFAULT_SONNET_MODEL` and `ANTHROPIC_DEFAULT_HAIKU_MODEL` as below, then the proxy will map the IDs of Claude sonnet 4.5 and haiku 4.5/3.5 to the model IDs in Bedrock by default.
 ```bash
 export CLAUDE_CODE_USE_BEDROCK=0
 export ANTHROPIC_BASE_URL=http://anthropic-proxy-prod-alb-xxxx.elb.amazonaws.com
@@ -62,6 +62,36 @@ export ANTHROPIC_API_KEY=sk-xxxx
 
 ###  Model Proxy Claude Agent SDK
 - The same settings also applicable for Claude Agent SDK
+Eg., Dockerfile used for AgentCore Runtime [Reference Project](https://github.com/xiehust/agentcore_demo/tree/main/00-claudecode_agent) 
+
+```Dockerfile
+FROM --platform=linux/arm64 ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+
+WORKDIR /app
+
+# Install system dependencies including Node.js for playwright-mcp
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs zip \
+    && rm -rf /var/lib/apt/lists/*
+RUN npm install -g @anthropic-ai/claude-code
+# Copy entire project (respecting .dockerignore)
+COPY . .
+RUN mkdir -p workspace
+RUN uv sync 
+
+# Signal that this is running in Docker for host binding logic
+ENV DOCKER_CONTAINER=1
+ENV CLAUDE_CODE_USE_BEDROCK=0
+ENV ANTHROPIC_BASE_URL=http://anthropic-proxy-prod-alb-xxxx.elb.amazonaws.com
+ENV export ANTHROPIC_API_KEY=sk-xxxx
+
+EXPOSE 8080
+
+CMD [".venv/bin/python3", "claude_code_agent.py"]
+```
 
 
 ## Architecture

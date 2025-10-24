@@ -182,22 +182,6 @@ echo -e "${YELLOW}Cleaning previous CDK output...${NC}"
 rm -rf cdk.out
 echo -e "${GREEN}✓ Cleanup complete${NC}"
 
-# Check if IAM roles already exist
-echo -e "${YELLOW}Checking for existing IAM roles...${NC}"
-TASK_EXECUTION_ROLE_NAME="anthropic-proxy-${ENVIRONMENT}-task-execution"
-TASK_ROLE_NAME="anthropic-proxy-${ENVIRONMENT}-task"
-
-IMPORT_EXISTING_ROLES="false"
-
-if aws iam get-role --role-name "$TASK_EXECUTION_ROLE_NAME" &> /dev/null && \
-   aws iam get-role --role-name "$TASK_ROLE_NAME" &> /dev/null; then
-    echo -e "${YELLOW}Found existing IAM roles: ${TASK_EXECUTION_ROLE_NAME}, ${TASK_ROLE_NAME}${NC}"
-    echo -e "${YELLOW}Will import existing roles to prevent deployment failure.${NC}"
-    IMPORT_EXISTING_ROLES="true"
-else
-    echo -e "${GREEN}No existing IAM roles found. Will create new ones.${NC}"
-fi
-
 # Perform action
 if [ "$DESTROY" = true ]; then
     echo -e "${RED}========================================${NC}"
@@ -212,15 +196,15 @@ if [ "$DESTROY" = true ]; then
     fi
 
     echo -e "${YELLOW}Destroying stacks...${NC}"
-    npx cdk destroy --all -c environment="$ENVIRONMENT" -c importExistingRoles="$IMPORT_EXISTING_ROLES" --force
+    npx cdk destroy --all -c environment="$ENVIRONMENT" --force
     echo -e "${GREEN}✓ Infrastructure destroyed${NC}"
 else
     echo -e "${YELLOW}Synthesizing CloudFormation templates...${NC}"
-    npx cdk synth -c environment="$ENVIRONMENT" -c importExistingRoles="$IMPORT_EXISTING_ROLES"
+    npx cdk synth -c environment="$ENVIRONMENT"
     echo -e "${GREEN}✓ Synthesis complete${NC}"
 
     echo -e "${YELLOW}Deploying stacks...${NC}"
-    npx cdk deploy --all -c environment="$ENVIRONMENT" -c importExistingRoles="$IMPORT_EXISTING_ROLES" --require-approval never
+    npx cdk deploy --all -c environment="$ENVIRONMENT" --require-approval never
 
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN}Deployment Complete!${NC}"

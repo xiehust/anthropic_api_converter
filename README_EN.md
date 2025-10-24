@@ -1,8 +1,8 @@
-# Anthropic-Bedrock API Proxy [中文](./README.md)
+# Anthropic-Bedrock API Converter [中文](./README.md)
 
 ## Overview
 
-This lightweight API proxy service enables you to use various large language models on AWS Bedrock with the Anthropic SDK without any code changes. Through simple environment variable configuration, you can seamlessly switch between different models like Qwen, Claude, and others in tools such as Claude Code and Claude Agent SDK.
+This lightweight API convertion service enables you to use various large language models on AWS Bedrock with the Anthropic SDK without any code changes. Through simple environment variable configuration, you can seamlessly switch between different models like Qwen, Claude, and others in tools such as Claude Code and Claude Agent SDK.
 
 **Key Advantages:**
 - 🔄 **Zero Code Migration** - Fully compatible with Anthropic API, no code changes required

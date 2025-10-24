@@ -1,8 +1,8 @@
-# Anthropic-Bedrock API 代理 [English](./README_EN.md)
+# Anthropic-Bedrock API Converter[English](./README_EN.md)
 
 ## 项目简介
 
-这是一个轻量级的 API 代理服务，让你无需修改代码即可在 Anthropic SDK 中使用 AWS Bedrock 上的各种大语言模型。通过简单的环境变量配置，即可在 Claude Code、Claude Agent SDK 等工具中切换使用 Qwen3、Claude 等不同模型。
+这是一个轻量级的 API 转换服务，让你无需修改代码即可在 Anthropic SDK 中使用 AWS Bedrock 上的各种大语言模型。通过简单的环境变量配置，即可在 Claude Code、Claude Agent SDK 等工具中切换使用 Qwen3、Claude 等不同模型。
 
 **核心优势：**
 - 🔄 **零代码迁移** - 完全兼容 Anthropic API，无需修改现有代码

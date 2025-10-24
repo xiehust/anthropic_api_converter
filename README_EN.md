@@ -154,7 +154,7 @@ npm install
 ```
 
 #### 2. Deploy to Prod
-
+**⚠️⚠️⚠️Note that the -p parameter must be adjusted to either amd64 or arm64 based on your current compilation platform. For instance, when compiling on an x86-powered development platform, modify it to -p amd64.**
 ```bash
 ./scripts/deploy.sh -e prod -r us-west-2 -p arm64
 ```
@@ -299,7 +299,7 @@ curl http://localhost:8000/v1/messages \
   -H "Content-Type: application/json" \
   -H "x-api-key: sk-xxx" \
   -d '{
-    "model": "gqwen.qwen3-coder-480b-a35b-v1:00",
+    "model": "qwen.qwen3-coder-480b-a35b-v1:0",
     "max_tokens": 1024,
     "messages": [
       {"role": "user", "content": "Hello!"}
@@ -540,7 +540,7 @@ curl http://localhost:8000/v1/messages \
   -H "Content-Type: application/json" \
   -H "x-api-key: sk-your-api-key" \
   -d '{
-    "model": "claude-3-5-sonnet-20241022",
+    "model": "claude-sonnet-4-5-20250929",
     "max_tokens": 1024,
     "messages": [
       {"role": "user", "content": "Hello!"}
@@ -552,7 +552,7 @@ curl http://localhost:8000/v1/messages \
   -H "Content-Type: application/json" \
   -H "x-api-key: sk-your-api-key" \
   -d '{
-    "model": "claude-3-5-sonnet-20241022",
+    "model": "claude-sonnet-4-5-20250929",
     "max_tokens": 1024,
     "stream": true,
     "messages": [

@@ -152,7 +152,7 @@ npm install
 ```
 
 #### 2. 部署到生产环境
-
+**⚠️⚠️⚠️注意-p 参数需要根据当前的编译平台更改成amd64或者arm64， 如使用x86芯片的开发平台编译，则改成-p amd64**
 ```bash
 ./scripts/deploy.sh -e prod -r us-west-2 -p arm64
 ```
@@ -537,7 +537,7 @@ curl http://localhost:8000/v1/messages \
   -H "Content-Type: application/json" \
   -H "x-api-key: sk-your-api-key" \
   -d '{
-    "model": "claude-3-5-sonnet-20241022",
+    "model": "claude-sonnet-4-5-20250929",
     "max_tokens": 1024,
     "messages": [
       {"role": "user", "content": "你好！"}
@@ -549,7 +549,7 @@ curl http://localhost:8000/v1/messages \
   -H "Content-Type: application/json" \
   -H "x-api-key: sk-your-api-key" \
   -d '{
-    "model": "claude-3-5-sonnet-20241022",
+    "model": "claude-sonnet-4-5-20250929",
     "max_tokens": 1024,
     "stream": true,
     "messages": [

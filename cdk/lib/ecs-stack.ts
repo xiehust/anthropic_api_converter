@@ -94,48 +94,77 @@ export class ECSStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    // Create Task Execution Role
-    const taskExecutionRole = new iam.Role(this, 'TaskExecutionRole', {
-      roleName: `anthropic-proxy-${config.environmentName}-task-execution`,
-      assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
-      managedPolicies: [
-        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy'),
-      ],
-    });
+    // Check if we should import existing roles (set via CDK context or auto-detect)
+    const taskExecutionRoleName = `anthropic-proxy-${config.environmentName}-task-execution`;
+    const taskRoleName = `anthropic-proxy-${config.environmentName}-task`;
 
-    // Create Task Role
-    const taskRole = new iam.Role(this, 'TaskRole', {
-      roleName: `anthropic-proxy-${config.environmentName}-task`,
-      assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
-    });
+    // Try to import existing roles, or create new ones if they don't exist
+    // Use context flag: cdk deploy -c importExistingRoles=true
+    const shouldImportRoles = this.node.tryGetContext('importExistingRoles') === 'true';
 
-    // Grant DynamoDB permissions
-    apiKeysTable.grantReadWriteData(taskRole);
-    usageTable.grantReadWriteData(taskRole);
-    cacheTable.grantReadWriteData(taskRole);
-    modelMappingTable.grantReadWriteData(taskRole);
+    let taskExecutionRole: iam.IRole;
+    let taskRole: iam.IRole;
 
-    // Grant Bedrock permissions
-    taskRole.addToPolicy(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        actions: [
-          'bedrock:InvokeModel',
-          'bedrock:InvokeModelWithResponseStream',
-          'bedrock:ListFoundationModels',
+    if (shouldImportRoles) {
+      // Import existing roles
+      taskExecutionRole = iam.Role.fromRoleName(
+        this,
+        'TaskExecutionRole',
+        taskExecutionRoleName
+      );
+      taskRole = iam.Role.fromRoleName(
+        this,
+        'TaskRole',
+        taskRoleName
+      );
+    } else {
+      // Create new roles (will fail if they already exist)
+      // To prevent this, either delete old roles or use importExistingRoles=true
+      taskExecutionRole = new iam.Role(this, 'TaskExecutionRole', {
+        roleName: taskExecutionRoleName,
+        assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+        managedPolicies: [
+          iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy'),
         ],
-        resources: ['*'],
-      })
-    );
+      });
 
-    // Grant CloudWatch Logs permissions
-    taskRole.addToPolicy(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        actions: ['logs:CreateLogGroup', 'logs:CreateLogStream', 'logs:PutLogEvents'],
-        resources: [logGroup.logGroupArn],
-      })
-    );
+      taskRole = new iam.Role(this, 'TaskRole', {
+        roleName: taskRoleName,
+        assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+      });
+    }
+
+    // Grant permissions only when creating new roles
+    // For imported roles, assume they already have the correct permissions
+    if (!shouldImportRoles) {
+      // Grant DynamoDB permissions
+      apiKeysTable.grantReadWriteData(taskRole);
+      usageTable.grantReadWriteData(taskRole);
+      cacheTable.grantReadWriteData(taskRole);
+      modelMappingTable.grantReadWriteData(taskRole);
+
+      // Grant Bedrock permissions
+      (taskRole as iam.Role).addToPolicy(
+        new iam.PolicyStatement({
+          effect: iam.Effect.ALLOW,
+          actions: [
+            'bedrock:InvokeModel',
+            'bedrock:InvokeModelWithResponseStream',
+            'bedrock:ListFoundationModels',
+          ],
+          resources: ['*'],
+        })
+      );
+
+      // Grant CloudWatch Logs permissions
+      (taskRole as iam.Role).addToPolicy(
+        new iam.PolicyStatement({
+          effect: iam.Effect.ALLOW,
+          actions: ['logs:CreateLogGroup', 'logs:CreateLogStream', 'logs:PutLogEvents'],
+          resources: [logGroup.logGroupArn],
+        })
+      );
+    }
 
     // Create Secret for Master API Key (optional - can be set via environment)
     const masterApiKeySecret = new secretsmanager.Secret(this, 'MasterAPIKeySecret', {
@@ -149,8 +178,10 @@ export class ECSStack extends cdk.Stack {
       },
     });
 
-    // Grant read access to secret
-    masterApiKeySecret.grantRead(taskRole);
+    // Grant read access to secret (only when creating new roles)
+    if (!shouldImportRoles) {
+      masterApiKeySecret.grantRead(taskRole);
+    }
 
     // Create Task Definition
     // Map platform string to ECS CpuArchitecture

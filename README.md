@@ -2,7 +2,7 @@
 
 ## 项目简介
 
-这是一个轻量级的 API 转换服务，让你无需修改代码即可在 Anthropic SDK 中使用 AWS Bedrock 上的各种大语言模型。通过简单的环境变量配置，即可在 Claude Code、Claude Agent SDK 等工具中切换使用 Qwen3、Claude 等不同模型。
+这是一个轻量级的 API 转换服务，让你无需修改代码即可在 Anthropic SDK 中使用 AWS Bedrock 上的各种大语言模型。通过简单的环境变量配置，即可在 Claude Code、Claude Agent SDK 等工具中切换使用 Qwen3、DeepSeek 等不同模型。
 
 **核心优势：**
 - 🔄 **零代码迁移** - 完全兼容 Anthropic API，无需修改现有代码
@@ -12,7 +12,7 @@
 - ☁️ **云原生** - 一键部署到 AWS ECS，自动扩展，高可用架构
 - 🎯 **场景广泛** - 适用于开发工具代理、应用集成、模型评测等多种场景
 
-**典型应用：** 在**Claude Code** 中使用 Qwen3-Coder-480B 进行代码生成，或在使用**Claude Agent SDK**构建生产应用中混合使用不同模型以平衡性能和成本。
+**典型应用：** 在**Claude Code** 中使用Bedrock 托管的 Qwen3-Coder-480B 进行代码生成，或在使用**Claude Agent SDK**构建生产应用中混合使用不同模型以平衡性能和成本。
 
 ## 功能特性
 

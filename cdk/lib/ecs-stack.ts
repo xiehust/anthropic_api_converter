@@ -94,9 +94,13 @@ export class ECSStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    // Generate a short random suffix to prevent role name conflicts
+    // This allows multiple deployments without role name collisions
+    const roleSuffix = Math.random().toString(36).substring(2, 8);
+
     // Create Task Execution Role
     const taskExecutionRole = new iam.Role(this, 'TaskExecutionRole', {
-      roleName: `anthropic-proxy-${config.environmentName}-task-execution`,
+      roleName: `anthropic-proxy-${config.environmentName}-task-execution-${roleSuffix}`,
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy'),
@@ -105,7 +109,7 @@ export class ECSStack extends cdk.Stack {
 
     // Create Task Role
     const taskRole = new iam.Role(this, 'TaskRole', {
-      roleName: `anthropic-proxy-${config.environmentName}-task`,
+      roleName: `anthropic-proxy-${config.environmentName}-task-${roleSuffix}`,
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
     });
 

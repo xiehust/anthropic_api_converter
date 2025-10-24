@@ -139,7 +139,7 @@ CMD [".venv/bin/python3", "claude_code_agent.py"]
 ### 克隆仓库：
 ```bash
 git clone <repository-url>
-cd anthropic_api_proxy
+cd anthropic_api_converter
 ```
 
 ### 选项 1. AWS ECS 部署（推荐）

@@ -139,7 +139,7 @@ CMD [".venv/bin/python3", "claude_code_agent.py"]
 ### Clone the repository:
 ```bash
 git clone <repository-url>
-cd anthropic_api_proxy
+cd anthropic_api_converter
 ```
 
 

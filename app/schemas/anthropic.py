@@ -102,7 +102,7 @@ class Message(BaseModel):
 class ToolInputSchema(BaseModel):
     """JSON schema for tool input."""
     type: Literal["object"] = "object"
-    properties: Dict[str, Any]
+    properties: Dict[str, Any] = Field(default_factory=dict)
     required: Optional[List[str]] = None
 
 
@@ -133,7 +133,7 @@ class MessageRequest(BaseModel):
     """Anthropic Messages API request."""
     model: str
     messages: List[Message]
-    max_tokens: int = Field(..., ge=1)
+    max_tokens: int = Field(default=4096, ge=1)
 
     # Optional parameters
     system: Optional[Union[str, List[SystemMessage]]] = None

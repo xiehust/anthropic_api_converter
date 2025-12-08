@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     default_model_mapping: Dict[str, str] = Field(
         default={
             # Anthropic model IDs -> Bedrock model ARNs
+            "claude-opus-4-5-20251101": "global.anthropic.claude-opus-4-5-20251101-v1:0",
             "claude-sonnet-4-5-20250929": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
             "claude-haiku-4-5-20251001": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
             "claude-3-5-haiku-20241022": "us.anthropic.claude-3-5-haiku-20241022-v1:0"

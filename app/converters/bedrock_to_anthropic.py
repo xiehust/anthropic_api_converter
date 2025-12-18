@@ -14,6 +14,7 @@ from app.schemas.anthropic import (
     ImageContent,
     ImageSource,
     MessageResponse,
+    RedactedThinkingContent,
     TextContent,
     ThinkingContent,
     ToolUseContent,
@@ -170,6 +171,33 @@ class BedrockToAnthropicConverter:
                     )
                 )
 
+            elif "reasoningContent" in block:
+                # Handle Bedrock reasoning/thinking content blocks
+                reasoning_data = block["reasoningContent"]
+
+                if "redactedContent" in reasoning_data:
+                    # Redacted thinking block
+                    anthropic_content.append(
+                        RedactedThinkingContent(
+                            type="redacted_thinking",
+                            data=reasoning_data["redactedContent"],
+                        )
+                    )
+                elif "reasoningText" in reasoning_data:
+                    # Normal thinking block
+                    reasoning_text = reasoning_data["reasoningText"]
+                    thinking_text = reasoning_text.get("text", "")
+                    signature = reasoning_text.get("signature")
+
+                    if thinking_text:  # Only add non-empty thinking blocks
+                        anthropic_content.append(
+                            ThinkingContent(
+                                type="thinking",
+                                thinking=thinking_text,
+                                signature=signature,
+                            )
+                        )
+
         return anthropic_content
 
     def _convert_usage(self, bedrock_usage: Dict[str, Any]) -> Usage:
@@ -277,6 +305,27 @@ class BedrockToAnthropicConverter:
                         },
                     }
                 )
+            elif "reasoningContent" in start_block:
+                # Thinking block start
+                reasoning_content = start_block["reasoningContent"]
+                if "redactedContent" in reasoning_content:
+                    # Redacted thinking block
+                    events.append(
+                        {
+                            "type": "content_block_start",
+                            "index": index,
+                            "content_block": {"type": "redacted_thinking", "data": ""},
+                        }
+                    )
+                else:
+                    # Normal thinking block
+                    events.append(
+                        {
+                            "type": "content_block_start",
+                            "index": index,
+                            "content_block": {"type": "thinking", "thinking": ""},
+                        }
+                    )
             else:
                 # Text block start
                 # print(f"[CONVERTER STREAM]   -> Starting text block [{index}]")

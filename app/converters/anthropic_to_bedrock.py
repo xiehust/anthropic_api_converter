@@ -15,6 +15,7 @@ from app.schemas.anthropic import (
     DocumentContent,
     Message,
     MessageRequest,
+    RedactedThinkingContent,
     SystemMessage,
     TextContent,
     ThinkingContent,
@@ -88,12 +89,27 @@ class AnthropicToBedrockConverter:
 
         # Handle extended thinking if enabled
         if request.thinking and settings.enable_extended_thinking:
-            # Map thinking configuration to Bedrock-specific format
-            # Note: Bedrock may not have direct thinking support, so we might
-            # need to add it to system prompt or handle differently
-            thinking_config = self._convert_thinking_config(request.thinking)
-            if thinking_config:
-                additional_fields.update(thinking_config)
+            if self._is_nova_2_model():
+                # Nova 2 models use a specific reasoningConfig format
+                # Extract effort level from thinking config if provided, default to "medium"
+                effort = "medium"
+                if isinstance(request.thinking, dict):
+                    # Map budget_tokens to effort level (heuristic)
+                    budget = request.thinking.get("budget_tokens", 0)
+                    if budget > 10000:
+                        effort = "high"
+                    elif budget < 1000:
+                        effort = "low"
+                additional_fields["reasoningConfig"] = {
+                    "type": "enabled",
+                    "maxReasoningEffort": effort
+                }
+                print(f"[CONVERTER] Added Nova 2 reasoningConfig with effort: {effort}")
+            else:
+                # Map thinking configuration to Bedrock-specific format for other models
+                thinking_config = self._convert_thinking_config(request.thinking)
+                if thinking_config:
+                    additional_fields.update(thinking_config)
 
         # Add anthropic_beta features for Claude models
         if self._is_claude_model():
@@ -154,6 +170,21 @@ class AnthropicToBedrockConverter:
 
         model_id_lower = self._resolved_model_id.lower()
         return "anthropic" in model_id_lower or "claude" in model_id_lower
+
+    def _is_nova_2_model(self) -> bool:
+        """
+        Check if the current model is an Amazon Nova 2 model.
+
+        Nova 2 models require a specific reasoning configuration format.
+
+        Returns:
+            True if the model is Amazon Nova 2, False otherwise
+        """
+        if not self._resolved_model_id:
+            return False
+
+        model_id_lower = self._resolved_model_id.lower()
+        return "amazon.nova-2" in model_id_lower
 
     def _convert_model_id(self, anthropic_model_id: str) -> str:
         """
@@ -287,13 +318,28 @@ class AnthropicToBedrockConverter:
                     print(f"[CONVERTER] Added cachePoint after document block")
 
             elif isinstance(block, ThinkingContent):
-                # Convert thinking block to text for Bedrock
-                # Since Bedrock may not support thinking blocks natively,
-                # we can optionally skip them or convert to text
+                # Convert thinking block to Bedrock reasoningContent format
                 if settings.enable_extended_thinking:
-                    bedrock_content.append(
-                        {"text": f"[Thinking: {block.thinking}]"}
-                    )
+                    thinking_block = {
+                        "reasoningContent": {
+                            "reasoningText": {
+                                "text": block.thinking
+                            }
+                        }
+                    }
+                    # Include signature if present (for multi-turn conversations)
+                    if block.signature:
+                        thinking_block["reasoningContent"]["reasoningText"]["signature"] = block.signature
+                    bedrock_content.append(thinking_block)
+
+            elif isinstance(block, RedactedThinkingContent):
+                # Convert redacted thinking block to Bedrock format
+                if settings.enable_extended_thinking:
+                    bedrock_content.append({
+                        "reasoningContent": {
+                            "redactedContent": block.data
+                        }
+                    })
 
             elif isinstance(block, ToolUseContent):
                 bedrock_content.append(

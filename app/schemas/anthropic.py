@@ -48,6 +48,13 @@ class ThinkingContent(BaseModel):
     """Extended thinking content block."""
     type: Literal["thinking"] = "thinking"
     thinking: str
+    signature: Optional[str] = None
+
+
+class RedactedThinkingContent(BaseModel):
+    """Redacted thinking content block (when thinking is hidden for safety/policy reasons)."""
+    type: Literal["redacted_thinking"] = "redacted_thinking"
+    data: str  # Base64 encoded redacted data
 
 
 class ToolUseContent(BaseModel):
@@ -72,6 +79,7 @@ ContentBlock = Union[
     ImageContent,
     DocumentContent,
     ThinkingContent,
+    RedactedThinkingContent,
     ToolUseContent,
     ToolResultContent,
 ]

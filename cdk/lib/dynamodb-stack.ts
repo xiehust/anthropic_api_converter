@@ -16,11 +16,11 @@ export class DynamoDBStack extends cdk.Stack {
     super(scope, id, props);
 
     const { config } = props;
-    const tablePrefix = `anthropic-proxy-${config.environmentName}`;
 
     // API Keys Table
+    // Note: tableName is intentionally omitted to let CDK generate unique names
+    // and avoid resource conflicts across deployments
     this.apiKeysTable = new dynamodb.Table(this, 'APIKeysTable', {
-      tableName: `${tablePrefix}-api-keys`,
       partitionKey: {
         name: 'api_key',
         type: dynamodb.AttributeType.STRING,
@@ -50,7 +50,6 @@ export class DynamoDBStack extends cdk.Stack {
 
     // Usage Tracking Table
     this.usageTable = new dynamodb.Table(this, 'UsageTable', {
-      tableName: `${tablePrefix}-usage`,
       partitionKey: {
         name: 'api_key',
         type: dynamodb.AttributeType.STRING,
@@ -85,7 +84,6 @@ export class DynamoDBStack extends cdk.Stack {
 
     // Model Mapping Table
     this.modelMappingTable = new dynamodb.Table(this, 'ModelMappingTable', {
-      tableName: `${tablePrefix}-model-mapping`,
       partitionKey: {
         name: 'anthropic_model_id',
         type: dynamodb.AttributeType.STRING,
@@ -107,23 +105,20 @@ export class DynamoDBStack extends cdk.Stack {
       cdk.Tags.of(this.modelMappingTable).add(key, value);
     });
 
-    // Outputs
+    // Outputs - exportName omitted to avoid cross-stack conflicts
     new cdk.CfnOutput(this, 'APIKeysTableName', {
       value: this.apiKeysTable.tableName,
       description: 'API Keys DynamoDB Table Name',
-      exportName: `${config.environmentName}-api-keys-table`,
     });
 
     new cdk.CfnOutput(this, 'UsageTableName', {
       value: this.usageTable.tableName,
       description: 'Usage Tracking DynamoDB Table Name',
-      exportName: `${config.environmentName}-usage-table`,
     });
 
     new cdk.CfnOutput(this, 'ModelMappingTableName', {
       value: this.modelMappingTable.tableName,
       description: 'Model Mapping DynamoDB Table Name',
-      exportName: `${config.environmentName}-model-mapping-table`,
     });
   }
 }

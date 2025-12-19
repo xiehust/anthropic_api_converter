@@ -120,23 +120,20 @@ export class NetworkStack extends cdk.Stack {
       cdk.Tags.of(this.vpc).add(key, value);
     });
 
-    // Outputs
+    // Outputs - exportName omitted to avoid cross-stack conflicts
     new cdk.CfnOutput(this, 'VpcId', {
       value: this.vpc.vpcId,
       description: 'VPC ID',
-      exportName: `${config.environmentName}-vpc-id`,
     });
 
     new cdk.CfnOutput(this, 'ALBSecurityGroupId', {
       value: this.albSecurityGroup.securityGroupId,
       description: 'ALB Security Group ID',
-      exportName: `${config.environmentName}-alb-sg-id`,
     });
 
     new cdk.CfnOutput(this, 'ECSSecurityGroupId', {
       value: this.ecsSecurityGroup.securityGroupId,
       description: 'ECS Security Group ID',
-      exportName: `${config.environmentName}-ecs-sg-id`,
     });
   }
 }

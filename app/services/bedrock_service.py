@@ -88,8 +88,9 @@ class BedrockService:
         print(f"  - Service tier: {effective_service_tier}")
 
         # Add serviceTier to request if not 'default'
+        # serviceTier must be a dict with 'type' key per AWS Bedrock API
         if effective_service_tier and effective_service_tier != "default":
-            bedrock_request["serviceTier"] = effective_service_tier
+            bedrock_request["serviceTier"] = {"type": effective_service_tier}
 
         try:
             print(f"[BEDROCK] Calling Bedrock Converse API...")
@@ -100,7 +101,8 @@ class BedrockService:
             print(f"[BEDROCK] Received response from Bedrock")
             print(f"  - Stop reason: {response.get('stopReason')}")
             print(f"  - Usage: {response.get('usage')}")
-            print(f"  - Service tier used: {response.get('serviceTier', 'default')}")
+            service_tier_resp = response.get('serviceTier', {})
+            print(f"  - Service tier used: {service_tier_resp.get('type', 'default') if isinstance(service_tier_resp, dict) else service_tier_resp}")
 
             # Convert response back to Anthropic format
             message_id = request_id or f"msg_{uuid4().hex}"
@@ -187,8 +189,9 @@ class BedrockService:
         print(f"  - Service tier: {effective_service_tier}")
 
         # Add serviceTier to request if not 'default'
+        # serviceTier must be a dict with 'type' key per AWS Bedrock API
         if effective_service_tier and effective_service_tier != "default":
-            bedrock_request["serviceTier"] = effective_service_tier
+            bedrock_request["serviceTier"] = {"type": effective_service_tier}
 
         message_id = request_id or f"msg_{uuid4().hex}"
         current_index = 0

@@ -10,7 +10,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Default values
-ENVIRONMENT="dev"
+ENVIRONMENT="prod"
 REGION="${AWS_REGION:-us-west-2}"
 USER_ID=""
 KEY_NAME=""
@@ -25,7 +25,7 @@ Usage: $0 [OPTIONS]
 Create an API key for the Anthropic Proxy service
 
 OPTIONS:
-    -e, --environment ENV    Environment (dev|prod) [default: dev]
+    -e, --environment ENV    Environment (dev|prod) [default: prod]
     -r, --region REGION      AWS region [default: us-west-2]
     -u, --user-id ID         User ID (required)
     -n, --name NAME          Key name/description (required)
@@ -127,14 +127,34 @@ fi
 # Generate API key
 API_KEY="sk-$(openssl rand -hex 16)"
 
-# Get table name
-TABLE_NAME="anthropic-proxy-${ENVIRONMENT}-api-keys"
+# Get table name from CloudFormation stack outputs
+STACK_NAME="AnthropicProxy-${ENVIRONMENT}-DynamoDB"
+TABLE_NAME=$(aws cloudformation describe-stacks \
+    --stack-name "$STACK_NAME" \
+    --region "$REGION" \
+    --query "Stacks[0].Outputs[?OutputKey=='APIKeysTableName'].OutputValue" \
+    --output text 2>/dev/null)
+
+if [[ -z "$TABLE_NAME" || "$TABLE_NAME" == "None" ]]; then
+    # Fallback: try to find table by pattern
+    TABLE_NAME=$(aws dynamodb list-tables \
+        --region "$REGION" \
+        --query "TableNames[?contains(@, 'AnthropicProxy-${ENVIRONMENT}') && contains(@, 'APIKeys')] | [0]" \
+        --output text 2>/dev/null)
+fi
+
+if [[ -z "$TABLE_NAME" || "$TABLE_NAME" == "None" ]]; then
+    echo -e "${RED}Error: Could not find API Keys table for environment '${ENVIRONMENT}'.${NC}"
+    echo -e "${RED}Make sure the CDK stack 'AnthropicProxy-${ENVIRONMENT}-DynamoDB' is deployed.${NC}"
+    exit 1
+fi
 
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Creating API Key${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo -e "Environment:  ${YELLOW}${ENVIRONMENT}${NC}"
 echo -e "Region:       ${YELLOW}${REGION}${NC}"
+echo -e "Table:        ${YELLOW}${TABLE_NAME}${NC}"
 echo -e "User ID:      ${YELLOW}${USER_ID}${NC}"
 echo -e "Key Name:     ${YELLOW}${KEY_NAME}${NC}"
 echo -e "Service Tier: ${YELLOW}${SERVICE_TIER}${NC}"

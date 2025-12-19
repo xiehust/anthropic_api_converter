@@ -53,7 +53,8 @@ class BedrockService:
         self.bedrock_to_anthropic = BedrockToAnthropicConverter()
 
     def invoke_model(
-        self, request: MessageRequest, request_id: Optional[str] = None
+        self, request: MessageRequest, request_id: Optional[str] = None,
+        service_tier: Optional[str] = None
     ) -> MessageResponse:
         """
         Invoke Bedrock model (non-streaming).
@@ -61,6 +62,9 @@ class BedrockService:
         Args:
             request: Anthropic MessageRequest
             request_id: Optional request ID
+            service_tier: Optional Bedrock service tier ('default', 'flex', 'priority', 'reserved')
+                         If not specified, uses the default from settings.
+                         Note: Claude models only support 'default' and 'reserved' (not 'flex')
 
         Returns:
             Anthropic MessageResponse
@@ -73,11 +77,19 @@ class BedrockService:
         # Convert request to Bedrock format
         bedrock_request = self.anthropic_to_bedrock.convert_request(request)
 
+        # Determine service tier to use
+        effective_service_tier = service_tier or settings.default_service_tier
+
         print(f"[BEDROCK] Bedrock request params:")
         print(f"  - Model ID: {bedrock_request.get('modelId')}")
         print(f"  - Messages count: {len(bedrock_request.get('messages', []))}")
         print(f"  - Has system: {bool(bedrock_request.get('system'))}")
         print(f"  - Has tools: {bool(bedrock_request.get('toolConfig'))}")
+        print(f"  - Service tier: {effective_service_tier}")
+
+        # Add serviceTier to request if not 'default'
+        if effective_service_tier and effective_service_tier != "default":
+            bedrock_request["serviceTier"] = effective_service_tier
 
         try:
             print(f"[BEDROCK] Calling Bedrock Converse API...")
@@ -88,6 +100,7 @@ class BedrockService:
             print(f"[BEDROCK] Received response from Bedrock")
             print(f"  - Stop reason: {response.get('stopReason')}")
             print(f"  - Usage: {response.get('usage')}")
+            print(f"  - Service tier used: {response.get('serviceTier', 'default')}")
 
             # Convert response back to Anthropic format
             message_id = request_id or f"msg_{uuid4().hex}"
@@ -106,6 +119,31 @@ class BedrockService:
             print(f"[ERROR] Code: {error_code}")
             print(f"[ERROR] Message: {error_message}")
             print(f"[ERROR] Response: {e.response}\n")
+
+            # Check if the error is related to serviceTier not being supported
+            # If so, retry with default tier
+            if (effective_service_tier and effective_service_tier != "default" and
+                ("serviceTier" in error_message.lower() or
+                 "service tier" in error_message.lower() or
+                 "does not support" in error_message.lower())):
+                print(f"[BEDROCK] Service tier '{effective_service_tier}' not supported, retrying with 'default'...")
+                # Remove serviceTier and retry
+                bedrock_request.pop("serviceTier", None)
+                try:
+                    response = self.client.converse(**bedrock_request)
+                    print(f"[BEDROCK] Retry with default tier succeeded")
+                    print(f"  - Stop reason: {response.get('stopReason')}")
+                    print(f"  - Usage: {response.get('usage')}")
+
+                    message_id = request_id or f"msg_{uuid4().hex}"
+                    anthropic_response = self.bedrock_to_anthropic.convert_response(
+                        response, request.model, message_id
+                    )
+                    return anthropic_response
+                except Exception as retry_error:
+                    print(f"[ERROR] Retry with default tier also failed: {retry_error}")
+                    raise Exception(f"Bedrock API error [{error_code}]: {error_message}")
+
             raise Exception(f"Bedrock API error [{error_code}]: {error_message}")
         except Exception as e:
             print(f"\n[ERROR] Exception in Bedrock invoke_model for request {request_id}")
@@ -116,7 +154,8 @@ class BedrockService:
             raise Exception(f"Failed to invoke Bedrock model: {str(e)}")
 
     async def invoke_model_stream(
-        self, request: MessageRequest, request_id: Optional[str] = None
+        self, request: MessageRequest, request_id: Optional[str] = None,
+        service_tier: Optional[str] = None
     ) -> AsyncGenerator[str, None]:
         """
         Invoke Bedrock model with streaming (Server-Sent Events format).
@@ -124,6 +163,9 @@ class BedrockService:
         Args:
             request: Anthropic MessageRequest
             request_id: Optional request ID
+            service_tier: Optional Bedrock service tier ('default', 'flex', 'priority', 'reserved')
+                         If not specified, uses the default from settings.
+                         Note: Claude models only support 'default' and 'reserved' (not 'flex')
 
         Yields:
             SSE-formatted event strings
@@ -136,9 +178,17 @@ class BedrockService:
         # Convert request to Bedrock format
         bedrock_request = self.anthropic_to_bedrock.convert_request(request)
 
+        # Determine service tier to use
+        effective_service_tier = service_tier or settings.default_service_tier
+
         print(f"[BEDROCK STREAM] Bedrock request params:")
         print(f"  - Model ID: {bedrock_request.get('modelId')}")
         print(f"  - Messages count: {len(bedrock_request.get('messages', []))}")
+        print(f"  - Service tier: {effective_service_tier}")
+
+        # Add serviceTier to request if not 'default'
+        if effective_service_tier and effective_service_tier != "default":
+            bedrock_request["serviceTier"] = effective_service_tier
 
         message_id = request_id or f"msg_{uuid4().hex}"
         current_index = 0
@@ -232,6 +282,64 @@ class BedrockService:
             print(f"[ERROR] Code: {error_code}")
             print(f"[ERROR] Message: {error_message}")
             print(f"[ERROR] Response: {e.response}\n")
+
+            # Check if the error is related to serviceTier not being supported
+            # If so, retry with default tier
+            if (effective_service_tier and effective_service_tier != "default" and
+                ("serviceTier" in error_message.lower() or
+                 "service tier" in error_message.lower() or
+                 "does not support" in error_message.lower())):
+                print(f"[BEDROCK STREAM] Service tier '{effective_service_tier}' not supported, retrying with 'default'...")
+                # Remove serviceTier and retry
+                bedrock_request.pop("serviceTier", None)
+                try:
+                    response = self.client.converse_stream(**bedrock_request)
+                    stream = response.get("stream")
+                    if stream:
+                        print(f"[BEDROCK STREAM] Retry with default tier succeeded, processing stream...")
+                        for bedrock_event in stream:
+                            # Process events same as above
+                            if "contentBlockDelta" in bedrock_event:
+                                delta_data = bedrock_event["contentBlockDelta"]
+                                index = delta_data.get("contentBlockIndex", 0)
+                                delta = delta_data.get("delta", {})
+                                if index not in seen_indices:
+                                    seen_indices.add(index)
+                                    if "reasoningContent" in delta:
+                                        start_event = {
+                                            "type": "content_block_start",
+                                            "index": index,
+                                            "content_block": {"type": "thinking", "thinking": ""},
+                                        }
+                                        yield self._format_sse_event(start_event)
+                                    else:
+                                        start_event = {
+                                            "type": "content_block_start",
+                                            "index": index,
+                                            "content_block": {"type": "text", "text": ""},
+                                        }
+                                        yield self._format_sse_event(start_event)
+
+                            anthropic_events = self.bedrock_to_anthropic.convert_stream_event(
+                                bedrock_event, request.model, message_id, current_index
+                            )
+                            if "contentBlockStart" in bedrock_event:
+                                current_index = bedrock_event["contentBlockStart"].get(
+                                    "contentBlockIndex", current_index
+                                )
+                                seen_indices.add(current_index)
+                            if "metadata" in bedrock_event:
+                                metadata = bedrock_event["metadata"]
+                                usage = metadata.get("usage", {})
+                                anthropic_events = self.bedrock_to_anthropic.merge_usage_into_events(
+                                    anthropic_events, usage
+                                )
+                            for event in anthropic_events:
+                                yield self._format_sse_event(event)
+                        print(f"[BEDROCK STREAM] Retry stream completed for request {request_id}")
+                        return
+                except Exception as retry_error:
+                    print(f"[ERROR] Retry with default tier also failed: {retry_error}")
 
             # Send error event
             error_event = self.bedrock_to_anthropic.create_error_event(

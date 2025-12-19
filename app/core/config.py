@@ -141,6 +141,11 @@ class Settings(BaseSettings):
         default=True, alias="INTERLEAVED_THINKING_ENABLED"
     )
 
+    # Bedrock Service Tier Settings
+    # Valid values: 'default', 'flex', 'priority', 'reserved'
+    # Note: Claude models only support 'default' and 'reserved' (not 'flex')
+    default_service_tier: str = Field(default="default", alias="DEFAULT_SERVICE_TIER")
+
     @field_validator("cors_origins", "cors_allow_methods", "cors_allow_headers", mode="before")
     @classmethod
     def parse_list_fields(cls, v: Any) -> List[str]:

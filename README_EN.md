@@ -286,6 +286,23 @@ ENABLE_DOCUMENT_SUPPORT=True
 PROMPT_CACHING_ENABLED=False
 ```
 
+#### Bedrock Service Tier
+```bash
+# Default service tier: 'default', 'flex', 'priority', 'reserved'
+DEFAULT_SERVICE_TIER=default
+```
+
+**Service Tier Options:**
+- `default` - Standard service tier (default)
+- `flex` - Flex tier with lower prices but potentially higher latency
+- `priority` - Priority tier with lower latency
+- `reserved` - Reserved capacity tier
+
+**Important Notes:**
+- Claude models **only support** `default` and `reserved` tiers, **not** `flex` tier
+- If the specified service tier is not supported by the model, the system automatically falls back to `default`
+- You can configure a custom service tier for each API key when creating it
+
 ## API Documentation
 
 ### Endpoints

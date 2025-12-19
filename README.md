@@ -231,8 +231,28 @@ uv run scripts/setup_tables.py
 
 4. **创建 API 密钥**：
 ```bash
-uv run scripts/create_api_key.py --user-id dev-user --name "Development Key"
+# 创建基本 API 密钥（使用默认服务层级）
+uv run python scripts/create_api_key.py --user-id dev-user --name "Development Key"
+
+# 创建带有 flex 服务层级的 API 密钥（适用于 Qwen、DeepSeek 等非 Claude 模型）
+uv run python scripts/create_api_key.py --user-id dev-user --name "Flex Key" --service-tier flex
+
+# 创建带有自定义速率限制的 API 密钥
+uv run python scripts/create_api_key.py --user-id dev-user --name "Limited Key" --rate-limit 100
+
+# 查看所有选项
+uv run python scripts/create_api_key.py --help
 ```
+
+**服务层级选项：**
+| 层级 | 说明 | 支持的模型 |
+|------|------|-----------|
+| `default` | 标准服务层级（默认） | 所有模型 |
+| `flex` | 更低成本，更高延迟 | Qwen、DeepSeek、Nova（不支持 Claude） |
+| `priority` | 更低延迟，更高成本 | 大部分模型 |
+| `reserved` | 预留容量 | Claude 及大部分模型 |
+
+**注意：** Claude 模型仅支持 `default` 和 `reserved` 层级。如果对 Claude 使用 `flex`，系统会自动回退到 `default`。
 
 5. **运行服务**：
 ```bash
@@ -282,6 +302,23 @@ ENABLE_EXTENDED_THINKING=True
 ENABLE_DOCUMENT_SUPPORT=True
 PROMPT_CACHING_ENABLED=False
 ```
+
+#### Bedrock 服务层级（Service Tier）
+```bash
+# 默认服务层级：'default', 'flex', 'priority', 'reserved'
+DEFAULT_SERVICE_TIER=default
+```
+
+**服务层级说明：**
+- `default` - 标准服务层级（默认）
+- `flex` - Flex 层级，提供更优惠的价格，但可能有更高的延迟
+- `priority` - 优先级层级，提供更低的延迟
+- `reserved` - 预留容量层级
+
+**注意事项：**
+- Claude 模型**仅支持** `default` 和 `reserved` 层级，**不支持** `flex` 层级
+- 如果指定的服务层级不被模型支持，系统会自动回退到 `default` 层级
+- 可以在创建 API 密钥时为每个密钥单独配置服务层级
 
 ## API 文档
 

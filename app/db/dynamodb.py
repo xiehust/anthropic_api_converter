@@ -176,6 +176,7 @@ class APIKeyManager:
         user_id: str,
         name: str,
         rate_limit: Optional[int] = None,
+        service_tier: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
@@ -185,6 +186,8 @@ class APIKeyManager:
             user_id: User identifier
             name: Human-readable name for the key
             rate_limit: Optional custom rate limit
+            service_tier: Optional Bedrock service tier ('default', 'flex', 'priority', 'reserved')
+                         Note: Claude models only support 'default' and 'reserved'
             metadata: Optional metadata dictionary
 
         Returns:
@@ -200,6 +203,7 @@ class APIKeyManager:
             "created_at": timestamp,
             "is_active": True,
             "rate_limit": rate_limit or settings.rate_limit_requests,
+            "service_tier": service_tier or settings.default_service_tier,
             "metadata": metadata or {},
         }
 

@@ -104,6 +104,14 @@ class AnthropicToBedrockConverter:
                     "type": "enabled",
                     "maxReasoningEffort": effort
                 }
+                # Nova 2 requires temperature and maxTokens to be unset when reasoning is enabled
+                # Remove them from inferenceConfig
+                if "temperature" in bedrock_request["inferenceConfig"]:
+                    del bedrock_request["inferenceConfig"]["temperature"]
+                    print("[CONVERTER] Removed temperature for Nova 2 reasoning mode")
+                if "maxTokens" in bedrock_request["inferenceConfig"]:
+                    del bedrock_request["inferenceConfig"]["maxTokens"]
+                    print("[CONVERTER] Removed maxTokens for Nova 2 reasoning mode")
                 print(f"[CONVERTER] Added Nova 2 reasoningConfig with effort: {effort}")
             else:
                 # Map thinking configuration to Bedrock-specific format for other models
@@ -176,6 +184,7 @@ class AnthropicToBedrockConverter:
         Check if the current model is an Amazon Nova 2 model.
 
         Nova 2 models require a specific reasoning configuration format.
+        Model IDs include: amazon.nova-pro-2, amazon.nova-lite-2, amazon.nova-micro-2, etc.
 
         Returns:
             True if the model is Amazon Nova 2, False otherwise
@@ -184,7 +193,8 @@ class AnthropicToBedrockConverter:
             return False
 
         model_id_lower = self._resolved_model_id.lower()
-        return "amazon.nova-2" in model_id_lower
+        # Match patterns like amazon.nova-pro-2, amazon.nova-lite-2, us.amazon.nova-pro-2, etc.
+        return "amazon.nova" in model_id_lower and "-2" in model_id_lower
 
     def _convert_model_id(self, anthropic_model_id: str) -> str:
         """

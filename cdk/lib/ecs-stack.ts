@@ -264,6 +264,9 @@ export class ECSStack extends cdk.Stack {
         rollback: true,
       },
       enableExecuteCommand: config.environmentName !== 'prod',
+      // Deployment configuration for zero-downtime deployments
+      minHealthyPercent: 100,  // Keep all tasks running during deployment
+      maxHealthyPercent: 200,  // Allow spinning up new tasks before draining old ones
     });
 
     // Attach to Target Group
@@ -303,35 +306,30 @@ export class ECSStack extends cdk.Stack {
       cdk.Tags.of(this.cluster).add(key, value);
     });
 
-    // Outputs
+    // Outputs - exportName omitted to avoid cross-stack conflicts
     new cdk.CfnOutput(this, 'ClusterName', {
       value: this.cluster.clusterName,
       description: 'ECS Cluster Name',
-      exportName: `${config.environmentName}-cluster-name`,
     });
 
     new cdk.CfnOutput(this, 'ServiceName', {
       value: this.service.serviceName,
       description: 'ECS Service Name',
-      exportName: `${config.environmentName}-service-name`,
     });
 
     new cdk.CfnOutput(this, 'ALBDNSName', {
       value: this.alb.loadBalancerDnsName,
       description: 'ALB DNS Name',
-      exportName: `${config.environmentName}-alb-dns`,
     });
 
     new cdk.CfnOutput(this, 'ALBARN', {
       value: this.alb.loadBalancerArn,
       description: 'ALB ARN',
-      exportName: `${config.environmentName}-alb-arn`,
     });
 
     new cdk.CfnOutput(this, 'MasterAPIKeySecretName', {
       value: masterApiKeySecret.secretName,
       description: 'Master API Key Secret Name',
-      exportName: `${config.environmentName}-master-api-key-secret`,
     });
   }
 }

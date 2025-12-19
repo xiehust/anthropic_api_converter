@@ -1,4 +1,24 @@
-# Anthropic-Bedrock API Converter[English](./README_EN.md)
+<div align="center">
+
+# 🔄 Anthropic-Bedrock API Proxy
+
+**零代码迁移，让 Anthropic SDK 无缝对接 AWS Bedrock**
+
+[![License](https://img.shields.io/badge/license-MIT--0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.12+-green.svg)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688.svg)](https://fastapi.tiangolo.com)
+[![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)](https://aws.amazon.com/bedrock/)
+
+<p>
+  <a href="./README.md"><img src="https://img.shields.io/badge/文档-中文-red.svg" alt="中文文档"></a>
+  <a href="./README_EN.md"><img src="https://img.shields.io/badge/Docs-English-blue.svg" alt="English Docs"></a>
+  <a href="./blog_article.md"><img src="https://img.shields.io/badge/📚-技术博客-purple.svg" alt="技术博客"></a>
+  <a href="./cdk/DEPLOYMENT.md"><img src="https://img.shields.io/badge/🚀-部署指南-orange.svg" alt="部署指南"></a>
+</p>
+
+---
+
+</div>
 
 ## 项目简介
 
@@ -32,6 +52,7 @@
 - **身份验证**：基于 API 密钥的身份验证，使用 DynamoDB 存储
 - **速率限制**：每个 API 密钥的令牌桶算法
 - **使用跟踪**：全面的分析和令牌使用跟踪
+- **服务层级**：支持 Bedrock Service Tier 配置，平衡成本和延迟
 
 ### 支持的模型
 - Claude 4.5/5 Sonnet
@@ -62,7 +83,7 @@ export ANTHROPIC_API_KEY=sk-xxxx
 
 ### 作为 Claude Agent SDK 的模型代理
 - 相同的设置也适用于 Claude Agent SDK
-例如在AgentCore Runtime中使用在Dockerfile，[参考项目链接](https://github.com/xiehust/agentcore_demo/tree/main/00-claudecode_agent). 
+例如在AgentCore Runtime中使用在Dockerfile，[参考项目链接](https://github.com/xiehust/agentcore_demo/tree/main/00-claudecode_agent).
 
 ```Dockerfile
 FROM --platform=linux/arm64 ghcr.io/astral-sh/uv:python3.13-bookworm-slim
@@ -80,7 +101,7 @@ RUN npm install -g @anthropic-ai/claude-code
 # Copy entire project (respecting .dockerignore)
 COPY . .
 RUN mkdir -p workspace
-RUN uv sync 
+RUN uv sync
 
 # Signal that this is running in Docker for host binding logic
 ENV DOCKER_CONTAINER=1
@@ -93,6 +114,68 @@ EXPOSE 8080
 CMD [".venv/bin/python3", "claude_code_agent.py"]
 ```
 
+## 服务层级（Service Tier）
+
+Bedrock Service Tier 功能允许您在成本和延迟之间进行权衡选择。本代理服务完整支持该特性，并提供灵活的配置方式。
+
+### 可用层级
+
+| 层级 | 描述 | 延迟 | 成本 | Claude 支持 |
+|------|------|------|------|------------|
+| `default` | 标准服务层级 | 标准 | 标准 | ✅ |
+| `flex` | 灵活层级，适合批处理任务 | 更高（最长24小时） | 更低 | ❌ |
+| `priority` | 优先级层级，适合实时应用 | 更低 | 更高 | ✅ |
+| `reserved` | 预留容量层级 | 稳定 | 预付费 | ✅ |
+
+### 配置方式
+#### 1. 按 API Key 配置
+
+系统默认值`defaul`, 可以为不同用户或用途创建具有不同服务层级的 API Key：
+
+```bash
+# 创建使用 flex 层级的 API Key（适合非实时批处理任务）
+./scripts/create-api-key.sh -u batch-user -n "Batch Processing Key" -t flex
+
+# 创建使用 priority 层级的 API Key（适合实时应用）
+./scripts/create-api-key.sh -u realtime-user -n "Realtime App Key" -t priority
+```
+
+#### 2. 优先级规则
+
+服务层级按以下优先级确定：
+1. **API Key 配置**（最高优先级）- 如果 API Key 有指定的服务层级
+3. **系统默认值** - `default`
+
+### 自动降级机制
+
+当指定的服务层级不被目标模型支持时，代理服务会**自动降级**到 `default` 层级并重试请求：
+
+```
+请求 (flex tier) → Claude 模型 → 不支持 flex → 自动降级到 default → 成功
+```
+
+这确保了即使配置了不兼容的服务层级，请求也不会失败。
+
+### 使用建议
+
+| 场景 | 推荐层级 | 说明 |
+|------|---------|------|
+| 实时对话/聊天 | `default` 或 `priority` | 需要低延迟响应 |
+| 批量数据处理 | `flex` | 可接受较高延迟，节省成本 |
+| 代码生成/开发工具 | `default` | 平衡延迟和成本 |
+| 生产环境关键应用 | `reserved` | 需要稳定的容量保证 |
+
+### 模型兼容性
+
+| 模型 | default | flex | priority | reserved |
+|------|---------|------|----------|----------|
+| Claude 系列 | ✅ | ❌ | ✅ | ✅ |
+| Qwen 系列 | ✅ | ✅ | ✅ | ✅ |
+| DeepSeek 系列 | ✅ | ✅ | ✅ | ✅ |
+| Nova 系列 | ✅ | ✅ | ✅ | ✅ |
+| MimiMax 系列 | ✅ | ✅ | ✅ | ✅ |
+
+> **注意**：具体模型对服务层级的支持可能会随 AWS Bedrock 更新而变化，请参考 [AWS 官方文档](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-service-tiers.html) 获取最新信息。
 
 ## 架构
 

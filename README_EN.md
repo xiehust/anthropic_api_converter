@@ -1,4 +1,24 @@
-# Anthropic-Bedrock API Converter [中文](./README.md)
+<div align="center">
+
+# 🔄 Anthropic-Bedrock API Proxy
+
+**Zero-Code Migration: Seamlessly Connect Anthropic SDK with AWS Bedrock**
+
+[![License](https://img.shields.io/badge/license-MIT--0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.12+-green.svg)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688.svg)](https://fastapi.tiangolo.com)
+[![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)](https://aws.amazon.com/bedrock/)
+
+<p>
+  <a href="./README.md"><img src="https://img.shields.io/badge/文档-中文-red.svg" alt="中文文档"></a>
+  <a href="./README_EN.md"><img src="https://img.shields.io/badge/Docs-English-blue.svg" alt="English Docs"></a>
+  <a href="./blog_article.md"><img src="https://img.shields.io/badge/📚-Tech_Blog-purple.svg" alt="Tech Blog"></a>
+  <a href="./cdk/DEPLOYMENT.md"><img src="https://img.shields.io/badge/🚀-Deployment-orange.svg" alt="Deployment Guide"></a>
+</p>
+
+---
+
+</div>
 
 ## Overview
 
@@ -32,6 +52,7 @@ This lightweight API convertion service enables you to use various large languag
 - **Authentication**: API key-based authentication with DynamoDB storage
 - **Rate Limiting**: Token bucket algorithm per API key
 - **Usage Tracking**: Comprehensive analytics and token usage tracking
+- **Service Tiers**: Bedrock Service Tier configuration for cost/latency optimization
 
 ### Supported Models
 - Claude 4.5/5 Sonnet
@@ -93,6 +114,69 @@ EXPOSE 8080
 CMD [".venv/bin/python3", "claude_code_agent.py"]
 ```
 
+## Service Tier
+
+The Bedrock Service Tier feature allows you to balance between cost and latency. This proxy service fully supports this feature with flexible configuration options.
+
+### Available Tiers
+
+| Tier | Description | Latency | Cost | Claude Support |
+|------|-------------|---------|------|----------------|
+| `default` | Standard service tier | Standard | Standard | ✅ |
+| `flex` | Flexible tier for batch processing | Higher (up to 24h) | Lower | ❌ |
+| `priority` | Priority tier for real-time apps | Lower | Higher | ✅ |
+| `reserved` | Reserved capacity tier | Stable | Prepaid | ✅ |
+
+### Configuration Methods
+
+#### 1. Per API Key Configuration
+
+System default is `default`. You can create API keys with different service tiers for different users or purposes:
+
+```bash
+# Create an API key with flex tier (for non-real-time batch processing)
+./scripts/create-api-key.sh -u batch-user -n "Batch Processing Key" -t flex
+
+# Create an API key with priority tier (for real-time applications)
+./scripts/create-api-key.sh -u realtime-user -n "Realtime App Key" -t priority
+```
+
+#### 2. Priority Rules
+
+Service tier is determined by the following priority:
+1. **API Key Configuration** (highest priority) - if the API key has a specified service tier
+2. **System Default** - `default`
+
+### Automatic Fallback Mechanism
+
+When the specified service tier is not supported by the target model, the proxy service will **automatically fall back** to `default` tier and retry the request:
+
+```
+Request (flex tier) → Claude model → flex not supported → Auto fallback to default → Success
+```
+
+This ensures that requests will not fail even if an incompatible service tier is configured.
+
+### Usage Recommendations
+
+| Scenario | Recommended Tier | Description |
+|----------|-----------------|-------------|
+| Real-time chat/conversation | `default` or `priority` | Requires low latency response |
+| Batch data processing | `flex` | Can tolerate higher latency, saves cost |
+| Code generation/dev tools | `default` | Balance between latency and cost |
+| Production critical apps | `reserved` | Requires stable capacity guarantee |
+
+### Model Compatibility
+
+| Model | default | flex | priority | reserved |
+|-------|---------|------|----------|----------|
+| Claude Series | ✅ | ❌ | ✅ | ✅ |
+| Qwen Series | ✅ | ✅ | ✅ | ✅ |
+| DeepSeek Series | ✅ | ✅ | ✅ | ✅ |
+| Nova Series | ✅ | ✅ | ✅ | ✅ |
+| MiniMax Series | ✅ | ✅ | ✅ | ✅ |
+
+> **Note**: Specific model support for service tiers may change with AWS Bedrock updates. Please refer to the [AWS Official Documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-service-tiers.html) for the latest information.
 
 ## Architecture
 

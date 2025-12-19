@@ -1,4 +1,17 @@
+<div align="center">
+
+<p>
+  <a href="./README.md"><img src="https://img.shields.io/badge/文档-中文-red.svg" alt="中文文档"></a>
+  <a href="./README_EN.md"><img src="https://img.shields.io/badge/Docs-English-blue.svg" alt="English Docs"></a>
+  <a href="./blog_article.md"><img src="https://img.shields.io/badge/📚-技术博客-purple.svg" alt="技术博客"></a>
+  <a href="./cdk/DEPLOYMENT.md"><img src="https://img.shields.io/badge/🚀-部署指南-orange.svg" alt="部署指南"></a>
+</p>
+
+</div>
+
 # Anthropic-Bedrock API Proxy 深度解析：零代码迁移，让 Claude Code 用上 Bedrock 全家桶
+
+> **本文深入剖析 Anthropic-Bedrock API Proxy 的架构设计、核心转换逻辑和实际应用场景，帮助你理解如何构建一个生产级的 API 代理服务。**
 
 ## 一、引言：当 Anthropic SDK 遇上 AWS Bedrock
 

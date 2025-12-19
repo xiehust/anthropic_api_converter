@@ -24,8 +24,11 @@ npx cdk bootstrap
 # 3. Deploy all stacks (ARM64 recommended for better price-performance)
 ./scripts/deploy.sh -e dev -r us-west-2 -p arm64
 
-# 4. Create an API key
+# 4. Create an API key (with default service tier)
 ./scripts/create-api-key.sh -e dev -u admin@example.com -n "Dev Key"
+
+# Or create with flex tier (for Qwen, DeepSeek, etc. - NOT for Claude)
+./scripts/create-api-key.sh -e dev -u admin@example.com -n "Flex Key" -t flex
 
 # 5. Test deployment
 curl http://YOUR_ALB_URL/health
@@ -62,6 +65,35 @@ Choose your target architecture:
 - WAF enabled
 - Container Insights enabled
 - 30-day log retention
+
+## API Key Management
+
+### Create API Key
+
+```bash
+# Basic API key with default service tier
+./scripts/create-api-key.sh -e dev -u user@example.com -n "Default Key"
+
+# API key with flex tier (for cost savings with non-Claude models)
+./scripts/create-api-key.sh -e dev -u user@example.com -n "Flex Key" -t flex
+
+# API key with rate limit
+./scripts/create-api-key.sh -e dev -u user@example.com -n "Limited Key" -l 1000
+
+# API key with flex tier AND rate limit
+./scripts/create-api-key.sh -e prod -u user@example.com -n "Budget Key" -t flex -l 500
+```
+
+### Service Tier Options
+
+| Tier | Description | Supported Models |
+|------|-------------|------------------|
+| `default` | Standard service tier | All models |
+| `flex` | Lower cost, higher latency | Qwen, DeepSeek, Nova (NOT Claude) |
+| `priority` | Lower latency, higher cost | Most models |
+| `reserved` | Reserved capacity | Claude, most models |
+
+**Important:** Claude models only support `default` and `reserved` tiers. If you use `flex` with Claude, it will automatically fallback to `default`.
 
 ## Common Commands
 

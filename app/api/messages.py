@@ -96,6 +96,10 @@ async def create_message(
     print(f"[REQUEST] API Key: {api_key_info.get('api_key', 'unknown')[:20]}...")
     print(f"{'='*80}\n")
 
+    # Get service_tier from API key info (defaults to 'default' if not set)
+    service_tier = api_key_info.get("service_tier", "default")
+    print(f"[REQUEST] Service Tier: {service_tier}")
+
     try:
         # Check if streaming is requested
         if request_data.stream:
@@ -107,6 +111,7 @@ async def create_message(
                     api_key_info,
                     bedrock_service,
                     usage_tracker,
+                    service_tier,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -117,7 +122,7 @@ async def create_message(
             )
         else:
             # Handle non-streaming request
-            response = bedrock_service.invoke_model(request_data, request_id)
+            response = bedrock_service.invoke_model(request_data, request_id, service_tier)
 
             # Record usage
             usage_tracker.record_usage(
@@ -173,6 +178,7 @@ async def _handle_streaming_request(
     api_key_info: dict,
     bedrock_service: BedrockService,
     usage_tracker: UsageTracker,
+    service_tier: str = "default",
 ):
     """
     Handle streaming request and yield SSE events.
@@ -183,6 +189,7 @@ async def _handle_streaming_request(
         api_key_info: API key information
         bedrock_service: Bedrock service instance
         usage_tracker: Usage tracker instance
+        service_tier: Bedrock service tier
 
     Yields:
         SSE-formatted event strings
@@ -192,11 +199,12 @@ async def _handle_streaming_request(
     error_message = None
 
     print(f"[STREAMING] Starting stream for request {request_id}")
+    print(f"[STREAMING] Service tier: {service_tier}")
 
     try:
         # Stream events from Bedrock
         async for sse_event in bedrock_service.invoke_model_stream(
-            request_data, request_id
+            request_data, request_id, service_tier
         ):
             # Parse event to track usage
             if "usage" in sse_event:

@@ -11,7 +11,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Default values
-ENVIRONMENT="dev"
+ENVIRONMENT="prod"
 REGION="${AWS_REGION:-us-west-2}"
 PLATFORM=""
 SKIP_BUILD=false
@@ -25,7 +25,7 @@ Usage: $0 [OPTIONS]
 Deploy Anthropic-Bedrock API Proxy to AWS using CDK
 
 OPTIONS:
-    -e, --environment ENV    Environment to deploy (dev|prod) [default: dev]
+    -e, --environment ENV    Environment to deploy (dev|prod) [default: prod]
     -r, --region REGION      AWS region [default: us-west-2]
     -p, --platform PLATFORM  Platform architecture (arm64|amd64) [REQUIRED]
     -s, --skip-build         Skip npm install and build

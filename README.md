@@ -177,6 +177,30 @@ npm install
   1. 使用以下命令创建 API 密钥：./scripts/create-api-key.sh
 ```
 
+**创建 API 密钥示例：**
+
+```bash
+# 进入 CDK 目录
+cd cdk
+
+# 基本用法 - 创建默认 API 密钥
+./scripts/create-api-key.sh -u user123 -n "My API Key"
+
+# 指定服务层级 - 使用 flex tier（更低成本，更高延迟）
+./scripts/create-api-key.sh -u user123 -n "Flex Key" -t flex
+
+# 指定服务层级 - 使用 priority tier（更低延迟，更高成本）
+./scripts/create-api-key.sh -u user123 -n "Priority Key" -t priority
+
+# 同时设置自定义速率限制和服务层级
+./scripts/create-api-key.sh -u user123 -n "Custom Key" -r 500 -t reserved
+
+# 查看帮助
+./scripts/create-api-key.sh -h
+```
+
+> **注意**: Claude 模型仅支持 `default` 和 `reserved` 服务层级，不支持 `flex`。如果使用 `flex` 层级调用 Claude 模型，代理会自动降级到 `default`。
+
 #### 更多详情请参见 [CDK 部署文档](cdk/DEPLOYMENT.md)
 
 ### 选项 2. 运行 Docker

@@ -50,7 +50,6 @@ const ecsStack = new ECSStack(app, `${stackPrefix}-ECS`, {
   ecsSecurityGroup: networkStack.ecsSecurityGroup,
   apiKeysTable: dynamoDBStack.apiKeysTable,
   usageTable: dynamoDBStack.usageTable,
-  cacheTable: dynamoDBStack.cacheTable,
   modelMappingTable: dynamoDBStack.modelMappingTable,
   stackName: `${stackPrefix}-ECS`,
   description: `ECS Fargate cluster and service for Anthropic proxy ${config.environmentName}`,

@@ -18,7 +18,6 @@ export interface ECSStackProps extends cdk.StackProps {
   ecsSecurityGroup: ec2.SecurityGroup;
   apiKeysTable: dynamodb.Table;
   usageTable: dynamodb.Table;
-  cacheTable: dynamodb.Table;
   modelMappingTable: dynamodb.Table;
 }
 
@@ -33,7 +32,7 @@ export class ECSStack extends cdk.Stack {
     super(scope, id, props);
 
     const { config, vpc, albSecurityGroup, ecsSecurityGroup } = props;
-    const { apiKeysTable, usageTable, cacheTable, modelMappingTable } = props;
+    const { apiKeysTable, usageTable, modelMappingTable } = props;
 
     // Create ECS Cluster
     this.cluster = new ecs.Cluster(this, 'Cluster', {
@@ -116,7 +115,6 @@ export class ECSStack extends cdk.Stack {
     // Grant DynamoDB permissions
     apiKeysTable.grantReadWriteData(taskRole);
     usageTable.grantReadWriteData(taskRole);
-    cacheTable.grantReadWriteData(taskRole);
     modelMappingTable.grantReadWriteData(taskRole);
 
     // Grant Bedrock permissions
@@ -203,7 +201,6 @@ export class ECSStack extends cdk.Stack {
         // DynamoDB Tables
         DYNAMODB_API_KEYS_TABLE: apiKeysTable.tableName,
         DYNAMODB_USAGE_TABLE: usageTable.tableName,
-        DYNAMODB_CACHE_TABLE: cacheTable.tableName,
         DYNAMODB_MODEL_MAPPING_TABLE: modelMappingTable.tableName,
 
         // Authentication

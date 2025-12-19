@@ -71,9 +71,6 @@ class Settings(BaseSettings):
     dynamodb_usage_table: str = Field(
         default="anthropic-proxy-usage", alias="DYNAMODB_USAGE_TABLE"
     )
-    dynamodb_cache_table: str = Field(
-        default="anthropic-proxy-cache", alias="DYNAMODB_CACHE_TABLE"
-    )
     dynamodb_model_mapping_table: str = Field(
         default="anthropic-proxy-model-mapping", alias="DYNAMODB_MODEL_MAPPING_TABLE"
     )
@@ -92,12 +89,11 @@ class Settings(BaseSettings):
         default=60, alias="RATE_LIMIT_WINDOW"
     )  # window in seconds
 
-    # Caching Settings
-    cache_enabled: bool = Field(default=False, alias="CACHE_ENABLED")
-    cache_ttl: int = Field(default=3600, alias="CACHE_TTL")  # seconds
+    # Bedrock Prompt Caching
     prompt_caching_enabled: bool = Field(
         default=True, alias="PROMPT_CACHING_ENABLED"
-    )  # Bedrock prompt caching
+    )  # Bedrock prompt caching (uses cachePoint in requests)
+
     # Model Mapping
     default_model_mapping: Dict[str, str] = Field(
         default={

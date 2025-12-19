@@ -79,6 +79,11 @@ The Anthropic-Bedrock API Proxy is a translation layer that enables clients usin
 - Inference configuration (temperature, top_p, etc.)
 - Tool definitions and tool choice
 - Thinking configuration (when supported)
+- Thinking/Redacted Thinking content blocks (for multi-turn conversations)
+
+**Model-Specific Handling:**
+- **Amazon Nova 2 Models**: Uses `reasoningConfig` with `maxReasoningEffort` (low/medium/high) instead of standard thinking configuration. Automatically removes `temperature` and `maxTokens` when reasoning is enabled.
+- **Claude Models**: Uses standard `additionalModelRequestFields` for thinking blocks with `budget_tokens`.
 
 **Key Methods:**
 ```python
@@ -87,6 +92,7 @@ _convert_messages(messages: List[Message]) -> List[Dict]
 _convert_content_blocks(content: Union[str, List]) -> List[Dict]
 _convert_tool_config(tools: List[Tool]) -> Dict
 _convert_system(system: Union[str, List]) -> List[Dict]
+_is_nova_2_model() -> bool  # Detect Amazon Nova 2 models
 ```
 
 #### Bedrock to Anthropic Converter (`app/converters/bedrock_to_anthropic.py`)
@@ -94,9 +100,16 @@ _convert_system(system: Union[str, List]) -> List[Dict]
 **Converts:**
 - Response messages back to Anthropic format
 - Content blocks (text, images, tool use)
+- Reasoning content blocks (`reasoningContent` → `ThinkingContent` / `RedactedThinkingContent`)
 - Usage statistics (token counts)
 - Stop reasons
-- Streaming events (messageStart, contentBlockDelta, etc.)
+- Streaming events (messageStart, contentBlockDelta, thinkingBlockStart, etc.)
+
+**Content Block Types:**
+- `text` → `TextContent`
+- `toolUse` → `ToolUseContent`
+- `reasoningContent.reasoningText` → `ThinkingContent` (with optional `signature` for multi-turn)
+- `reasoningContent.redactedContent` → `RedactedThinkingContent`
 
 **Key Methods:**
 ```python
@@ -115,12 +128,13 @@ _convert_stop_reason(reason: str) -> str
 - AWS Bedrock API interaction
 - Request/response conversion orchestration
 - Streaming event handling
+- Service tier management
 - Error handling and retries
 
 **Methods:**
 ```python
-invoke_model(request: MessageRequest) -> MessageResponse
-invoke_model_stream(request: MessageRequest) -> AsyncGenerator[str]
+invoke_model(request: MessageRequest, service_tier: str = None) -> MessageResponse
+invoke_model_stream(request: MessageRequest, service_tier: str = None) -> AsyncGenerator[str]
 list_available_models() -> List[Dict]
 get_model_info(model_id: str) -> Dict
 ```
@@ -129,7 +143,14 @@ get_model_info(model_id: str) -> Dict
 - Synchronous and streaming invocation
 - Automatic format conversion
 - SSE event formatting
+- Service tier support with automatic fallback
 - Comprehensive error handling
+
+**Service Tier Handling:**
+- Supports Bedrock service tiers: `default`, `flex`, `priority`, `reserved`
+- Automatically falls back to `default` tier if the specified tier is not supported by the model
+- Claude models only support `default` and `reserved` tiers (not `flex`)
+- Service tier is passed via `serviceTier` field in the Bedrock Converse API request
 
 ### 5. Data Layer
 
@@ -140,7 +161,7 @@ get_model_info(model_id: str) -> Dict
 1. **API Keys Table** (`anthropic-proxy-api-keys`)
    - Partition Key: `api_key` (String)
    - GSI: `user_id-index`
-   - Attributes: `user_id`, `name`, `created_at`, `is_active`, `rate_limit`, `metadata`
+   - Attributes: `user_id`, `name`, `created_at`, `is_active`, `rate_limit`, `service_tier`, `metadata`
 
 2. **Usage Table** (`anthropic-proxy-usage`)
    - Partition Key: `api_key` (String)
@@ -148,19 +169,13 @@ get_model_info(model_id: str) -> Dict
    - GSI: `request_id-index`
    - Attributes: `request_id`, `model`, `input_tokens`, `output_tokens`, `success`, `error_message`
 
-3. **Cache Table** (`anthropic-proxy-cache`)
-   - Partition Key: `cache_key` (String)
-   - TTL Attribute: `ttl` (Number)
-   - Attributes: `response`, `created_at`
-
-4. **Model Mapping Table** (`anthropic-proxy-model-mapping`)
+3. **Model Mapping Table** (`anthropic-proxy-model-mapping`)
    - Partition Key: `anthropic_model_id` (String)
    - Attributes: `bedrock_model_id`, `updated_at`
 
 **Managers:**
 - `APIKeyManager`: CRUD operations for API keys
 - `UsageTracker`: Record and query usage statistics
-- `CacheManager`: Get/set cached responses
 - `ModelMappingManager`: Custom model ID mappings
 
 ### 6. Configuration Management
@@ -181,6 +196,7 @@ get_model_info(model_id: str) -> Dict
 - Authentication settings (API key header, master key)
 - Rate limiting settings (requests, window)
 - Feature flags (tool use, thinking, documents)
+- Service tier settings (default service tier)
 - Monitoring settings (metrics, tracing, Sentry)
 
 ### 7. Observability
@@ -299,6 +315,96 @@ timestamp=2024-01-15 10:30:00 level=INFO logger=app.api.messages message="Reques
 | Credential exposure | Environment variables, secret managers |
 | Data leakage | API key masking, structured logging |
 
+## Extended Thinking Support
+
+### Overview
+
+Extended thinking allows models to perform step-by-step reasoning before producing a final response. The proxy supports extended thinking for both Claude models and Amazon Nova 2 models, with different backend implementations.
+
+### Content Block Types
+
+**ThinkingContent:**
+```python
+class ThinkingContent(BaseModel):
+    type: Literal["thinking"] = "thinking"
+    thinking: str                    # The thinking/reasoning text
+    signature: Optional[str] = None  # Signature for multi-turn conversations
+```
+
+**RedactedThinkingContent:**
+```python
+class RedactedThinkingContent(BaseModel):
+    type: Literal["redacted_thinking"] = "redacted_thinking"
+    data: str  # Base64 encoded redacted data
+```
+
+### Model-Specific Implementation
+
+**Claude Models:**
+- Uses `additionalModelRequestFields` with `thinking.type` and `thinking.budget_tokens`
+- Thinking blocks returned as `reasoningContent.reasoningText`
+- Supports multi-turn conversations with `signature` field
+
+**Amazon Nova 2 Models:**
+- Uses `additionalModelRequestFields` with `reasoningConfig`
+- Configuration: `{"type": "enabled", "maxReasoningEffort": "low|medium|high"}`
+- Budget tokens mapped to effort levels: <1000 → low, 1000-10000 → medium, >10000 → high
+- **Important**: `temperature` and `maxTokens` must be unset when reasoning is enabled
+
+### Multi-Turn Conversations
+
+When using extended thinking in multi-turn conversations:
+1. First response includes thinking blocks with a `signature`
+2. Subsequent requests must include thinking blocks in the message history
+3. The `signature` field must be preserved for continuity
+4. Redacted thinking blocks are returned when content is hidden for safety/policy reasons
+
+## Bedrock Service Tier Support
+
+### Overview
+
+Bedrock service tiers allow you to optimize for cost vs. latency. The proxy supports configuring service tiers at both the global and per-API-key level.
+
+### Available Tiers
+
+| Tier | Description | Claude Support |
+|------|-------------|----------------|
+| `default` | Standard service tier | ✅ Yes |
+| `flex` | Lower cost, higher latency (up to 24 hours) | ❌ No |
+| `priority` | Lower latency, higher cost | ✅ Yes |
+| `reserved` | Reserved capacity tier | ✅ Yes |
+
+### Configuration
+
+**Global Default:**
+```bash
+DEFAULT_SERVICE_TIER=default  # Environment variable
+```
+
+**Per-API-Key:**
+```python
+# When creating API key
+client.create_api_key(
+    user_id="user123",
+    name="My Key",
+    service_tier="priority"
+)
+```
+
+### Automatic Fallback
+
+When a service tier is not supported by the model (e.g., `flex` with Claude):
+1. The proxy attempts the request with the specified tier
+2. If Bedrock returns an error about unsupported service tier
+3. The proxy automatically retries with `default` tier
+4. The request succeeds transparently to the client
+
+### Priority Order
+
+1. API key `service_tier` attribute (highest priority)
+2. Global `DEFAULT_SERVICE_TIER` setting
+3. Default value: `default`
+
 ## Scalability Architecture
 
 ### Horizontal Scaling
@@ -315,10 +421,10 @@ timestamp=2024-01-15 10:30:00 level=INFO logger=app.api.messages message="Reques
 
 ### Performance Optimization
 
-**Caching Strategy:**
-- Optional response caching in DynamoDB
-- TTL-based expiration
-- Cache key: hash(model + messages + parameters)
+**Bedrock Prompt Caching:**
+- Uses Bedrock's native `cachePoint` feature in requests
+- Reduces latency for repeated prompts with same prefix
+- Controlled by `PROMPT_CACHING_ENABLED` setting
 
 **Connection Pooling:**
 - Reuse boto3 clients
@@ -407,11 +513,22 @@ AWS Services via IRSA:
 
 ## Future Enhancements
 
+### Recently Implemented
+
+1. **Extended Thinking Support** ✅
+   - ThinkingContent and RedactedThinkingContent blocks
+   - Multi-turn conversation support with signatures
+   - Amazon Nova 2 reasoning configuration
+
+2. **Bedrock Service Tier** ✅
+   - Per-API-key service tier configuration
+   - Automatic fallback for unsupported tiers
+   - Support for default, flex, priority, reserved tiers
+
 ### Planned Features
 
 1. **Advanced Caching**
-   - Redis integration for high-speed caching
-   - Prompt caching with Bedrock
+   - Redis integration for high-speed response caching
    - Intelligent cache warming
 
 2. **Enhanced Authentication**

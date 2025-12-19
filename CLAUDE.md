@@ -115,7 +115,7 @@ The core of this service is the bidirectional conversion between Anthropic and B
 **Critical Tables:**
 1. **API Keys** (`anthropic-proxy-api-keys`):
    - PK: `api_key` - The actual API key string
-   - Attributes: `user_id`, `name`, `is_active`, `rate_limit`, `metadata`
+   - Attributes: `user_id`, `name`, `is_active`, `rate_limit`, `service_tier`, `metadata`
    - GSI: `user_id-index` for querying by user
 
 2. **Usage Tracking** (`anthropic-proxy-usage`):
@@ -123,11 +123,7 @@ The core of this service is the bidirectional conversion between Anthropic and B
    - Attributes: `request_id`, `model`, `input_tokens`, `output_tokens`, `success`
    - GSI: `request_id-index` for request lookup
 
-3. **Cache** (`anthropic-proxy-cache`):
-   - PK: `cache_key` (hash of request)
-   - TTL: `ttl` attribute for automatic expiration
-
-4. **Model Mapping** (`anthropic-proxy-model-mapping`):
+3. **Model Mapping** (`anthropic-proxy-model-mapping`):
    - PK: `anthropic_model_id`
    - Attributes: `bedrock_model_id`
 

@@ -2,7 +2,7 @@
 DynamoDB client and table management.
 
 Provides interfaces for interacting with DynamoDB tables for API keys,
-usage tracking, caching, and model mapping.
+usage tracking, and model mapping.
 """
 import time
 from datetime import datetime, timedelta
@@ -31,14 +31,12 @@ class DynamoDBClient:
 
         self.api_keys_table_name = settings.dynamodb_api_keys_table
         self.usage_table_name = settings.dynamodb_usage_table
-        self.cache_table_name = settings.dynamodb_cache_table
         self.model_mapping_table_name = settings.dynamodb_model_mapping_table
 
     def create_tables(self):
         """Create all required DynamoDB tables if they don't exist."""
         self._create_api_keys_table()
         self._create_usage_table()
-        self._create_cache_table()
         self._create_model_mapping_table()
 
     def _create_api_keys_table(self):
@@ -102,39 +100,6 @@ class DynamoDBClient:
         except ClientError as e:
             if e.response["Error"]["Code"] == "ResourceInUseException":
                 print(f"Table already exists: {self.usage_table_name}")
-            else:
-                raise
-
-    def _create_cache_table(self):
-        """Create cache table with TTL."""
-        try:
-            table = self.dynamodb.create_table(
-                TableName=self.cache_table_name,
-                KeySchema=[
-                    {"AttributeName": "cache_key", "KeyType": "HASH"},  # Partition key
-                ],
-                AttributeDefinitions=[
-                    {"AttributeName": "cache_key", "AttributeType": "S"},
-                ],
-                BillingMode="PAY_PER_REQUEST",
-            )
-            table.wait_until_exists()
-
-            # Enable TTL
-            client = boto3.client(
-                "dynamodb",
-                region_name=settings.aws_region,
-                endpoint_url=settings.dynamodb_endpoint_url,
-            )
-            client.update_time_to_live(
-                TableName=self.cache_table_name,
-                TimeToLiveSpecification={"Enabled": True, "AttributeName": "ttl"},
-            )
-
-            print(f"Created table with TTL: {self.cache_table_name}")
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ResourceInUseException":
-                print(f"Table already exists: {self.cache_table_name}")
             else:
                 raise
 
@@ -366,70 +331,6 @@ class UsageTracker:
             "total_cached_tokens": total_cached_tokens,
             "total_tokens": total_input_tokens + total_output_tokens,
         }
-
-
-class CacheManager:
-    """Manager for response caching."""
-
-    def __init__(self, dynamodb_client: DynamoDBClient):
-        """Initialize cache manager."""
-        self.dynamodb = dynamodb_client.dynamodb
-        self.table = self.dynamodb.Table(dynamodb_client.cache_table_name)
-
-    def get(self, cache_key: str) -> Optional[Dict[str, Any]]:
-        """
-        Get cached response.
-
-        Args:
-            cache_key: Cache key
-
-        Returns:
-            Cached response or None
-        """
-        try:
-            response = self.table.get_item(Key={"cache_key": cache_key})
-            item = response.get("Item")
-
-            if item:
-                # Check if expired (TTL might not have cleaned up yet)
-                if item.get("ttl", 0) > int(time.time()):
-                    return item.get("response")
-
-            return None
-        except ClientError:
-            return None
-
-    def set(self, cache_key: str, response: Dict[str, Any], ttl: Optional[int] = None):
-        """
-        Cache a response.
-
-        Args:
-            cache_key: Cache key
-            response: Response to cache
-            ttl: Time to live in seconds
-        """
-        if not ttl:
-            ttl = settings.cache_ttl
-
-        expiration = int(time.time()) + ttl
-
-        item = {
-            "cache_key": cache_key,
-            "response": response,
-            "ttl": expiration,
-            "created_at": int(time.time()),
-        }
-
-        self.table.put_item(Item=item)
-
-    def delete(self, cache_key: str):
-        """
-        Delete cached response.
-
-        Args:
-            cache_key: Cache key
-        """
-        self.table.delete_item(Key={"cache_key": cache_key})
 
 
 class ModelMappingManager:

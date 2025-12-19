@@ -230,12 +230,6 @@ Creates four tables:
 - **TTL:** Automatic expiration via `ttl` attribute
 - **Purpose:** Track API usage and costs
 
-#### Cache Table
-- **Table Name:** `anthropic-proxy-{env}-cache`
-- **Primary Key:** `cache_key` (String)
-- **TTL:** Automatic expiration via `ttl` attribute
-- **Purpose:** Response caching
-
 #### Model Mapping Table
 - **Table Name:** `anthropic-proxy-{env}-model-mapping`
 - **Primary Key:** `anthropic_model_id` (String)

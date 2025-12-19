@@ -10,7 +10,6 @@ export interface DynamoDBStackProps extends cdk.StackProps {
 export class DynamoDBStack extends cdk.Stack {
   public readonly apiKeysTable: dynamodb.Table;
   public readonly usageTable: dynamodb.Table;
-  public readonly cacheTable: dynamodb.Table;
   public readonly modelMappingTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props: DynamoDBStackProps) {
@@ -84,24 +83,6 @@ export class DynamoDBStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    // Cache Table
-    this.cacheTable = new dynamodb.Table(this, 'CacheTable', {
-      tableName: `${tablePrefix}-cache`,
-      partitionKey: {
-        name: 'cache_key',
-        type: dynamodb.AttributeType.STRING,
-      },
-      billingMode:
-        config.dynamodbBillingMode === 'PAY_PER_REQUEST'
-          ? dynamodb.BillingMode.PAY_PER_REQUEST
-          : dynamodb.BillingMode.PROVISIONED,
-      readCapacity: config.dynamodbReadCapacity,
-      writeCapacity: config.dynamodbWriteCapacity,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      encryption: dynamodb.TableEncryption.AWS_MANAGED,
-      timeToLiveAttribute: 'ttl',
-    });
-
     // Model Mapping Table
     this.modelMappingTable = new dynamodb.Table(this, 'ModelMappingTable', {
       tableName: `${tablePrefix}-model-mapping`,
@@ -123,7 +104,6 @@ export class DynamoDBStack extends cdk.Stack {
     Object.entries(config.tags).forEach(([key, value]) => {
       cdk.Tags.of(this.apiKeysTable).add(key, value);
       cdk.Tags.of(this.usageTable).add(key, value);
-      cdk.Tags.of(this.cacheTable).add(key, value);
       cdk.Tags.of(this.modelMappingTable).add(key, value);
     });
 
@@ -138,12 +118,6 @@ export class DynamoDBStack extends cdk.Stack {
       value: this.usageTable.tableName,
       description: 'Usage Tracking DynamoDB Table Name',
       exportName: `${config.environmentName}-usage-table`,
-    });
-
-    new cdk.CfnOutput(this, 'CacheTableName', {
-      value: this.cacheTable.tableName,
-      description: 'Cache DynamoDB Table Name',
-      exportName: `${config.environmentName}-cache-table`,
     });
 
     new cdk.CfnOutput(this, 'ModelMappingTableName', {

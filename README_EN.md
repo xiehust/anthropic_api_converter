@@ -170,13 +170,37 @@ Deployment takes approximately **15-20 minutes**.
 ![alt text](assets/image.png)
 
 ```text
-Master API Key Secret:  
+Master API Key Secret:
   Secret Name: anthropic-proxy-prod-master-api-key
   Retrieve with: aws secretsmanager get-secret-value --secret-id anthropic-proxy-prod-master-api-key --region us-west-2
 
 Next Steps:
   1. Create API keys using: ./scripts/create-api-key.sh
 ```
+
+**Create API Key Examples:**
+
+```bash
+# Navigate to CDK directory
+cd cdk
+
+# Basic usage - create default API key
+./scripts/create-api-key.sh -u user123 -n "My API Key"
+
+# Specify service tier - use flex tier (lower cost, higher latency)
+./scripts/create-api-key.sh -u user123 -n "Flex Key" -t flex
+
+# Specify service tier - use priority tier (lower latency, higher cost)
+./scripts/create-api-key.sh -u user123 -n "Priority Key" -t priority
+
+# Set both custom rate limit and service tier
+./scripts/create-api-key.sh -u user123 -n "Custom Key" -r 500 -t reserved
+
+# View help
+./scripts/create-api-key.sh -h
+```
+
+> **Note**: Claude models only support `default` and `reserved` service tiers, not `flex`. If you use `flex` tier with Claude models, the proxy will automatically fall back to `default`.
 
 #### More detail in [CDK Deployment](cdk/DEPLOYMENT.md)
 

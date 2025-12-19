@@ -13,3 +13,4 @@ wheels/
 .coverage
 htmlcov
 .claude
+node_modules/

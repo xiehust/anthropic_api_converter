@@ -124,7 +124,7 @@ The Bedrock Service Tier feature allows you to balance between cost and latency.
 |------|-------------|---------|------|----------------|
 | `default` | Standard service tier | Standard | Standard | ✅ |
 | `flex` | Flexible tier for batch processing | Higher (up to 24h) | Lower | ❌ |
-| `priority` | Priority tier for real-time apps | Lower | Higher | ✅ |
+| `priority` | Priority tier for real-time apps | Lower | Higher | ❌ |
 | `reserved` | Reserved capacity tier | Stable | Prepaid | ✅ |
 
 ### Configuration Methods
@@ -170,7 +170,7 @@ This ensures that requests will not fail even if an incompatible service tier is
 
 | Model | default | flex | priority | reserved |
 |-------|---------|------|----------|----------|
-| Claude Series | ✅ | ❌ | ✅ | ✅ |
+| Claude Series | ✅ | ❌ | ❌ | ✅ |
 | Qwen Series | ✅ | ✅ | ✅ | ✅ |
 | DeepSeek Series | ✅ | ✅ | ✅ | ✅ |
 | Nova Series | ✅ | ✅ | ✅ | ✅ |

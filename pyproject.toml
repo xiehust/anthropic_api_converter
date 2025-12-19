@@ -21,7 +21,7 @@ dependencies = [
     "uvicorn[standard]>=0.37.0",
     "python-multipart>=0.0.9",
     # AWS SDK
-    "boto3>=1.40.52",
+    "boto3>=1.42.13",
     "botocore>=1.34.0",
     # Anthropic SDK (for reference/testing)
     "anthropic>=0.69.0",

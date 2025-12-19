@@ -217,6 +217,24 @@ Bedrock Service Tier 功能允许您在成本和延迟之间进行权衡选择�
 - **DynamoDB 存储**：API 密钥、使用跟踪、缓存、模型映射
 - **指标收集**：Prometheus 兼容的监控指标
 
+### AWS ECS Fargate 生产部署架构
+
+![ECS Architecture](assets/ecs-architecture.png)
+
+**架构说明：**
+
+| 组件 | 说明 |
+|------|------|
+| **VPC** | 跨多可用区部署，包含公有/私有子网，CIDR: 10.x.0.0/16 |
+| **Application Load Balancer** | 位于公有子网，接收外部 HTTP/HTTPS 流量 |
+| **ECS Fargate Cluster** | 位于私有子网，运行容器化的代理服务 |
+| **NAT Gateway** | 为私有子网提供出站互联网访问（开发环境 1 个，生产环境多 AZ） |
+| **VPC Endpoints** | 生产环境配置 Bedrock、DynamoDB、ECR、CloudWatch 私有端点，优化成本和安全性 |
+| **Auto Scaling** | 基于 CPU/内存利用率和请求数自动扩缩容（最小 2，最大 10） |
+| **DynamoDB Tables** | API Keys、Usage、Model Mapping 三张表，PAY_PER_REQUEST 计费 |
+| **Secrets Manager** | 安全存储 Master API Key |
+| **CloudWatch Logs** | 集中式日志管理，生产环境启用 Container Insights |
+
 ## 部署选项快速入门
 
 ### 克隆仓库：

@@ -2,8 +2,16 @@
 Bedrock service for interacting with AWS Bedrock Converse API.
 
 Handles both streaming and non-streaming requests to Bedrock models.
+
+Uses ThreadPoolExecutor to run synchronous boto3 calls in separate threads,
+preventing blocking of the FastAPI event loop. This ensures health check
+endpoints remain responsive even when Bedrock API calls experience retries.
 """
+import asyncio
 import json
+import queue
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, AsyncGenerator, Dict, Optional
 from uuid import uuid4
 
@@ -17,8 +25,42 @@ from app.core.config import settings
 from app.schemas.anthropic import CountTokensRequest, MessageRequest, MessageResponse
 
 
+# Global thread pool and semaphore for Bedrock calls
+# Using module-level to share across BedrockService instances
+_bedrock_executor: Optional[ThreadPoolExecutor] = None
+_bedrock_semaphore: Optional[asyncio.Semaphore] = None
+_executor_lock = threading.Lock()
+
+
+def _get_executor() -> ThreadPoolExecutor:
+    """Get or create the global thread pool executor."""
+    global _bedrock_executor
+    if _bedrock_executor is None:
+        with _executor_lock:
+            if _bedrock_executor is None:
+                _bedrock_executor = ThreadPoolExecutor(
+                    max_workers=settings.bedrock_thread_pool_size,
+                    thread_name_prefix="bedrock-"
+                )
+                print(f"[BEDROCK] Created thread pool with {settings.bedrock_thread_pool_size} workers")
+    return _bedrock_executor
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    """Get or create the global semaphore for concurrency control."""
+    global _bedrock_semaphore
+    if _bedrock_semaphore is None:
+        _bedrock_semaphore = asyncio.Semaphore(settings.bedrock_semaphore_size)
+        print(f"[BEDROCK] Created semaphore with limit {settings.bedrock_semaphore_size}")
+    return _bedrock_semaphore
+
+
 class BedrockService:
-    """Service for interacting with AWS Bedrock."""
+    """Service for interacting with AWS Bedrock.
+
+    Uses ThreadPoolExecutor to prevent blocking the event loop during
+    synchronous boto3 calls, ensuring health checks remain responsive.
+    """
 
     def __init__(self, dynamodb_client=None):
         """Initialize Bedrock service.
@@ -27,10 +69,11 @@ class BedrockService:
             dynamodb_client: Optional DynamoDB client for custom model mappings
         """
         # Configure boto3 with timeout settings
+        # Using standard retry mode instead of adaptive to avoid long backoff delays
         config = Config(
             read_timeout=settings.bedrock_timeout,
             connect_timeout=30,
-            retries={"max_attempts": 3, "mode": "adaptive"},
+            retries={"max_attempts": 3, "mode": "standard"},
         )
 
         self.client = boto3.client(
@@ -52,19 +95,50 @@ class BedrockService:
         self.anthropic_to_bedrock = AnthropicToBedrockConverter(dynamodb_client)
         self.bedrock_to_anthropic = BedrockToAnthropicConverter()
 
-    def invoke_model(
+    async def invoke_model(
         self, request: MessageRequest, request_id: Optional[str] = None,
         service_tier: Optional[str] = None
     ) -> MessageResponse:
         """
-        Invoke Bedrock model (non-streaming).
+        Invoke Bedrock model (non-streaming) asynchronously.
+
+        Runs the synchronous boto3 call in a thread pool to prevent blocking
+        the event loop. Uses a semaphore to limit concurrent calls.
 
         Args:
             request: Anthropic MessageRequest
             request_id: Optional request ID
             service_tier: Optional Bedrock service tier ('default', 'flex', 'priority', 'reserved')
-                         If not specified, uses the default from settings.
-                         Note: Claude models only support 'default' and 'reserved' (not 'flex')
+
+        Returns:
+            Anthropic MessageResponse
+
+        Raises:
+            Exception: If Bedrock API call fails
+        """
+        semaphore = _get_semaphore()
+        async with semaphore:
+            loop = asyncio.get_event_loop()
+            executor = _get_executor()
+            return await loop.run_in_executor(
+                executor,
+                self._invoke_model_sync,
+                request,
+                request_id,
+                service_tier
+            )
+
+    def _invoke_model_sync(
+        self, request: MessageRequest, request_id: Optional[str] = None,
+        service_tier: Optional[str] = None
+    ) -> MessageResponse:
+        """
+        Synchronous Bedrock model invocation (runs in thread pool).
+
+        Args:
+            request: Anthropic MessageRequest
+            request_id: Optional request ID
+            service_tier: Optional Bedrock service tier
 
         Returns:
             Anthropic MessageResponse
@@ -162,206 +236,300 @@ class BedrockService:
         """
         Invoke Bedrock model with streaming (Server-Sent Events format).
 
+        Uses a thread pool + queue pattern to prevent blocking the event loop.
+        The synchronous boto3 streaming call runs in a separate thread, and
+        events are passed through a queue to the async generator.
+
         Args:
             request: Anthropic MessageRequest
             request_id: Optional request ID
-            service_tier: Optional Bedrock service tier ('default', 'flex', 'priority', 'reserved')
-                         If not specified, uses the default from settings.
-                         Note: Claude models only support 'default' and 'reserved' (not 'flex')
+            service_tier: Optional Bedrock service tier
 
         Yields:
             SSE-formatted event strings
-
-        Raises:
-            Exception: If Bedrock API call fails
         """
-        print(f"[BEDROCK STREAM] Converting request to Bedrock format for request {request_id}")
+        semaphore = _get_semaphore()
+        async with semaphore:
+            print(f"[BEDROCK STREAM] Converting request to Bedrock format for request {request_id}")
 
-        # Convert request to Bedrock format
-        bedrock_request = self.anthropic_to_bedrock.convert_request(request)
+            # Convert request to Bedrock format
+            bedrock_request = self.anthropic_to_bedrock.convert_request(request)
 
-        # Determine service tier to use
-        effective_service_tier = service_tier or settings.default_service_tier
+            # Determine service tier to use
+            effective_service_tier = service_tier or settings.default_service_tier
 
-        print(f"[BEDROCK STREAM] Bedrock request params:")
-        print(f"  - Model ID: {bedrock_request.get('modelId')}")
-        print(f"  - Messages count: {len(bedrock_request.get('messages', []))}")
-        print(f"  - Service tier: {effective_service_tier}")
+            print(f"[BEDROCK STREAM] Bedrock request params:")
+            print(f"  - Model ID: {bedrock_request.get('modelId')}")
+            print(f"  - Messages count: {len(bedrock_request.get('messages', []))}")
+            print(f"  - Service tier: {effective_service_tier}")
 
-        # Add serviceTier to request if not 'default'
-        # serviceTier must be a dict with 'type' key per AWS Bedrock API
-        if effective_service_tier and effective_service_tier != "default":
-            bedrock_request["serviceTier"] = {"type": effective_service_tier}
+            # Add serviceTier to request if not 'default'
+            if effective_service_tier and effective_service_tier != "default":
+                bedrock_request["serviceTier"] = {"type": effective_service_tier}
 
-        message_id = request_id or f"msg_{uuid4().hex}"
+            message_id = request_id or f"msg_{uuid4().hex}"
+
+            # Create queue for thread-to-async communication
+            event_queue: queue.Queue = queue.Queue()
+
+            # Start stream worker in thread pool
+            executor = _get_executor()
+            loop = asyncio.get_event_loop()
+
+            # Submit the stream worker to the thread pool
+            future = loop.run_in_executor(
+                executor,
+                self._stream_worker,
+                bedrock_request,
+                request,
+                message_id,
+                effective_service_tier,
+                event_queue
+            )
+
+            # Consume events from queue asynchronously
+            try:
+                while True:
+                    try:
+                        # Non-blocking get with short timeout
+                        msg_type, data = event_queue.get_nowait()
+
+                        if msg_type == "done":
+                            print(f"[BEDROCK STREAM] Stream completed for request {request_id}")
+                            break
+                        elif msg_type == "error":
+                            # data is (error_code, error_message)
+                            error_code, error_message = data
+                            print(f"[BEDROCK STREAM] Error in stream: {error_code}: {error_message}")
+                            error_event = self.bedrock_to_anthropic.create_error_event(
+                                error_code, error_message
+                            )
+                            yield self._format_sse_event(error_event)
+                            break
+                        elif msg_type == "event":
+                            # data is the SSE-formatted string
+                            yield data
+
+                    except queue.Empty:
+                        # Queue is empty, yield control to event loop
+                        await asyncio.sleep(0.005)  # 5ms sleep to prevent busy waiting
+
+                        # Check if the worker thread has completed unexpectedly
+                        if future.done():
+                            # Try to get any remaining events
+                            while True:
+                                try:
+                                    msg_type, data = event_queue.get_nowait()
+                                    if msg_type == "event":
+                                        yield data
+                                    elif msg_type == "error":
+                                        error_code, error_message = data
+                                        error_event = self.bedrock_to_anthropic.create_error_event(
+                                            error_code, error_message
+                                        )
+                                        yield self._format_sse_event(error_event)
+                                    elif msg_type == "done":
+                                        break
+                                except queue.Empty:
+                                    break
+
+                            # Check for exceptions from the thread
+                            try:
+                                future.result()  # This will raise if thread had an exception
+                            except Exception as e:
+                                print(f"[BEDROCK STREAM] Thread exception: {e}")
+                                error_event = self.bedrock_to_anthropic.create_error_event(
+                                    "internal_error", str(e)
+                                )
+                                yield self._format_sse_event(error_event)
+                            break
+
+            except Exception as e:
+                print(f"[BEDROCK STREAM] Exception in async consumer: {e}")
+                import traceback
+                print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
+                error_event = self.bedrock_to_anthropic.create_error_event(
+                    "internal_error", str(e)
+                )
+                yield self._format_sse_event(error_event)
+
+    def _stream_worker(
+        self,
+        bedrock_request: Dict[str, Any],
+        request: MessageRequest,
+        message_id: str,
+        effective_service_tier: str,
+        event_queue: queue.Queue
+    ) -> None:
+        """
+        Worker function that runs in thread pool to handle streaming.
+
+        Processes Bedrock stream events and puts them in the queue for
+        async consumption.
+
+        Args:
+            bedrock_request: Bedrock-formatted request
+            request: Original Anthropic request
+            message_id: Message ID for the response
+            effective_service_tier: Service tier being used
+            event_queue: Queue for passing events to async consumer
+        """
         current_index = 0
+        seen_indices: set = set()
         accumulated_usage = {"inputTokens": 0, "outputTokens": 0}
-        seen_indices = set()  # Track which content block indices we've seen
 
         try:
-            print(f"[BEDROCK STREAM] Calling Bedrock ConverseStream API...")
+            print(f"[BEDROCK STREAM WORKER] Calling Bedrock ConverseStream API...")
 
             # Call Bedrock ConverseStream API
             response = self.client.converse_stream(**bedrock_request)
 
-            # Process stream events
             stream = response.get("stream")
             if not stream:
-                print(f"[ERROR] No stream returned from Bedrock for request {request_id}")
-                raise Exception("No stream returned from Bedrock")
+                print(f"[ERROR] No stream returned from Bedrock")
+                event_queue.put(("error", ("no_stream", "No stream returned from Bedrock")))
+                return
 
-            print(f"[BEDROCK STREAM] Starting to process stream events...")
+            print(f"[BEDROCK STREAM WORKER] Processing stream events...")
 
             for bedrock_event in stream:
-                # Handle missing contentBlockStart events from Bedrock
-                # Some models (like thinking models) don't send contentBlockStart
-                if "contentBlockDelta" in bedrock_event:
-                    delta_data = bedrock_event["contentBlockDelta"]
-                    index = delta_data.get("contentBlockIndex", 0)
-                    delta = delta_data.get("delta", {})
-
-                    # If we haven't seen this index yet, inject a content_block_start event
-                    if index not in seen_indices:
-                        seen_indices.add(index)
-
-                        # Check if this is reasoning content (thinking models)
-                        if "reasoningContent" in delta:
-                            print(f"[BEDROCK STREAM] Injecting content_block_start for thinking block [{index}] (Bedrock didn't send it)")
-                            # Inject a content_block_start event for thinking content
-                            start_event = {
-                                "type": "content_block_start",
-                                "index": index,
-                                "content_block": {"type": "thinking", "thinking": ""},
-                            }
-                            yield self._format_sse_event(start_event)
-                        else:
-                            print(f"[BEDROCK STREAM] Injecting content_block_start for text block [{index}] (Bedrock didn't send it)")
-                            # Inject a content_block_start event for regular text
-                            start_event = {
-                                "type": "content_block_start",
-                                "index": index,
-                                "content_block": {"type": "text", "text": ""},
-                            }
-                            yield self._format_sse_event(start_event)
-
-                # Convert Bedrock event to Anthropic events
-                anthropic_events = self.bedrock_to_anthropic.convert_stream_event(
-                    bedrock_event, request.model, message_id, current_index
+                # Process the event and generate SSE strings
+                sse_events = self._process_stream_event(
+                    bedrock_event, request, message_id, current_index, seen_indices, accumulated_usage
                 )
 
-                # Update current index if we see content block events
+                # Update current_index if needed
                 if "contentBlockStart" in bedrock_event:
                     current_index = bedrock_event["contentBlockStart"].get(
                         "contentBlockIndex", current_index
                     )
                     seen_indices.add(current_index)
 
-                # Update accumulated usage from metadata
-                if "metadata" in bedrock_event:
-                    metadata = bedrock_event["metadata"]
-                    usage = metadata.get("usage", {})
-                    accumulated_usage["inputTokens"] = usage.get("inputTokens", 0)
-                    accumulated_usage["outputTokens"] = usage.get("outputTokens", 0)
+                # Put each SSE event in the queue
+                for sse_event in sse_events:
+                    event_queue.put(("event", sse_event))
 
-                    # Merge usage into events
-                    anthropic_events = (
-                        self.bedrock_to_anthropic.merge_usage_into_events(
-                            anthropic_events, usage
-                        )
-                    )
-
-                # Yield each Anthropic event as SSE
-                for event in anthropic_events:
-                    yield self._format_sse_event(event)
-
-            print(f"[BEDROCK STREAM] Stream completed for request {request_id}")
+            print(f"[BEDROCK STREAM WORKER] Stream completed")
             print(f"  - Final usage: {accumulated_usage}")
+            event_queue.put(("done", None))
 
         except ClientError as e:
             error_code = e.response["Error"]["Code"]
             error_message = e.response["Error"]["Message"]
 
-            print(f"\n[ERROR] Bedrock ClientError in streaming request {request_id}")
-            print(f"[ERROR] Code: {error_code}")
-            print(f"[ERROR] Message: {error_message}")
-            print(f"[ERROR] Response: {e.response}\n")
+            print(f"[ERROR] Bedrock ClientError in streaming: {error_code}: {error_message}")
 
-            # Check if the error is related to serviceTier not being supported
-            # If so, retry with default tier
+            # Check if service tier retry is needed
             if (effective_service_tier and effective_service_tier != "default" and
                 ("serviceTier" in error_message.lower() or
                  "service tier" in error_message.lower() or
                  "does not support" in error_message.lower())):
-                print(f"[BEDROCK STREAM] Service tier '{effective_service_tier}' not supported, retrying with 'default'...")
-                # Remove serviceTier and retry
+
+                print(f"[BEDROCK STREAM WORKER] Retrying with default tier...")
                 bedrock_request.pop("serviceTier", None)
+
                 try:
                     response = self.client.converse_stream(**bedrock_request)
                     stream = response.get("stream")
                     if stream:
-                        print(f"[BEDROCK STREAM] Retry with default tier succeeded, processing stream...")
                         for bedrock_event in stream:
-                            # Process events same as above
-                            if "contentBlockDelta" in bedrock_event:
-                                delta_data = bedrock_event["contentBlockDelta"]
-                                index = delta_data.get("contentBlockIndex", 0)
-                                delta = delta_data.get("delta", {})
-                                if index not in seen_indices:
-                                    seen_indices.add(index)
-                                    if "reasoningContent" in delta:
-                                        start_event = {
-                                            "type": "content_block_start",
-                                            "index": index,
-                                            "content_block": {"type": "thinking", "thinking": ""},
-                                        }
-                                        yield self._format_sse_event(start_event)
-                                    else:
-                                        start_event = {
-                                            "type": "content_block_start",
-                                            "index": index,
-                                            "content_block": {"type": "text", "text": ""},
-                                        }
-                                        yield self._format_sse_event(start_event)
-
-                            anthropic_events = self.bedrock_to_anthropic.convert_stream_event(
-                                bedrock_event, request.model, message_id, current_index
+                            sse_events = self._process_stream_event(
+                                bedrock_event, request, message_id, current_index, seen_indices, accumulated_usage
                             )
                             if "contentBlockStart" in bedrock_event:
                                 current_index = bedrock_event["contentBlockStart"].get(
                                     "contentBlockIndex", current_index
                                 )
                                 seen_indices.add(current_index)
-                            if "metadata" in bedrock_event:
-                                metadata = bedrock_event["metadata"]
-                                usage = metadata.get("usage", {})
-                                anthropic_events = self.bedrock_to_anthropic.merge_usage_into_events(
-                                    anthropic_events, usage
-                                )
-                            for event in anthropic_events:
-                                yield self._format_sse_event(event)
-                        print(f"[BEDROCK STREAM] Retry stream completed for request {request_id}")
+                            for sse_event in sse_events:
+                                event_queue.put(("event", sse_event))
+
+                        print(f"[BEDROCK STREAM WORKER] Retry stream completed")
+                        event_queue.put(("done", None))
                         return
                 except Exception as retry_error:
-                    print(f"[ERROR] Retry with default tier also failed: {retry_error}")
+                    print(f"[ERROR] Retry also failed: {retry_error}")
 
-            # Send error event
-            error_event = self.bedrock_to_anthropic.create_error_event(
-                error_code, error_message
-            )
-            yield self._format_sse_event(error_event)
+            event_queue.put(("error", (error_code, error_message)))
 
         except Exception as e:
-            print(f"\n[ERROR] Exception in Bedrock streaming for request {request_id}")
-            print(f"[ERROR] Type: {type(e).__name__}")
-            print(f"[ERROR] Message: {str(e)}")
+            print(f"[ERROR] Exception in stream worker: {type(e).__name__}: {e}")
             import traceback
-            print(f"[ERROR] Traceback:\n{traceback.format_exc()}\n")
+            print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
+            event_queue.put(("error", ("internal_error", str(e))))
 
-            # Send error event
-            error_event = self.bedrock_to_anthropic.create_error_event(
-                "internal_error", str(e)
+    def _process_stream_event(
+        self,
+        bedrock_event: Dict[str, Any],
+        request: MessageRequest,
+        message_id: str,
+        current_index: int,
+        seen_indices: set,
+        accumulated_usage: Dict[str, int]
+    ) -> list[str]:
+        """
+        Process a single Bedrock stream event and return SSE-formatted strings.
+
+        Args:
+            bedrock_event: Raw Bedrock event
+            request: Original request for model info
+            message_id: Message ID
+            current_index: Current content block index
+            seen_indices: Set of indices we've seen
+            accumulated_usage: Usage accumulator
+
+        Returns:
+            List of SSE-formatted event strings
+        """
+        sse_events = []
+
+        # Handle missing contentBlockStart events from Bedrock
+        if "contentBlockDelta" in bedrock_event:
+            delta_data = bedrock_event["contentBlockDelta"]
+            index = delta_data.get("contentBlockIndex", 0)
+            delta = delta_data.get("delta", {})
+
+            if index not in seen_indices:
+                seen_indices.add(index)
+
+                # Inject content_block_start event
+                if "reasoningContent" in delta:
+                    print(f"[BEDROCK STREAM WORKER] Injecting content_block_start for thinking block [{index}]")
+                    start_event = {
+                        "type": "content_block_start",
+                        "index": index,
+                        "content_block": {"type": "thinking", "thinking": ""},
+                    }
+                else:
+                    print(f"[BEDROCK STREAM WORKER] Injecting content_block_start for text block [{index}]")
+                    start_event = {
+                        "type": "content_block_start",
+                        "index": index,
+                        "content_block": {"type": "text", "text": ""},
+                    }
+                sse_events.append(self._format_sse_event(start_event))
+
+        # Convert Bedrock event to Anthropic events
+        anthropic_events = self.bedrock_to_anthropic.convert_stream_event(
+            bedrock_event, request.model, message_id, current_index
+        )
+
+        # Update accumulated usage from metadata
+        if "metadata" in bedrock_event:
+            metadata = bedrock_event["metadata"]
+            usage = metadata.get("usage", {})
+            accumulated_usage["inputTokens"] = usage.get("inputTokens", 0)
+            accumulated_usage["outputTokens"] = usage.get("outputTokens", 0)
+
+            anthropic_events = self.bedrock_to_anthropic.merge_usage_into_events(
+                anthropic_events, usage
             )
-            yield self._format_sse_event(error_event)
+
+        # Format each event as SSE
+        for event in anthropic_events:
+            sse_events.append(self._format_sse_event(event))
+
+        return sse_events
 
     def _format_sse_event(self, event: Dict[str, Any]) -> str:
         """
@@ -474,9 +642,9 @@ class BedrockService:
         except Exception as e:
             raise Exception(f"Failed to get model info: {str(e)}")
 
-    def count_tokens(self, request: CountTokensRequest) -> int:
+    async def count_tokens(self, request: CountTokensRequest) -> int:
         """
-        Count tokens in a request.
+        Count tokens in a request asynchronously.
 
         This method first checks if the model is an Anthropic/Claude model.
         For Claude models, it uses Bedrock's Converse API to get actual token counts.
@@ -502,51 +670,71 @@ class BedrockService:
         # Only try Bedrock API for Claude models
         if is_claude_model:
             try:
-                # Convert the request to MessageRequest format for conversion
-                message_request = MessageRequest(
-                    model=request.model,
-                    messages=request.messages,
-                    system=request.system,
-                    tools=request.tools,
-                    max_tokens=1,  # Required but not used for counting
+                # Run synchronous count_tokens in thread pool
+                loop = asyncio.get_event_loop()
+                executor = _get_executor()
+                return await loop.run_in_executor(
+                    executor,
+                    self._count_tokens_sync,
+                    request
                 )
-
-                # Convert to Bedrock format
-                bedrock_request = self.anthropic_to_bedrock.convert_request(message_request)
-
-                # Build count_tokens API request
-                count_tokens_input = {
-                    "converse": {
-                        "messages": bedrock_request["messages"]
-                    }
-                }
-
-                # Add system messages if present
-                if "system" in bedrock_request and bedrock_request["system"]:
-                    count_tokens_input["converse"]["system"] = bedrock_request["system"]
-
-                # Add tool config if present
-                if "toolConfig" in bedrock_request:
-                    count_tokens_input["converse"]["toolConfig"] = bedrock_request["toolConfig"]
-
-                # Call count_tokens API
-                response = self.client.count_tokens(
-                    modelId=bedrock_request["modelId"],
-                    input=count_tokens_input
-                )
-
-                # Extract token count
-                input_tokens = response.get("inputTokens", 0)
-
-                if input_tokens > 0:
-                    return input_tokens
-
             except Exception as e:
                 # If Bedrock API fails, fall back to estimation
-                # This can happen for API errors or permission issues
                 pass
 
         # Fallback: Estimate token count for non-Claude models or if API fails
+        return self._estimate_token_count(request)
+
+    def _count_tokens_sync(self, request: CountTokensRequest) -> int:
+        """
+        Synchronous count tokens implementation (runs in thread pool).
+
+        Args:
+            request: CountTokensRequest
+
+        Returns:
+            Input token count
+        """
+        # Convert the request to MessageRequest format for conversion
+        message_request = MessageRequest(
+            model=request.model,
+            messages=request.messages,
+            system=request.system,
+            tools=request.tools,
+            max_tokens=1,  # Required but not used for counting
+        )
+
+        # Convert to Bedrock format
+        bedrock_request = self.anthropic_to_bedrock.convert_request(message_request)
+
+        # Build count_tokens API request
+        count_tokens_input = {
+            "converse": {
+                "messages": bedrock_request["messages"]
+            }
+        }
+
+        # Add system messages if present
+        if "system" in bedrock_request and bedrock_request["system"]:
+            count_tokens_input["converse"]["system"] = bedrock_request["system"]
+
+        # Add tool config if present
+        if "toolConfig" in bedrock_request:
+            count_tokens_input["converse"]["toolConfig"] = bedrock_request["toolConfig"]
+
+        # Call count_tokens API
+        response = self.client.count_tokens(
+            modelId=bedrock_request["modelId"],
+            input=count_tokens_input
+        )
+
+        # Extract token count
+        input_tokens = response.get("inputTokens", 0)
+
+        if input_tokens > 0:
+            return input_tokens
+
+        # Fallback to estimation if API returns 0
         return self._estimate_token_count(request)
 
     def _estimate_token_count(self, request: CountTokensRequest) -> int:

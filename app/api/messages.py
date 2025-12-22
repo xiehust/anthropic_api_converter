@@ -121,8 +121,8 @@ async def create_message(
                 },
             )
         else:
-            # Handle non-streaming request
-            response = bedrock_service.invoke_model(request_data, request_id, service_tier)
+            # Handle non-streaming request (async to not block event loop)
+            response = await bedrock_service.invoke_model(request_data, request_id, service_tier)
 
             # Record usage
             usage_tracker.record_usage(
@@ -302,8 +302,8 @@ async def count_tokens(
         HTTPException: For various error conditions
     """
     try:
-        # Count tokens using the Bedrock service
-        token_count = bedrock_service.count_tokens(request_data)
+        # Count tokens using the Bedrock service (async to not block event loop)
+        token_count = await bedrock_service.count_tokens(request_data)
 
         return CountTokensResponse(input_tokens=token_count)
 

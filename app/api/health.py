@@ -110,3 +110,18 @@ async def liveness_check():
         "status": "alive",
         "timestamp": datetime.utcnow().isoformat(),
     }
+
+
+@router.post(
+    "/api/event_logging/batch",
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,  # Hide from API docs
+)
+async def event_logging_batch():
+    """
+    Dummy endpoint to accept Anthropic SDK telemetry requests.
+
+    The Anthropic Python SDK sends telemetry data to this endpoint.
+    We accept and discard these requests to avoid 404 log noise.
+    """
+    return {"status": "ok"}

@@ -119,8 +119,16 @@ class Settings(BaseSettings):
     sentry_dsn: Optional[str] = Field(default=None, alias="SENTRY_DSN")
 
     # Request Timeouts
-    bedrock_timeout: int = Field(default=1800, alias="BEDROCK_TIMEOUT")  # seconds
+    bedrock_timeout: int = Field(default=600, alias="BEDROCK_TIMEOUT")  # seconds (10 minutes)
     dynamodb_timeout: int = Field(default=10, alias="DYNAMODB_TIMEOUT")  # seconds
+
+    # Bedrock Concurrency Settings
+    bedrock_thread_pool_size: int = Field(
+        default=15, alias="BEDROCK_THREAD_POOL_SIZE"
+    )  # Max concurrent Bedrock calls
+    bedrock_semaphore_size: int = Field(
+        default=15, alias="BEDROCK_SEMAPHORE_SIZE"
+    )  # Async semaphore limit
 
     # Feature Flags
     enable_tool_use: bool = Field(default=True, alias="ENABLE_TOOL_USE")

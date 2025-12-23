@@ -218,6 +218,24 @@ This ensures that requests will not fail even if an incompatible service tier is
 - **DynamoDB Storage**: API keys, usage tracking, caching, model mappings
 - **Metrics Collection**: Prometheus-compatible metrics for monitoring
 
+### AWS ECS Fargate Production Architecture
+
+![ECS Architecture](assets/ecs-architecture.png)
+
+**Architecture Details:**
+
+| Component | Description |
+|-----------|-------------|
+| **VPC** | Multi-AZ deployment with public/private subnets, CIDR: 10.x.0.0/16 |
+| **Application Load Balancer** | Located in public subnets, receives external HTTP/HTTPS traffic |
+| **ECS Fargate Cluster** | Located in private subnets, runs containerized proxy service |
+| **NAT Gateway** | Provides outbound internet access for private subnets (1 for dev, multi-AZ for prod) |
+| **VPC Endpoints** | Production environment configures private endpoints for Bedrock, DynamoDB, ECR, CloudWatch to optimize cost and security |
+| **Auto Scaling** | Automatically scales based on CPU/memory utilization and request count (min 2, max 10) |
+| **DynamoDB Tables** | API Keys, Usage, Model Mapping tables with PAY_PER_REQUEST billing |
+| **Secrets Manager** | Securely stores Master API Key |
+| **CloudWatch Logs** | Centralized logging, Container Insights enabled in production |
+
 ## Deployment Options Quick Start
 
 ### Clone the repository:

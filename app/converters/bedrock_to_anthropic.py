@@ -429,21 +429,39 @@ class BedrockToAnthropicConverter:
 
         return events
 
-    def create_error_event(self, error_type: str, error_message: str) -> Dict[str, Any]:
+    def create_error_event(self, error_code: str, error_message: str) -> Dict[str, Any]:
         """
         Create an Anthropic-formatted error event for streaming.
 
+        Maps Bedrock error codes to Anthropic error types.
+
         Args:
-            error_type: Type of error
+            error_code: Bedrock error code (e.g., 'ThrottlingException')
             error_message: Error message
 
         Returns:
             Error event dictionary
         """
+        # Map Bedrock error codes to Anthropic error types
+        error_type_mapping = {
+            "ThrottlingException": "rate_limit_error",
+            "TooManyRequestsException": "rate_limit_error",
+            "ServiceQuotaExceededException": "rate_limit_error",
+            "ServiceUnavailableException": "api_error",
+            "ModelNotReadyException": "api_error",
+            "ResourceNotFoundException": "not_found_error",
+            "ValidationException": "invalid_request_error",
+            "AccessDeniedException": "permission_error",
+            "internal_error": "api_error",
+            "no_stream": "api_error",
+        }
+
+        anthropic_error_type = error_type_mapping.get(error_code, "api_error")
+
         return {
             "type": "error",
             "error": {
-                "type": error_type,
+                "type": anthropic_error_type,
                 "message": error_message,
             },
         }

@@ -9,6 +9,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
+from app.core.exceptions import BedrockAPIError
 from app.db.dynamodb import DynamoDBClient, UsageTracker
 from app.middleware.auth import get_api_key_info
 from app.schemas.anthropic import (
@@ -144,6 +145,33 @@ async def create_message(
         print(f"[ERROR] Detail: {he.detail}\n")
         raise
 
+    except BedrockAPIError as e:
+        # Handle Bedrock API errors with proper HTTP status codes
+        print(f"\n[ERROR] BedrockAPIError in request {request_id}")
+        print(f"[ERROR] Code: {e.error_code}")
+        print(f"[ERROR] Message: {e.error_message}")
+        print(f"[ERROR] HTTP Status: {e.http_status}")
+        print(f"[ERROR] Error Type: {e.error_type}\n")
+
+        usage_tracker.record_usage(
+            api_key=api_key_info.get("api_key"),
+            request_id=request_id,
+            model=request_data.model,
+            input_tokens=0,
+            output_tokens=0,
+            success=False,
+            error_message=f"[{e.error_code}] {e.error_message}",
+        )
+
+        # Return error response with correct HTTP status
+        raise HTTPException(
+            status_code=e.http_status,
+            detail={
+                "type": e.error_type,
+                "message": e.error_message,
+            },
+        )
+
     except Exception as e:
         # Record failed usage
         print(f"\n[ERROR] Exception in request {request_id}")
@@ -166,7 +194,7 @@ async def create_message(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
-                "type": "internal_error",
+                "type": "api_error",
                 "message": f"Failed to process request: {str(e)}",
             },
         )

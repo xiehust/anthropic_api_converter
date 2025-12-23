@@ -22,6 +22,7 @@ from botocore.exceptions import ClientError
 from app.converters.anthropic_to_bedrock import AnthropicToBedrockConverter
 from app.converters.bedrock_to_anthropic import BedrockToAnthropicConverter
 from app.core.config import settings
+from app.core.exceptions import BedrockAPIError, map_bedrock_error
 from app.schemas.anthropic import CountTokensRequest, MessageRequest, MessageResponse
 
 
@@ -216,18 +217,33 @@ class BedrockService:
                         response, request.model, message_id
                     )
                     return anthropic_response
+                except ClientError as retry_error:
+                    retry_code = retry_error.response["Error"]["Code"]
+                    retry_message = retry_error.response["Error"]["Message"]
+                    print(f"[ERROR] Retry with default tier also failed: {retry_code}: {retry_message}")
+                    raise map_bedrock_error(retry_code, retry_message)
                 except Exception as retry_error:
                     print(f"[ERROR] Retry with default tier also failed: {retry_error}")
-                    raise Exception(f"Bedrock API error [{error_code}]: {error_message}")
+                    raise map_bedrock_error(error_code, error_message)
 
-            raise Exception(f"Bedrock API error [{error_code}]: {error_message}")
+            # Map Bedrock error to appropriate exception with correct HTTP status
+            raise map_bedrock_error(error_code, error_message)
+
+        except BedrockAPIError:
+            # Re-raise our custom exceptions as-is
+            raise
         except Exception as e:
             print(f"\n[ERROR] Exception in Bedrock invoke_model for request {request_id}")
             print(f"[ERROR] Type: {type(e).__name__}")
             print(f"[ERROR] Message: {str(e)}")
             import traceback
             print(f"[ERROR] Traceback:\n{traceback.format_exc()}\n")
-            raise Exception(f"Failed to invoke Bedrock model: {str(e)}")
+            raise BedrockAPIError(
+                error_code="InternalError",
+                error_message=f"Failed to invoke Bedrock model: {str(e)}",
+                http_status=500,
+                error_type="api_error"
+            )
 
     async def invoke_model_stream(
         self, request: MessageRequest, request_id: Optional[str] = None,

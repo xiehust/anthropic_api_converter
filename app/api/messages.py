@@ -326,6 +326,7 @@ async def create_message(
                     bedrock_service,
                     usage_tracker,
                     service_tier,
+                    anthropic_beta,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -336,7 +337,9 @@ async def create_message(
             )
         else:
             # Handle non-streaming request (async to not block event loop)
-            response = await bedrock_service.invoke_model(request_data, request_id, service_tier)
+            response = await bedrock_service.invoke_model(
+                request_data, request_id, service_tier, anthropic_beta
+            )
 
             # Record usage
             usage_tracker.record_usage(
@@ -420,6 +423,7 @@ async def _handle_streaming_request(
     bedrock_service: BedrockService,
     usage_tracker: UsageTracker,
     service_tier: str = "default",
+    anthropic_beta: Optional[str] = None,
 ):
     """
     Handle streaming request and yield SSE events.
@@ -431,6 +435,7 @@ async def _handle_streaming_request(
         bedrock_service: Bedrock service instance
         usage_tracker: Usage tracker instance
         service_tier: Bedrock service tier
+        anthropic_beta: Optional beta header from Anthropic client (comma-separated)
 
     Yields:
         SSE-formatted event strings
@@ -443,9 +448,9 @@ async def _handle_streaming_request(
     print(f"[STREAMING] Service tier: {service_tier}")
 
     try:
-        # Stream events from Bedrock
+        # Stream events from Bedrock (with beta header mapping)
         async for sse_event in bedrock_service.invoke_model_stream(
-            request_data, request_id, service_tier
+            request_data, request_id, service_tier, anthropic_beta
         ):
             # Parse event to track usage
             if "usage" in sse_event:

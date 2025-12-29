@@ -39,12 +39,15 @@ class AnthropicToBedrockConverter:
         self._model_mapping_manager = None
         self._resolved_model_id = None  # Cache the resolved model ID
 
-    def convert_request(self, request: MessageRequest) -> Dict[str, Any]:
+    def convert_request(
+        self, request: MessageRequest, anthropic_beta: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Convert Anthropic MessageRequest to Bedrock Converse request format.
 
         Args:
             request: Anthropic MessageRequest object
+            anthropic_beta: Optional beta header from Anthropic client (comma-separated)
 
         Returns:
             Dictionary in Bedrock Converse API format
@@ -119,19 +122,37 @@ class AnthropicToBedrockConverter:
                 if thinking_config:
                     additional_fields.update(thinking_config)
 
-        # Add anthropic_beta features for Claude models
-        if self._is_claude_model():
-            anthropic_beta = []
+        # Add anthropic_beta features for Claude models (from client-provided headers)
+        if self._is_claude_model() and anthropic_beta:
+            bedrock_beta = []
+            beta_values = [b.strip() for b in anthropic_beta.split(",")]
 
-            if settings.fine_grained_tool_streaming_enabled:
-                anthropic_beta.append("fine-grained-tool-streaming-2025-05-14")
+            for beta_value in beta_values:
+                if beta_value in settings.beta_header_mapping and self._supports_beta_header_mapping(request.model):
+                    # Map Anthropic beta headers to Bedrock beta headers
+                    mapped = settings.beta_header_mapping[beta_value]
+                    bedrock_beta.extend(mapped)
+                    print(f"[CONVERTER] Mapped beta header '{beta_value}' → {mapped}")
+                elif beta_value in settings.beta_headers_passthrough:
+                    # Pass through directly without mapping
+                    bedrock_beta.append(beta_value)
+                    print(f"[CONVERTER] Passing through beta header: {beta_value}")
+                else:
+                    # Unknown beta header - pass through as-is
+                    bedrock_beta.append(beta_value)
+                    print(f"[CONVERTER] Unknown beta header, passing through: {beta_value}")
 
-            if settings.interleaved_thinking_enabled:
-                anthropic_beta.append("interleaved-thinking-2025-05-14")
+            if bedrock_beta:
+                additional_fields["anthropic_beta"] = bedrock_beta
+                print(f"[CONVERTER] Added anthropic_beta features: {bedrock_beta}")
 
-            if anthropic_beta:
-                additional_fields["anthropic_beta"] = anthropic_beta
-                print(f"[CONVERTER] Added anthropic_beta features: {anthropic_beta}")
+                # If tool-examples beta is enabled, pass tools with input_examples
+                # via additionalModelRequestFields (Bedrock toolSpec doesn't support inputExamples)
+                if "tool-examples-2025-10-29" in bedrock_beta and request.tools:
+                    tools_with_examples = self._get_tools_with_examples(request.tools)
+                    if tools_with_examples:
+                        additional_fields["tools"] = tools_with_examples
+                        print(f"[CONVERTER] Added {len(tools_with_examples)} tools with input_examples to additionalModelRequestFields")
 
         if additional_fields:
             bedrock_request["additionalModelRequestFields"] = additional_fields
@@ -195,6 +216,100 @@ class AnthropicToBedrockConverter:
         model_id_lower = self._resolved_model_id.lower()
         # Match patterns like amazon.nova-pro-2, amazon.nova-lite-2, us.amazon.nova-pro-2, etc.
         return "amazon.nova" in model_id_lower and "-2" in model_id_lower
+
+    def _supports_beta_header_mapping(self, original_model_id: str) -> bool:
+        """
+        Check if the model supports beta header mapping.
+
+        Args:
+            original_model_id: The original Anthropic model ID from the request
+
+        Returns:
+            True if the model supports beta header mapping
+        """
+        if not self._resolved_model_id:
+            return False
+
+        # Check both original model ID and resolved model ID against supported models
+        supported_models = settings.beta_header_supported_models
+        return (
+            original_model_id in supported_models or
+            self._resolved_model_id in supported_models
+        )
+
+    def _map_beta_headers(self, anthropic_beta: str) -> List[str]:
+        """
+        Map Anthropic beta headers to Bedrock beta headers.
+
+        Args:
+            anthropic_beta: Comma-separated Anthropic beta header values
+
+        Returns:
+            List of mapped Bedrock beta headers
+        """
+        if not anthropic_beta:
+            return []
+
+        # Split comma-separated beta values
+        beta_values = [b.strip() for b in anthropic_beta.split(",")]
+        mapped_headers = []
+
+        for beta_value in beta_values:
+            if beta_value in settings.beta_header_mapping:
+                # Map to Bedrock beta headers
+                mapped = settings.beta_header_mapping[beta_value]
+                mapped_headers.extend(mapped)
+                print(f"[CONVERTER] Mapped beta header '{beta_value}' → {mapped}")
+            else:
+                # Keep unmapped beta values as-is (they might be passthrough)
+                print(f"[CONVERTER] Beta header '{beta_value}' has no mapping, skipping")
+
+        return mapped_headers
+
+    def _get_tools_with_examples(self, tools: List[Any]) -> List[Dict[str, Any]]:
+        """
+        Extract tools with input_examples in Anthropic format for additionalModelRequestFields.
+
+        This is needed because Bedrock's standard toolSpec doesn't support inputExamples.
+        When the tool-examples beta is enabled, we pass tools with input_examples via
+        additionalModelRequestFields.tools in Anthropic format.
+
+        Args:
+            tools: List of Tool objects or dicts
+
+        Returns:
+            List of tools in Anthropic format with input_examples
+        """
+        tools_with_examples = []
+
+        for tool in tools:
+            # Handle both dict and Pydantic model tools
+            if isinstance(tool, dict):
+                tool_input_examples = tool.get("input_examples")
+                if tool_input_examples:
+                    # Return tool in Anthropic format
+                    tools_with_examples.append({
+                        "name": tool.get("name"),
+                        "description": tool.get("description", ""),
+                        "input_schema": tool.get("input_schema", {}),
+                        "input_examples": tool_input_examples,
+                    })
+            else:
+                tool_input_examples = getattr(tool, "input_examples", None)
+                if tool_input_examples:
+                    # Return tool in Anthropic format
+                    tools_with_examples.append({
+                        "name": tool.name,
+                        "description": tool.description,
+                        "input_schema": {
+                            "type": tool.input_schema.type,
+                            "properties": tool.input_schema.properties,
+                            "required": tool.input_schema.required,
+                        } if tool.input_schema else {},
+                        "input_examples": tool_input_examples,
+                    })
+
+        return tools_with_examples
 
     def _convert_model_id(self, anthropic_model_id: str) -> str:
         """
@@ -465,6 +580,7 @@ class AnthropicToBedrockConverter:
                 tool_props = input_schema.get("properties", {})
                 tool_required = input_schema.get("required")
                 tool_cache_control = tool.get("cache_control")
+                tool_input_examples = tool.get("input_examples")
                 # Skip PTC code_execution tools (they're handled separately)
                 if tool.get("type") == "code_execution_20250825":
                     continue
@@ -475,6 +591,7 @@ class AnthropicToBedrockConverter:
                 tool_props = tool.input_schema.properties
                 tool_required = tool.input_schema.required
                 tool_cache_control = tool.cache_control
+                tool_input_examples = getattr(tool, "input_examples", None)
                 # Skip PTC code_execution tools
                 if hasattr(tool, "type") and tool.type == "code_execution_20250825":
                     continue
@@ -497,6 +614,9 @@ class AnthropicToBedrockConverter:
                 bedrock_tool["toolSpec"]["inputSchema"]["json"][
                     "required"
                 ] = tool_required
+
+            # Note: input_examples is handled separately via additionalModelRequestFields
+            # when the tool-examples beta is enabled (see convert_request method)
 
             bedrock_tools.append(bedrock_tool)
 

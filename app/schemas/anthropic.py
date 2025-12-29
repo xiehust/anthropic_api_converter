@@ -152,6 +152,9 @@ class Tool(BaseModel):
     description: str
     input_schema: ToolInputSchema
     cache_control: Optional[CacheControl] = None
+    # Input examples (beta feature: tool-examples-2025-10-29)
+    # Array of example input objects to help Claude understand how to use the tool
+    input_examples: Optional[List[Dict[str, Any]]] = None
     # PTC-specific fields
     type: Optional[str] = None  # e.g., "code_execution_20250825" for PTC
     allowed_callers: Optional[List[Literal["direct", "code_execution_20250825"]]] = None

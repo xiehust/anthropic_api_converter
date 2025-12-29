@@ -47,6 +47,8 @@
 - **扩展思考**：支持响应中的思考块
 - **多模态内容**：支持文本、图像和文档
 - **提示词缓存**：映射缓存控制提示（在支持的情况下）
+- **Beta Header 映射**：自动将 Anthropic beta headers 映射到 Bedrock beta headers（如 `advanced-tool-use-2025-11-20` → `tool-examples-2025-10-29`）
+- **工具输入示例**：支持 `input_examples` 参数，为工具提供示例输入以帮助模型更好地理解工具用法
 
 ### 基础设施
 - **身份验证**：基于 API 密钥的身份验证，使用 DynamoDB 存储
@@ -176,6 +178,81 @@ Bedrock Service Tier 功能允许您在成本和延迟之间进行权衡选择�
 | MimiMax 系列 | ✅ | ✅ | ✅ | ✅ |
 
 > **注意**：具体模型对服务层级的支持可能会随 AWS Bedrock 更新而变化，请参考 [AWS 官方文档](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-service-tiers.html) 获取最新信息。
+
+## Beta Header 映射与工具输入示例
+
+### Beta Header 映射
+
+代理服务支持将 Anthropic beta headers 自动映射到 Bedrock beta headers，使您可以在使用 Bedrock 时访问 Anthropic 的 beta 功能。
+
+**默认映射：**
+
+| Anthropic Beta Header | Bedrock Beta Headers |
+|----------------------|---------------------|
+| `advanced-tool-use-2025-11-20` | `tool-examples-2025-10-29`, `tool-search-tool-2025-10-19` |
+
+**支持的模型：**
+- Claude Opus 4.5 (`claude-opus-4-5-20251101`)
+
+**使用示例：**
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-your-api-key",
+    base_url="http://localhost:8000"
+)
+
+# 使用 beta header
+message = client.beta.messages.create(
+    model="claude-opus-4-5-20251101",
+    max_tokens=1024,
+    betas=["advanced-tool-use-2025-11-20"],
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+### 工具输入示例 (input_examples)
+
+`input_examples` 参数允许您为工具定义提供示例输入，帮助模型更好地理解如何使用该工具。
+
+**使用示例：**
+
+```python
+message = client.messages.create(
+    model="claude-opus-4-5-20251101",
+    max_tokens=1024,
+    tools=[
+        {
+            "name": "get_weather",
+            "description": "获取指定位置的天气信息",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "城市名称"},
+                    "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+                },
+                "required": ["location"]
+            },
+            "input_examples": [
+                {"location": "北京", "unit": "celsius"},
+                {"location": "San Francisco, CA", "unit": "fahrenheit"},
+                {"location": "东京"}  # unit 是可选的
+            ]
+        }
+    ],
+    messages=[{"role": "user", "content": "今天北京天气怎么样？"}]
+)
+```
+
+### 配置扩展
+
+**添加新的 beta header 映射：**
+在 `.env` 或 `app/core/config.py` 中修改 `BETA_HEADER_MAPPING`。
+
+**为更多模型启用 beta header 映射：**
+将模型 ID 添加到 `BETA_HEADER_SUPPORTED_MODELS` 列表。
 
 ## 架构
 

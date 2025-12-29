@@ -409,101 +409,254 @@ When you need to execute multi-step tasks, use the `execute_code` tool to write 
 3. You can perform data processing, filtering, aggregation, and conditional logic in your code
 4. After code execution completes, you will see the content output by print
 
-## Best Practices for coding
+## CRITICAL: Stateless Execution Environment
 
-1. **Parallel Execution (Recommended)**: When calling the same tool for multiple independent items, use `asyncio.gather()` for parallel execution instead of sequential loops
+**IMPORTANT: Each `execute_code` call runs in a FRESH, ISOLATED environment.**
+
+- Variables, data, and state from previous code executions DO NOT persist
+- Each code block starts with a completely clean slate
+- You CANNOT reference variables defined in previous `execute_code` calls
+
+### What This Means:
+
+**WRONG** - Assuming variables persist across calls:
 ```python
+# First execute_code call
+products = await get_inventory(warehouse="NYC")
+print(products)
+
+# Second execute_code call - THIS WILL FAIL!
+# products does not exist here!
+for item in products:  # NameError: 'products' is not defined
+    details = await get_product_details(sku=item['sku'])
+```
+
+**CORRECT** - Complete all work in a SINGLE code block (STRONGLY PREFERRED):
+```python
+import json
 import asyncio
 
-# Fetch expenses for all employees in parallel (recommended)
-employee_ids = ["ENG001", "ENG002", "ENG003"]
-expense_tasks = [
-    get_expenses(employee_id=emp_id, quarter="Q3")
-    for emp_id in employee_ids
-]
-expenses_results = await asyncio.gather(*expense_tasks)
+# Do EVERYTHING in one code block
+inventory_data = await get_inventory(warehouse="NYC")
+products = json.loads(inventory_data)
+
+# Continue processing in the same block
+detail_tasks = [get_product_details(sku=p['sku']) for p in products]
+details = await asyncio.gather(*detail_tasks)
+
+# Analyze and print final results
+for product, detail in zip(products, details):
+    print(f"{{product['name']}}: {{detail}}")
+```
+
+**CORRECT** - If multiple blocks unavoidable, re-fetch data:
+```python
+import json
+
+# In a NEW code block, re-fetch the data you need
+inventory_data = await get_inventory(warehouse="NYC")
+products = json.loads(inventory_data)
+
+# Now continue processing
+detail_tasks = [get_product_details(sku=p['sku']) for p in products]
+# ...
+```
+
+## Best Practices for Coding
+
+### 1. Complete Tasks in One Block (MOST IMPORTANT)
+
+For multi-step tasks, write ONE code block that accomplishes everything:
+
+```python
+import json
+import asyncio
+
+# Step 1: Get all orders from the past week
+orders_data = await get_recent_orders(days=7)
+orders = json.loads(orders_data)
+print(f"Processing {{len(orders)}} orders")
+
+# Step 2: Get customer info for all orders in parallel
+customer_ids = list(set(order['customer_id'] for order in orders))
+customer_tasks = [get_customer(customer_id=cid) for cid in customer_ids]
+customer_results = await asyncio.gather(*customer_tasks)
+customers = {{cid: json.loads(data) for cid, data in zip(customer_ids, customer_results)}}
+
+# Step 3: Find high-value orders from premium customers
+HIGH_VALUE_THRESHOLD = 1000
+premium_high_value = []
+for order in orders:
+    customer = customers[order['customer_id']]
+    if customer['tier'] == 'premium' and order['total'] > HIGH_VALUE_THRESHOLD:
+        premium_high_value.append({{
+            'order_id': order['id'],
+            'customer_name': customer['name'],
+            'total': order['total']
+        }})
+
+# Step 4: Get shipping status for these orders
+if premium_high_value:
+    shipping_tasks = [get_shipping_status(order_id=o['order_id']) for o in premium_high_value]
+    shipping_results = await asyncio.gather(*shipping_tasks)
+  
+    print("\nPremium customers with high-value orders:")
+    for order_info, shipping_json in zip(premium_high_value, shipping_results):
+        shipping = json.loads(shipping_json)
+        print(f"  Order {{order_info['order_id']}}: ${{order_info['total']:,.2f}} - {{order_info['customer_name']}} - Status: {{shipping['status']}}")
+else:
+    print("No high-value orders from premium customers found")
+```
+
+### 2. Parallel Execution with asyncio.gather()
+
+When calling the same tool for multiple items, always use parallel execution:
+
+```python
+import asyncio
+import json
+
+# Get health metrics for multiple servers in parallel
+server_ids = ["srv-001", "srv-002", "srv-003", "srv-004"]
+health_tasks = [check_server_health(server_id=sid) for sid in server_ids]
+health_results = await asyncio.gather(*health_tasks)
 
 # Process results
-for emp_id, expenses_json in zip(employee_ids, expenses_results):
-    expenses = json.loads(expenses_json)
-    print(f"{{emp_id}}: {{len(expenses)}} expenses")
-```
+unhealthy = []
+for server_id, health_json in zip(server_ids, health_results):
+    health = json.loads(health_json)
+    if health['cpu_usage'] > 90 or health['memory_usage'] > 85:
+        unhealthy.append(f"{{server_id}}: CPU={{health['cpu_usage']}}%, MEM={{health['memory_usage']}}%")
 
-2. **Batch Processing**: Write multiple related operations in a single code block
-```python
-results = {{}}
-for region in ["East", "West", "Central"]:
-    data = await query_sales(region=region)
-    results[region] = sum(item["revenue"] for item in data)
-print(f"Regional revenue: {{results}}")
-```
-
-3. **Data Filtering**: Fetch data first, then filter in code
-```python
-servers = await list_servers()
-for server in servers:
-    status = await check_server_health(server_id=server)
-    if status["status"] != "healthy":
-        print(f"Problem: {{server}} - {{status}}")
-```
-
-4. **Conditional Logic**: Decide next steps based on intermediate results
-```python
-file_info = await get_file_info(path="/data/large.csv")
-if file_info["size"] > 1000000:
-    summary = await get_file_summary(path="/data/large.csv")
+if unhealthy:
+    print("Servers needing attention:")
+    for s in unhealthy:
+        print(f"{{s}}")
 else:
-    content = await read_file(path="/data/large.csv")
-    summary = content
-print(summary)
+    print("All servers healthy")
 ```
 
-5. **Early Termination**: Stop immediately once the desired result is found
+### 3. Conditional Logic Within One Block
+
+Handle all branching logic in a single execution:
+
 ```python
-servers = ["us-east", "eu-west", "ap-south"]
-for server in servers:
-    status = await check_health(server_id=server)
-    if status["healthy"]:
-        print(f"Found healthy server: {{server}}")
+import json
+
+# Get account status first
+account_data = await get_account(account_id="ACC-12345")
+account = json.loads(account_data)
+
+if account['status'] == 'suspended':
+    # Get suspension details
+    suspension_info = await get_suspension_details(account_id="ACC-12345")
+    print(f"Account suspended: {{json.loads(suspension_info)['reason']}}")
+  
+elif account['balance'] < 0:
+    # Get payment history for accounts with negative balance
+    payments = await get_payment_history(account_id="ACC-12345", limit=5)
+    print(f"Negative balance. Recent payments: {{payments}}")
+  
+else:
+    # Get recommendations for active accounts
+    recommendations = await get_recommendations(account_id="ACC-12345")
+    print(f"Account active. Recommendations: {{recommendations}}")
+```
+
+### 4. Early Termination Pattern
+
+Stop processing once you find what you need:
+
+```python
+import json
+
+regions = ["us-east", "us-west", "eu-central", "ap-southeast"]
+available_region = None
+
+for region in regions:
+    capacity_data = await check_capacity(region=region)
+    capacity = json.loads(capacity_data)
+  
+    if capacity['available_slots'] >= 10:
+        available_region = region
+        print(f"Found suitable region: {{region}} with {{capacity['available_slots']}} slots")
         break
+    else:
+        print(f"{{region}}: only {{capacity['available_slots']}} slots available")
 
-## Code Execution Guidelines
-
-#### Parallel Execution (IMPORTANT)
-When you need to call multiple tools (e.g., fetching data for multiple items), ALWAYS use `asyncio.gather` for parallel execution instead of sequential loops. This significantly improves performance.
-
-**DO NOT write sequential loops like this:**
-```python
-results = []
-for item_id in item_ids:
-    result = await get_data(id=item_id)
-    results.append(result)
+if not available_region:
+    print("No region with sufficient capacity found")
 ```
 
-**INSTEAD, use parallel execution:**
+### 5. Aggregation and Analysis
+
+Fetch data and perform complex analysis in one block:
+
 ```python
+import json
 import asyncio
-tasks = [get_data(id=item_id) for item_id in item_ids]
-results = await asyncio.gather(*tasks)
+from collections import defaultdict
+
+# Get all transactions for the quarter
+transactions_data = await get_transactions(quarter="Q3", year=2024)
+transactions = json.loads(transactions_data)
+
+# Aggregate by category
+category_totals = defaultdict(float)
+category_counts = defaultdict(int)
+
+for txn in transactions:
+    category_totals[txn['category']] += txn['amount']
+    category_counts[txn['category']] += 1
+
+# Find categories exceeding budget
+budgets = {{'marketing': 50000, 'operations': 75000, 'travel': 20000, 'equipment': 30000}}
+
+print("Q3 Spending Analysis:")
+print("-" * 50)
+for category, total in sorted(category_totals.items(), key=lambda x: -x[1]):
+    budget = budgets.get(category, 0)
+    status = "OVER" if total > budget else "OK"
+    variance = total - budget
+    print(f"{{category:15}} ${{total:>10,.2f}} / ${{budget:>10,.2f}} ({{status}}, {{variance:+,.2f}})")
+```
+
+## When Multiple Code Blocks Are Unavoidable
+
+If a task requires user decisions between steps or is too complex for one block:
+
+1. **Print clear, structured output** from the first block
+2. **Re-fetch or reconstruct data** in subsequent blocks - never assume variables exist
+3. **Prefer re-fetching** over reconstructing from printed output (more reliable)
+
+```python
+# If you need another code block, ALWAYS start fresh:
+import json
+
+# Re-fetch the data - don't assume anything exists from before
+inventory_data = await get_inventory(warehouse="NYC")
+products = json.loads(inventory_data)
+
+# Now continue with your analysis...
 ```
 
 ## Docker Sandbox Features
 - Secure, isolated execution environment
+- **Each execution starts fresh with no state from previous executions**
 - Network disabled for security
 - Resource limits enforced (memory, CPU)
 - Timeout protection
 
-## Best Practices
-1. **Batch Processing**: Combine multiple operations in one code block to minimize round-trips
-2. **Always parse JSON**: Tool functions return JSON strings
-3. **Handle errors gracefully**: Use try/except for robust code
+## Pre-Code Checklist
 
-## Other Guidelines
-- All tool calls must use `await`
-- Use `print()` to output results you want to see
-- Handle errors gracefully with try/except
-- Process and analyze data within the code before printing conclusions
-- The code runs in an isolated environment without network access"""
+Before writing code, verify:
+- [ ] I am NOT referencing variables from a previous `execute_code` call
+- [ ] I have included all necessary imports (`json`, `asyncio`, etc.)
+- [ ] I am using `await` for all async tool calls
+- [ ] I am using `json.loads()` to parse tool return values
+- [ ] I am using `print()` to output all results I need to see
+- [ ] I am completing as much as possible in this single code block
+"""
 
     async def handle_ptc_request(
         self,
@@ -1147,20 +1300,18 @@ results = await asyncio.gather(*tasks)
         code_execution_tool_id: str,
         _container_info: ContainerInfo,  # Unused, kept for future use
         model: str = "claude-3-sonnet",
-        code: str = ""
+        code: str = ""  # Unused in minimal response
     ) -> MessageResponse:
-        """Build minimal response with tool_use for continuation."""
+        """Build minimal response with tool_use for continuation.
+
+        NOTE: This does NOT include server_tool_use because it's a continuation.
+        The server_tool_use was already sent in the initial response.
+        Continuation responses only include new tool_use blocks.
+        """
         from app.schemas.anthropic import Usage
 
+        # Only include tool_use block - server_tool_use was already sent in initial response
         content = [
-            # Server tool use block
-            {
-                "type": "server_tool_use",
-                "id": code_execution_tool_id,
-                "name": "code_execution",
-                "input": {"code": code}  # Include actual code for client visibility
-            },
-            # Tool use block with caller
             {
                 "type": "tool_use",
                 "id": f"toolu_{uuid4().hex[:12]}",
@@ -1190,20 +1341,18 @@ results = await asyncio.gather(*tasks)
         code_execution_tool_id: str,
         _container_info: ContainerInfo,  # Unused, kept for future use
         model: str = "claude-3-sonnet",
-        code: str = ""
+        code: str = ""  # Unused in minimal response
     ) -> MessageResponse:
-        """Build minimal response with multiple tool_use blocks for batch continuation."""
+        """Build minimal response with multiple tool_use blocks for batch continuation.
+
+        NOTE: This does NOT include server_tool_use because it's a continuation.
+        The server_tool_use was already sent in the initial response.
+        Continuation responses only include new tool_use blocks.
+        """
         from app.schemas.anthropic import Usage
 
-        content = [
-            # Server tool use block
-            {
-                "type": "server_tool_use",
-                "id": code_execution_tool_id,
-                "name": "code_execution",
-                "input": {"code": code}  # Include actual code for client visibility
-            },
-        ]
+        # Only include tool_use blocks - server_tool_use was already sent in initial response
+        content = []
 
         # Add tool use block for EACH tool call in the batch
         for tool_request in batch_request.requests:
@@ -1218,7 +1367,7 @@ results = await asyncio.gather(*tasks)
                 }
             })
 
-        logger.info(f"[PTC] Built batch minimal response with {len(batch_request)} tool calls")
+        logger.info(f"[PTC] Built batch minimal response with {len(batch_request)} tool calls (continuation, no server_tool_use)")
 
         return MessageResponse(
             id=f"msg_{uuid4().hex}",

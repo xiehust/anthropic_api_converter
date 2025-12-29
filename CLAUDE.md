@@ -77,20 +77,47 @@ mypy app
 
 ## Architecture
 
+### Dual API Mode
+
+The service supports two Bedrock API modes depending on the model:
+
+1. **InvokeModel API** (for Claude models):
+   - Uses `invoke_model` / `invoke_model_with_response_stream`
+   - Native Anthropic request/response format (minimal conversion)
+   - Supports all Claude beta features (tool-examples, tool-search, etc.)
+   - Better feature compatibility with Anthropic API
+
+2. **Converse API** (for non-Claude models):
+   - Uses `converse` / `converse_stream`
+   - Requires format conversion (Anthropic ↔ Bedrock Converse format)
+   - Unified API for all Bedrock models
+   - Some beta features may not be available
+
+**Routing Logic:** Model ID is checked - if it contains "anthropic" or "claude", InvokeModel API is used.
+
 ### Critical Conversion Flow
 
 The core of this service is the bidirectional conversion between Anthropic and Bedrock formats:
 
-**Request Flow:**
+**Request Flow (Converse API - non-Claude models):**
 1. `app/api/messages.py` - Receives Anthropic-formatted request
 2. `app/middleware/auth.py` - Validates API key from DynamoDB
 3. `app/middleware/rate_limit.py` - Enforces token bucket rate limiting
 4. `app/converters/anthropic_to_bedrock.py` - **Converts request to Bedrock format**
-5. `app/services/bedrock_service.py` - Calls AWS Bedrock API
+5. `app/services/bedrock_service.py` - Calls AWS Bedrock Converse API
 6. `app/converters/bedrock_to_anthropic.py` - **Converts response back to Anthropic format**
 7. Response returned to client
 
-**Streaming Flow:** Same as above, but step 6 happens per-event in a generator, with SSE formatting.
+**Request Flow (InvokeModel API - Claude models):**
+1. `app/api/messages.py` - Receives Anthropic-formatted request
+2. `app/middleware/auth.py` - Validates API key from DynamoDB
+3. `app/middleware/rate_limit.py` - Enforces token bucket rate limiting
+4. `app/services/bedrock_service.py` - Converts to native Anthropic format with Bedrock versioning
+5. `app/services/bedrock_service.py` - Calls AWS Bedrock InvokeModel API
+6. Response is already in Anthropic format (minimal conversion to MessageResponse)
+7. Response returned to client
+
+**Streaming Flow:** Same as above, using streaming API variants.
 
 ### Key Conversion Logic
 
@@ -364,6 +391,75 @@ curl http://localhost:8000/health/ptc
 - Network disabled in sandbox by default
 - Tools are executed client-side (not in the sandbox)
 
+### Beta Header Mapping and Tool Input Examples
+
+The proxy supports mapping Anthropic beta headers to Bedrock-specific beta headers, and the `input_examples` tool parameter for enhanced tool use.
+
+**Beta Header Mapping:**
+
+When Anthropic clients send beta headers (e.g., `anthropic-beta: advanced-tool-use-2025-11-20`), the proxy maps them to corresponding Bedrock beta headers for supported models.
+
+**Configuration (`app/core/config.py`):**
+```python
+# Beta header mapping (Anthropic → Bedrock)
+beta_header_mapping: Dict[str, List[str]] = {
+    "advanced-tool-use-2025-11-20": [
+        "tool-examples-2025-10-29",
+        "tool-search-tool-2025-10-19",
+    ],
+}
+
+# Models that support beta header mapping
+beta_header_supported_models: List[str] = [
+    "claude-opus-4-5-20251101",
+    "global.anthropic.claude-opus-4-5-20251101-v1:0",
+]
+```
+
+**How it works:**
+1. Client sends request with `anthropic-beta: advanced-tool-use-2025-11-20` header
+2. Proxy checks if the model supports beta header mapping
+3. If supported, maps to Bedrock beta headers: `tool-examples-2025-10-29`, `tool-search-tool-2025-10-19`
+4. Mapped headers are added to `additionalModelRequestFields.anthropic_beta`
+
+**Tool Input Examples:**
+
+The `input_examples` parameter allows providing example inputs to help Claude understand how to use a tool:
+
+```python
+tools = [
+    {
+        "name": "get_weather",
+        "description": "Get the current weather in a given location",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "location": {"type": "string"},
+                "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+            },
+            "required": ["location"]
+        },
+        "input_examples": [
+            {"location": "San Francisco, CA", "unit": "fahrenheit"},
+            {"location": "Tokyo, Japan", "unit": "celsius"},
+            {"location": "New York, NY"}  # 'unit' is optional
+        ]
+    }
+]
+```
+
+**Key Files:**
+- `app/core/config.py` - `beta_header_mapping` and `beta_header_supported_models` settings
+- `app/schemas/anthropic.py` - `Tool.input_examples` field
+- `app/converters/anthropic_to_bedrock.py` - `_map_beta_headers()`, `_supports_beta_header_mapping()`, `_get_tools_with_examples()`
+
+**Implementation Note:**
+Bedrock's standard `toolSpec` doesn't support `inputExamples`. When the `tool-examples-2025-10-29` beta is enabled, tools with `input_examples` are passed via `additionalModelRequestFields.tools` in Anthropic format instead of the standard `toolConfig`.
+
+**Extending Support:**
+- To add more beta header mappings, update `BETA_HEADER_MAPPING` in config
+- To enable for more models, add model IDs to `BETA_HEADER_SUPPORTED_MODELS`
+
 ## Testing Strategy
 
 ### Unit Tests (`tests/unit/`)
@@ -527,6 +623,10 @@ app/
 - `PTC_MEMORY_LIMIT=256m` - Container memory limit
 - `PTC_NETWORK_DISABLED=True` - Disable network in sandbox
 
+**Beta Header Mapping Settings:**
+- `BETA_HEADER_MAPPING` - Dict mapping Anthropic beta headers to Bedrock beta headers (default: `advanced-tool-use-2025-11-20` → `['tool-examples-2025-10-29', 'tool-search-tool-2025-10-19']`)
+- `BETA_HEADER_SUPPORTED_MODELS` - List of model IDs that support beta header mapping (default: Claude Opus 4.5)
+
 See `.env.example` for full list.
 
 ## API Compatibility Notes
@@ -544,6 +644,10 @@ This service aims for **100% compatibility** with the Anthropic Messages API. Ke
 5. **Authentication**: Uses API keys in `x-api-key` header (consistent with Anthropic API).
 
 6. **Programmatic Tool Calling**: Fully supported via Docker sandbox. Requires `anthropic-beta: advanced-tool-use-2025-11-20` header and Docker running on the server. Tools are executed client-side (returned to caller for execution).
+
+7. **Beta Header Mapping**: Anthropic beta headers (e.g., `advanced-tool-use-2025-11-20`) are mapped to corresponding Bedrock beta headers for supported models (currently Claude Opus 4.5). Unsupported models ignore unmapped beta headers.
+
+8. **Tool Input Examples**: The `input_examples` parameter in tool definitions is supported and passed to Bedrock as `inputExamples`. Requires beta header `advanced-tool-use-2025-11-20` for the feature to be enabled.
 
 ## Key Files to Understand
 

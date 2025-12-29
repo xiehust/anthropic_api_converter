@@ -24,20 +24,20 @@ cp .env.example .env
 # Edit .env with your AWS credentials and settings
 
 # Setup DynamoDB tables
-python scripts/setup_tables.py
+uv run  scripts/setup_tables.py
 
 # Create an API key for testing
-python scripts/create_api_key.py --user-id dev-user --name "Development Key"
+uv run  scripts/create_api_key.py --user-id dev-user --name "Development Key"
 ```
 
 ### Running the Service
 
 ```bash
 # Development mode (with auto-reload)
-uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload
 
 # Production mode
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 # Using Docker Compose (includes DynamoDB Local, Prometheus, Grafana)
 docker-compose up -d
@@ -47,19 +47,19 @@ docker-compose up -d
 
 ```bash
 # Run all tests
-pytest
+uv run pytest
 
 # Run with coverage
-pytest --cov=app --cov-report=html
+uv run pytest --cov=app --cov-report=html
 
 # Run specific test file
-pytest tests/unit/test_converters.py
+uv run pytest tests/unit/test_converters.py
 
 # Run integration tests only
-pytest -m integration
+uv run pytest -m integration
 
 # Run with verbose output
-pytest -v
+uv run pytest -v
 ```
 
 ### Code Quality
@@ -160,8 +160,8 @@ from app.db.dynamodb import DynamoDBClient
 
 client = DynamoDBClient()
 client.model_mapping_manager.set_mapping(
-    anthropic_model_id="claude-3-opus-20240229",
-    bedrock_model_id="anthropic.claude-3-opus-20240229-v1:0"
+    anthropic_model_id="claude-sonnet-4-5-20250929",
+    bedrock_model_id='global.anthropic.claude-sonnet-4-5-20250929-v1:0'
 )
 ```
 
@@ -194,6 +194,175 @@ Streaming uses **Server-Sent Events (SSE)**. Key points:
 - Convert each event to Anthropic format (`message_start`, `content_block_delta`, etc.)
 
 **Implementation:** See `app/api/messages.py` → `create_message()` → streaming branch and `app/services/bedrock_service.py` → `invoke_model_stream()`.
+
+### Programmatic Tool Calling (PTC)
+
+PTC allows Claude to generate Python code that calls tools programmatically. The proxy implements this using a Docker sandbox for code execution with client-side tool execution.
+
+**How PTC Works:**
+
+1. Client sends request with:
+   - Header: `anthropic-beta: advanced-tool-use-2025-11-20`
+   - Tool: `{"type": "code_execution_20250825", "name": "code_execution"}`
+   - Regular tools with `allowed_callers: ["code_execution_20250825"]`
+
+2. **Detailed Flow (Multi-Tool, Multi-Round):**
+
+   ```
+   ┌─────────────────────────────────────────────────────────────────────────┐
+   │ INITIAL REQUEST                                                         │
+   ├─────────────────────────────────────────────────────────────────────────┤
+   │ Client Request → Proxy → Bedrock (Claude)                               │
+   │                              ↓                                          │
+   │                    Claude returns execute_code                          │
+   │                              ↓                                          │
+   │                    Proxy creates Docker container                       │
+   │                    Proxy runs code in sandbox                           │
+   └─────────────────────────────────────────────────────────────────────────┘
+                                  ↓
+   ┌─────────────────────────────────────────────────────────────────────────┐
+   │ TOOL CALL LOOP (repeats for each tool call from code)                   │
+   ├─────────────────────────────────────────────────────────────────────────┤
+   │ Code calls tool (e.g., get_expenses) → Sandbox PAUSES                   │
+   │                              ↓                                          │
+   │ Proxy returns tool_use to client (with caller field)                    │
+   │                              ↓                                          │
+   │ Client executes tool locally → sends tool_result back                   │
+   │                              ↓                                          │
+   │ Proxy RESUMES sandbox with tool result                                  │
+   │                              ↓                                          │
+   │ Code continues... (may call more tools → repeat loop)                   │
+   └─────────────────────────────────────────────────────────────────────────┘
+                                  ↓
+   ┌─────────────────────────────────────────────────────────────────────────┐
+   │ CODE COMPLETION                                                         │
+   ├─────────────────────────────────────────────────────────────────────────┤
+   │ Code finishes execution → Proxy gets stdout/stderr                      │
+   │                              ↓                                          │
+   │ Proxy calls Claude with code output as tool_result                      │
+   │                              ↓                                          │
+   │ Claude generates final response (or requests more code → repeat all)    │
+   │                              ↓                                          │
+   │ Proxy returns Claude's response to client                               │
+   └─────────────────────────────────────────────────────────────────────────┘
+   ```
+
+3. **Response Content Types:**
+
+   Tool call from code (client must execute):
+   ```json
+   {
+     "type": "tool_use",
+     "id": "toolu_xxx",
+     "name": "get_expenses",
+     "input": {"employee_id": "ENG008"},
+     "caller": {
+       "type": "code_execution_20250825",
+       "tool_id": "srvtoolu_yyy"
+     }
+   }
+   ```
+
+   Direct tool call (not from code execution):
+   ```json
+   {
+     "type": "tool_use",
+     "id": "toolu_xxx",
+     "name": "search_docs",
+     "input": {"query": "..."},
+     "caller": {"type": "direct"}
+   }
+   ```
+
+4. **Session Management:**
+   - Container reuse via `container` field in response/request
+   - Sessions timeout after 4.5 minutes (`PTC_SESSION_TIMEOUT`)
+   - Client must include `container.id` in continuation requests
+   - Proxy tracks pending tool calls per session
+
+5. **Multi-Round Code Execution:**
+   - After code completes, Claude may request another `execute_code`
+   - Proxy handles this recursively until Claude returns text response
+   - Same container is reused across multiple code execution rounds
+
+6. **Parallel Tool Calls (asyncio.gather support):**
+
+   Claude can generate code that calls tools in parallel using `asyncio.gather`:
+   ```python
+   # Claude generates code like this (instead of sequential loop)
+   expense_tasks = [
+       get_expenses(employee_id=emp_id, quarter='Q3')
+       for emp_id in employee_ids
+   ]
+   results = await asyncio.gather(*expense_tasks)
+   ```
+
+   **How it works:**
+   - Sandbox detects multiple tool calls within 100ms batch window
+   - Proxy returns response with multiple `tool_use` blocks (one per tool)
+   - Client executes all tools (can be parallel) and returns all `tool_result` blocks
+   - Proxy batches results and injects them all into sandbox
+   - Code resumes with all results available
+
+   **Response format (batch):**
+   ```json
+   {
+     "content": [
+       {"type": "server_tool_use", "id": "srvtoolu_xxx", "name": "code_execution", ...},
+       {"type": "tool_use", "id": "toolu_aaa", "name": "get_expenses", "input": {"employee_id": "ENG001"}, "caller": {...}},
+       {"type": "tool_use", "id": "toolu_bbb", "name": "get_expenses", "input": {"employee_id": "ENG002"}, "caller": {...}},
+       {"type": "tool_use", "id": "toolu_ccc", "name": "get_expenses", "input": {"employee_id": "ENG003"}, "caller": {...}}
+     ],
+     "stop_reason": "tool_use"
+   }
+   ```
+
+   **Client continuation (all results in one request):**
+   ```json
+   {
+     "messages": [..., {
+       "role": "user",
+       "content": [
+         {"type": "tool_result", "tool_use_id": "toolu_aaa", "content": "..."},
+         {"type": "tool_result", "tool_use_id": "toolu_bbb", "content": "..."},
+         {"type": "tool_result", "tool_use_id": "toolu_ccc", "content": "..."}
+       ]
+     }],
+     "container": {"id": "container_xxx"}
+   }
+   ```
+
+   **Configuration:**
+   - `tool_call_batch_window_ms`: Time window to collect parallel calls (default: 100ms)
+
+**Key Files:**
+- `app/services/ptc_service.py` - Main PTC orchestration, state management
+- `app/services/ptc/sandbox.py` - Docker sandbox executor, socket IPC
+- `app/services/ptc/exceptions.py` - PTC-specific exceptions
+- `app/schemas/ptc.py` - PTC Pydantic models
+- `app/schemas/anthropic.py` - Content types (ServerToolUseContent, ServerToolResultContent)
+
+**Key Methods in PTCService:**
+- `process_request()` - Entry point, detects PTC and orchestrates flow
+- `_handle_code_execution()` - Runs code, handles tool call pauses
+- `handle_tool_result_continuation()` - Resumes paused sandbox
+- `_finalize_code_execution()` - Calls Claude after code completes
+- `resume_execution()` - Injects tool result into sandbox, continues
+
+**Health Check:**
+```bash
+curl http://localhost:8000/health/ptc
+# Returns: {"status": "healthy", "docker": "connected", "active_sessions": 0, ...}
+```
+
+**Requirements:**
+- Docker must be running and accessible
+- `python:3.11-slim` image (or configured `PTC_SANDBOX_IMAGE`)
+
+**Limitations:**
+- Non-streaming only (streaming PTC not yet implemented)
+- Network disabled in sandbox by default
+- Tools are executed client-side (not in the sandbox)
 
 ## Testing Strategy
 
@@ -299,6 +468,16 @@ Features like guardrails are Bedrock-specific. Strategy:
 - For ECS/Lambda: Use IAM roles (preferred)
 - Required permissions: `bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream`, `dynamodb:*`
 
+### PTC / Docker Issues
+
+- **"Docker not available" error**: Ensure Docker daemon is running (`docker ps`)
+- **Container timeout**: Increase `PTC_EXECUTION_TIMEOUT` or check for infinite loops
+- **Session expired**: Sessions timeout after 4.5 minutes; use `container.id` for reuse
+- **Missing sandbox image**: Pull image manually: `docker pull python:3.11-slim`
+- **Permission denied**: Ensure user has Docker socket access (`/var/run/docker.sock`)
+- **Health check failing**: Check `/health/ptc` endpoint for detailed status
+- **Tool calls not returning**: Verify client sends `tool_result` back to continue execution
+
 ## Project Structure Rationale
 
 ```
@@ -310,6 +489,11 @@ app/
 ├── middleware/       # Auth and rate limiting (request processing pipeline)
 ├── schemas/          # Pydantic models (validation and serialization)
 └── services/         # Business logic (orchestrates converters and Bedrock calls)
+    ├── bedrock_service.py  # Bedrock API calls
+    ├── ptc_service.py      # PTC orchestration
+    └── ptc/                # PTC sandbox module
+        ├── sandbox.py      # Docker sandbox executor
+        └── exceptions.py   # PTC exceptions
 ```
 
 **Why this structure?**
@@ -334,6 +518,14 @@ app/
 - `ENABLE_EXTENDED_THINKING=True` - Support thinking blocks
 - `ENABLE_DOCUMENT_SUPPORT=True` - Support document content
 - `PROMPT_CACHING_ENABLED=False` - Prompt caching (not fully implemented)
+- `ENABLE_PROGRAMMATIC_TOOL_CALLING=True` - Support PTC (requires Docker)
+
+**Programmatic Tool Calling (PTC) Settings:**
+- `PTC_SANDBOX_IMAGE=python:3.11-slim` - Docker image for sandbox
+- `PTC_SESSION_TIMEOUT=270` - Session timeout in seconds (4.5 minutes)
+- `PTC_EXECUTION_TIMEOUT=60` - Code execution timeout
+- `PTC_MEMORY_LIMIT=256m` - Container memory limit
+- `PTC_NETWORK_DISABLED=True` - Disable network in sandbox
 
 See `.env.example` for full list.
 
@@ -351,6 +543,8 @@ This service aims for **100% compatibility** with the Anthropic Messages API. Ke
 
 5. **Authentication**: Uses API keys in `x-api-key` header (consistent with Anthropic API).
 
+6. **Programmatic Tool Calling**: Fully supported via Docker sandbox. Requires `anthropic-beta: advanced-tool-use-2025-11-20` header and Docker running on the server. Tools are executed client-side (returned to caller for execution).
+
 ## Key Files to Understand
 
 1. **`app/converters/anthropic_to_bedrock.py`** - Request conversion (Anthropic → Bedrock)
@@ -358,7 +552,9 @@ This service aims for **100% compatibility** with the Anthropic Messages API. Ke
 3. **`app/services/bedrock_service.py`** - Orchestrates Bedrock API calls
 4. **`app/api/messages.py`** - Main API endpoint handler
 5. **`app/core/config.py`** - Configuration and settings
-6. **`ARCHITECTURE.md`** - Detailed architecture documentation
+6. **`app/services/ptc_service.py`** - PTC orchestration (code execution flow)
+7. **`app/services/ptc/sandbox.py`** - Docker sandbox executor
+8. **`ARCHITECTURE.md`** - Detailed architecture documentation
 
 ## Performance Considerations
 

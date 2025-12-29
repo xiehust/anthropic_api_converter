@@ -57,12 +57,42 @@ class RedactedThinkingContent(BaseModel):
     data: str  # Base64 encoded redacted data
 
 
+class CallerInfo(BaseModel):
+    """Information about who invoked a tool (for PTC)."""
+    type: Literal["direct", "code_execution_20250825"]
+    tool_id: Optional[str] = None
+
+
 class ToolUseContent(BaseModel):
     """Tool use content block in assistant messages."""
     type: Literal["tool_use"] = "tool_use"
     id: str
     name: str
     input: Dict[str, Any]
+    caller: Optional[CallerInfo] = None  # PTC: who called the tool
+
+
+class ServerToolUseContent(BaseModel):
+    """Server tool use content block (e.g., code_execution for PTC)."""
+    type: Literal["server_tool_use"] = "server_tool_use"
+    id: str
+    name: str
+    input: Dict[str, Any]
+
+
+class CodeExecutionResultContent(BaseModel):
+    """Content block for code execution result."""
+    type: Literal["code_execution_result"] = "code_execution_result"
+    stdout: str = ""
+    stderr: str = ""
+    return_code: int = 0
+
+
+class ServerToolResultContent(BaseModel):
+    """Server tool result content block (result of server_tool_use like code_execution)."""
+    type: Literal["server_tool_result"] = "server_tool_result"
+    tool_use_id: str
+    content: List[CodeExecutionResultContent]
 
 
 class ToolResultContent(BaseModel):
@@ -82,6 +112,8 @@ ContentBlock = Union[
     RedactedThinkingContent,
     ToolUseContent,
     ToolResultContent,
+    ServerToolUseContent,  # PTC server tool use
+    ServerToolResultContent,  # PTC server tool result
 ]
 
 
@@ -120,6 +152,15 @@ class Tool(BaseModel):
     description: str
     input_schema: ToolInputSchema
     cache_control: Optional[CacheControl] = None
+    # PTC-specific fields
+    type: Optional[str] = None  # e.g., "code_execution_20250825" for PTC
+    allowed_callers: Optional[List[Literal["direct", "code_execution_20250825"]]] = None
+
+
+class CodeExecutionTool(BaseModel):
+    """Code execution tool for Programmatic Tool Calling."""
+    type: Literal["code_execution_20250825"] = "code_execution_20250825"
+    name: Literal["code_execution"] = "code_execution"
 
 
 # System Message with Cache Control
@@ -151,8 +192,8 @@ class MessageRequest(BaseModel):
     stop_sequences: Optional[List[str]] = None
     stream: Optional[bool] = False
 
-    # Tool use
-    tools: Optional[List[Tool]] = None
+    # Tool use (supports both Tool and CodeExecutionTool for PTC)
+    tools: Optional[List[Any]] = None  # Can include Tool or CodeExecutionTool
     tool_choice: Optional[Union[
         Literal["auto", "any"],
         Dict[str, str]  # {"type": "tool", "name": "tool_name"}
@@ -163,6 +204,9 @@ class MessageRequest(BaseModel):
 
     # Metadata
     metadata: Optional[Metadata] = None
+
+    # PTC container for session reuse (just the container ID string)
+    container: Optional[str] = None
 
     @field_validator("system", mode="before")
     @classmethod

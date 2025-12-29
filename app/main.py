@@ -3,6 +3,9 @@ FastAPI application entry point.
 
 Configures and initializes the Anthropic-Bedrock API proxy service.
 """
+import asyncio
+import signal
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -18,6 +21,44 @@ from app.middleware.rate_limit import RateLimitMiddleware
 
 # Initialize DynamoDB client globally (needed for middleware)
 dynamodb_client = DynamoDBClient()
+
+
+async def cleanup_ptc_resources():
+    """Cleanup PTC Docker containers and resources."""
+    try:
+        from app.services.ptc_service import _ptc_service
+
+        # Only cleanup if PTC service was initialized
+        if _ptc_service is not None:
+            print("[SHUTDOWN] Cleaning up PTC Docker containers...")
+            await _ptc_service.shutdown()
+            print("[SHUTDOWN] PTC cleanup completed")
+    except Exception as e:
+        print(f"[SHUTDOWN] Warning: Failed to cleanup PTC resources: {e}")
+
+
+def signal_handler(signum, _frame):
+    """Handle termination signals for graceful shutdown."""
+    sig_name = signal.Signals(signum).name
+    print(f"\n[SHUTDOWN] Received signal {sig_name}, initiating graceful shutdown...")
+
+    # Run cleanup in event loop
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(cleanup_ptc_resources())
+        else:
+            loop.run_until_complete(cleanup_ptc_resources())
+    except Exception as e:
+        print(f"[SHUTDOWN] Error during signal cleanup: {e}")
+
+    # Exit
+    sys.exit(0)
+
+
+# Register signal handlers for graceful shutdown
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
 
 
 @asynccontextmanager
@@ -49,7 +90,11 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     print("Shutting down application...")
-    # Cleanup resources if needed
+
+    # Cleanup PTC Docker containers
+    await cleanup_ptc_resources()
+
+    print("Application shutdown completed")
 
 
 # Create FastAPI application

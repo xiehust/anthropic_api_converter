@@ -40,6 +40,10 @@ export interface EnvironmentConfig {
   rateLimitWindow: number;
   enableMetrics: boolean;
 
+  // Bedrock Concurrency Settings
+  bedrockThreadPoolSize: number;
+  bedrockSemaphoreSize: number;
+
   // DynamoDB Configuration
   dynamodbBillingMode: 'PAY_PER_REQUEST' | 'PROVISIONED';
   dynamodbReadCapacity?: number;
@@ -88,6 +92,10 @@ export const environments: { [key: string]: EnvironmentConfigWithoutPlatform } =
     rateLimitWindow: 60,
     enableMetrics: true,
 
+    // Bedrock Concurrency
+    bedrockThreadPoolSize: 15,
+    bedrockSemaphoreSize: 15,
+
     // DynamoDB
     dynamodbBillingMode: 'PAY_PER_REQUEST',
 
@@ -133,6 +141,10 @@ export const environments: { [key: string]: EnvironmentConfigWithoutPlatform } =
     rateLimitRequests: 1000,
     rateLimitWindow: 60,
     enableMetrics: true,
+
+    // Bedrock Concurrency
+    bedrockThreadPoolSize: 30,
+    bedrockSemaphoreSize: 30,
 
     // DynamoDB
     dynamodbBillingMode: 'PAY_PER_REQUEST',

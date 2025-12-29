@@ -76,7 +76,7 @@ class BedrockService:
             connect_timeout=30,
             retries={"max_attempts": 3, "mode": "standard"},
         )
-
+        print(f"-------settings--------:\n{settings}")
         self.client = boto3.client(
             "bedrock-runtime",
             region_name=settings.aws_region,

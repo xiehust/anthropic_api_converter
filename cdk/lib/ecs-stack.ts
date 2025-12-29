@@ -225,6 +225,10 @@ export class ECSStack extends cdk.Stack {
 
         // Streaming
         STREAMING_TIMEOUT: '300',
+
+        // Bedrock Concurrency
+        BEDROCK_THREAD_POOL_SIZE: config.bedrockThreadPoolSize.toString(),
+        BEDROCK_SEMAPHORE_SIZE: config.bedrockSemaphoreSize.toString(),
       },
       secrets: {
         // Master API key from Secrets Manager

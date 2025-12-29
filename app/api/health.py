@@ -3,12 +3,16 @@ Health check endpoint.
 
 Provides application health status and readiness checks.
 """
+import logging
 import time
 from datetime import datetime
 
 from fastapi import APIRouter, status
+from fastapi.responses import JSONResponse
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -56,6 +60,7 @@ async def health_check():
             "extended_thinking": settings.enable_extended_thinking,
             "document_support": settings.enable_document_support,
             "prompt_caching": settings.prompt_caching_enabled,
+            "programmatic_tool_calling": settings.enable_programmatic_tool_calling,
         },
     }
 
@@ -110,6 +115,79 @@ async def liveness_check():
         "status": "alive",
         "timestamp": datetime.utcnow().isoformat(),
     }
+
+
+@router.get(
+    "/health/ptc",
+    status_code=status.HTTP_200_OK,
+    summary="PTC health check",
+    description="Check Programmatic Tool Calling (PTC) subsystem health.",
+    tags=["monitoring"],
+)
+async def ptc_health_check():
+    """
+    PTC health check endpoint.
+
+    Checks Docker availability and PTC subsystem status.
+    Returns 200 if PTC is available, 503 if unavailable.
+
+    Returns:
+        Dictionary with PTC health status information
+    """
+    from app.services.ptc_service import get_ptc_service
+
+    result = {
+        "enabled": settings.enable_programmatic_tool_calling,
+        "config": {
+            "sandbox_image": settings.ptc_sandbox_image,
+            "session_timeout": settings.ptc_session_timeout,
+            "execution_timeout": settings.ptc_execution_timeout,
+            "memory_limit": settings.ptc_memory_limit,
+            "network_disabled": settings.ptc_network_disabled,
+        },
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+    if not settings.enable_programmatic_tool_calling:
+        result["status"] = "disabled"
+        return result
+
+    try:
+        ptc_service = get_ptc_service()
+        docker_available = ptc_service.is_docker_available()
+
+        if docker_available:
+            # Check if sandbox image exists
+            try:
+                import docker
+                client = docker.from_env()
+                images = client.images.list(name=settings.ptc_sandbox_image)
+                image_available = len(images) > 0
+            except Exception:
+                image_available = False
+
+            # Get active session count
+            try:
+                active_sessions = len(ptc_service.sandbox_executor.active_sessions)
+            except Exception:
+                active_sessions = 0
+
+            result["status"] = "healthy"
+            result["docker"] = "connected"
+            result["sandbox_image_available"] = image_available
+            result["active_sessions"] = active_sessions
+            return result
+        else:
+            result["status"] = "unhealthy"
+            result["docker"] = "unavailable"
+            result["error"] = "Docker is not available"
+            return JSONResponse(status_code=503, content=result)
+
+    except Exception as e:
+        logger.error(f"PTC health check failed: {e}")
+        result["status"] = "unhealthy"
+        result["error"] = str(e)
+        return JSONResponse(status_code=503, content=result)
 
 
 @router.post(

@@ -150,6 +150,38 @@ class Settings(BaseSettings):
     # Note: Claude models only support 'default' and 'reserved' (not 'flex')
     default_service_tier: str = Field(default="default", alias="DEFAULT_SERVICE_TIER")
 
+    # Programmatic Tool Calling (PTC) Settings
+    enable_programmatic_tool_calling: bool = Field(
+        default=True,
+        alias="ENABLE_PROGRAMMATIC_TOOL_CALLING",
+        description="Enable Programmatic Tool Calling feature (requires Docker)"
+    )
+    ptc_sandbox_image: str = Field(
+        default="python:3.11-slim",
+        alias="PTC_SANDBOX_IMAGE",
+        description="Docker image for PTC sandbox execution"
+    )
+    ptc_session_timeout: int = Field(
+        default=270,  # 4.5 minutes (matches Anthropic's timeout)
+        alias="PTC_SESSION_TIMEOUT",
+        description="PTC session timeout in seconds"
+    )
+    ptc_execution_timeout: int = Field(
+        default=60,
+        alias="PTC_EXECUTION_TIMEOUT",
+        description="PTC code execution timeout in seconds"
+    )
+    ptc_memory_limit: str = Field(
+        default="256m",
+        alias="PTC_MEMORY_LIMIT",
+        description="Docker container memory limit"
+    )
+    ptc_network_disabled: bool = Field(
+        default=True,
+        alias="PTC_NETWORK_DISABLED",
+        description="Disable network access in PTC sandbox"
+    )
+
     @field_validator("cors_origins", "cors_allow_methods", "cors_allow_headers", mode="before")
     @classmethod
     def parse_list_fields(cls, v: Any) -> List[str]:

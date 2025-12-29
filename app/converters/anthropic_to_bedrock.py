@@ -456,24 +456,47 @@ class AnthropicToBedrockConverter:
         bedrock_tools = []
 
         for tool in tools:
+            # Handle both dict and Pydantic model tools
+            if isinstance(tool, dict):
+                tool_name = tool.get("name")
+                tool_desc = tool.get("description", "")
+                input_schema = tool.get("input_schema", {})
+                tool_type = input_schema.get("type", "object")
+                tool_props = input_schema.get("properties", {})
+                tool_required = input_schema.get("required")
+                tool_cache_control = tool.get("cache_control")
+                # Skip PTC code_execution tools (they're handled separately)
+                if tool.get("type") == "code_execution_20250825":
+                    continue
+            else:
+                tool_name = tool.name
+                tool_desc = tool.description
+                tool_type = tool.input_schema.type
+                tool_props = tool.input_schema.properties
+                tool_required = tool.input_schema.required
+                tool_cache_control = tool.cache_control
+                # Skip PTC code_execution tools
+                if hasattr(tool, "type") and tool.type == "code_execution_20250825":
+                    continue
+
             bedrock_tool = {
                 "toolSpec": {
-                    "name": tool.name,
-                    "description": tool.description,
+                    "name": tool_name,
+                    "description": tool_desc,
                     "inputSchema": {
                         "json": {
-                            "type": tool.input_schema.type,
-                            "properties": tool.input_schema.properties,
+                            "type": tool_type,
+                            "properties": tool_props,
                         }
                     },
                 }
             }
 
             # Add required fields if present
-            if tool.input_schema.required:
+            if tool_required:
                 bedrock_tool["toolSpec"]["inputSchema"]["json"][
                     "required"
-                ] = tool.input_schema.required
+                ] = tool_required
 
             bedrock_tools.append(bedrock_tool)
 
@@ -481,9 +504,9 @@ class AnthropicToBedrockConverter:
             # and model supports prompt caching (Claude models only)
             # Note: For tools, cachePoint might need to be at the toolConfig level
             # or added after all tools. This follows the same pattern as content/system.
-            if tool.cache_control and settings.prompt_caching_enabled and self._supports_prompt_caching():
+            if tool_cache_control and settings.prompt_caching_enabled and self._supports_prompt_caching():
                 bedrock_tools.append({"cachePoint": {"type": "default"}})
-                print(f"[CONVERTER] Added cachePoint after tool: {tool.name}")
+                print(f"[CONVERTER] Added cachePoint after tool: {tool_name}")
 
         tool_config = {"tools": bedrock_tools}
 

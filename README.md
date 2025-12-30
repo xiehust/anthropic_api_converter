@@ -27,6 +27,7 @@
 **核心优势：**
 - 🔄 **零代码迁移** - 完全兼容 Anthropic API，无需修改现有代码
 - 🚀 **开箱即用** - 支持流式/非流式响应、工具调用、多模态等所有高级特性
+- 🤖 **Programmatic Tool Calling** - 业界首个在 Bedrock 上实现 Anthropic 兼容 PTC API 的代理服务
 - 💰 **成本优化** - 灵活使用 Bedrock 上的开源模型，显著降低推理成本
 - 🔐 **企业级** - 内置 API 密钥管理、速率限制、使用追踪和监控指标
 - ☁️ **云原生** - 一键部署到 AWS ECS，自动扩展，高可用架构
@@ -44,6 +45,13 @@
 
 ### 高级功能
 - **工具使用（函数调用）**：转换并执行工具定义
+- **Programmatic Tool Calling (PTC)**：完整实现 Anthropic PTC API，支持 Claude 生成并执行 Python 代码来调用工具
+  - 与 Anthropic API 完全兼容的 PTC 接口（`anthropic-beta: advanced-tool-use-2025-11-20`）
+  - 安全的 Docker Sandbox 代码执行环境
+  - 客户端工具执行模式（工具由客户端执行，结果返回给代理）
+  - 支持多轮代码执行和工具调用
+  - 支持 `asyncio.gather` 并行工具调用
+  - 会话管理与容器复用，提升性能
 - **扩展思考**：支持响应中的思考块
 - **多模态内容**：支持文本、图像和文档
 - **提示词缓存**：映射缓存控制提示（在支持的情况下）

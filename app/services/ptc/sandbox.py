@@ -194,6 +194,63 @@ class PTCSandboxExecutor:
         except DockerNotAvailableError:
             return False
 
+    def is_image_available(self, image: str | None = None) -> bool:
+        """Check if the sandbox image is available locally."""
+        image = image or self.config.image
+        try:
+            images = self.docker_client.images.list(name=image)
+            return len(images) > 0
+        except Exception:
+            return False
+
+    async def ensure_image_available(self, image: str | None = None) -> bool:
+        """
+        Ensure the sandbox image is available, pulling if necessary.
+
+        Args:
+            image: Image name to check/pull. Defaults to config.image.
+
+        Returns:
+            True if image is available (was present or successfully pulled)
+        """
+        image = image or self.config.image
+        logger.info(f"[PTC] Checking if image '{image}' is available...")
+
+        # Check if image already exists
+        if self.is_image_available(image):
+            logger.info(f"[PTC] Image '{image}' is already available locally")
+            return True
+
+        # Try to pull the image
+        logger.info(f"[PTC] Image '{image}' not found locally, pulling...")
+        try:
+            loop = asyncio.get_running_loop()
+            # Run docker pull in executor to avoid blocking
+            await loop.run_in_executor(
+                None,
+                lambda: self._pull_image(image)
+            )
+            logger.info(f"[PTC] Successfully pulled image '{image}'")
+            return True
+        except Exception as e:
+            logger.error(f"[PTC] Failed to pull image '{image}': {e}")
+            return False
+
+    def _pull_image(self, image: str) -> None:
+        """Pull Docker image (blocking operation)."""
+        logger.info(f"[PTC] Starting docker pull for '{image}'...")
+        # Pull with progress logging
+        for line in self.docker_client.api.pull(image, stream=True, decode=True):
+            if 'status' in line:
+                status = line['status']
+                progress = line.get('progress', '')
+                if progress:
+                    logger.debug(f"[PTC] Pull: {status} {progress}")
+                elif 'id' in line:
+                    logger.debug(f"[PTC] Pull: {line['id']} {status}")
+                else:
+                    logger.debug(f"[PTC] Pull: {status}")
+
     def _get_runner_script(self, tools: list[dict], loop_mode: bool = False) -> str:
         """
         Generate the runner script for sandbox execution.
@@ -570,6 +627,16 @@ if __name__ == "__main__":
         session_id = f"container_{uuid.uuid4().hex[:12]}"
         now = datetime.now()
 
+        # Determine image to use
+        image = self.config.custom_image or self.config.image
+
+        # Ensure image is available (auto-pull if needed)
+        if not self.is_image_available(image):
+            logger.info(f"[PTC] Image '{image}' not found, auto-pulling before session creation...")
+            image_ready = await self.ensure_image_available(image)
+            if not image_ready:
+                raise ContainerError(f"Failed to pull sandbox image: {image}")
+
         # Create temp directory for runner script
         temp_dir = tempfile.mkdtemp(prefix="ptc_sandbox_")
         os.chmod(temp_dir, 0o755)
@@ -581,7 +648,6 @@ if __name__ == "__main__":
         os.chmod(runner_path, 0o644)
 
         # Container configuration
-        image = self.config.custom_image or self.config.image
         container_config = {
             "image": image,
             "command": ["python", "-u", "/sandbox/runner.py"],
@@ -1023,12 +1089,13 @@ if __name__ == "__main__":
                 logger.warning(f"[PTC] _read_from_container: socket in exception state!")
 
             if not readable:
-                # Log at DEBUG level since this happens often during normal waiting
                 return None
 
-            logger.info(f"[PTC] _read_from_container: data available on fileno {fileno}")
+            logger.debug(f"[PTC] _read_from_container: data available on fileno {fileno}")
             result_parts = []
             start_time = time_module.time()
+            consecutive_failures = 0
+            max_consecutive_failures = 3
 
             while True:
                 # Check if we've exceeded overall timeout
@@ -1045,19 +1112,71 @@ if __name__ == "__main__":
                     # No data at all, continue waiting (will be limited by outer loop)
                     continue
 
+                # Try to read 8-byte Docker multiplexed stream header
                 # Docker multiplexed stream format:
                 # - 1 byte: stream type (0=stdin, 1=stdout, 2=stderr)
                 # - 3 bytes: unused
                 # - 4 bytes: payload size (big-endian)
                 # - N bytes: payload
                 header = self._recv_exactly(socket._sock, 8, timeout=0.5)
-                if not header or len(header) < 8:
-                    logger.debug(f"[PTC] _read_from_container: incomplete header {len(header) if header else 0}")
-                    break
+
+                if not header:
+                    consecutive_failures += 1
+                    logger.debug(f"[PTC] _read_from_container: no header data (failure {consecutive_failures})")
+                    if consecutive_failures >= max_consecutive_failures:
+                        logger.warning("[PTC] _read_from_container: max failures reached, trying raw read")
+                        # Try raw read as fallback (for non-multiplexed or unusual formats)
+                        try:
+                            raw_data = socket._sock.recv(4096)
+                            if raw_data:
+                                decoded = raw_data.decode("utf-8", errors="replace")
+                                result_parts.append(decoded)
+                                logger.debug(f"[PTC] _read_from_container: raw read got {len(decoded)} chars")
+                        except Exception as raw_err:
+                            logger.debug(f"[PTC] _read_from_container: raw read failed: {raw_err}")
+                        break
+                    continue
+
+                if len(header) < 8:
+                    # Partial header - might be raw data, try to read as-is
+                    consecutive_failures += 1
+                    logger.debug(f"[PTC] _read_from_container: partial header {len(header)} bytes (failure {consecutive_failures})")
+                    # Check if this looks like raw text (not binary header)
+                    try:
+                        decoded = header.decode("utf-8")
+                        if decoded.isprintable() or '\n' in decoded:
+                            result_parts.append(decoded)
+                            # Continue reading as raw text
+                            try:
+                                raw_data = socket._sock.recv(4096)
+                                if raw_data:
+                                    result_parts.append(raw_data.decode("utf-8", errors="replace"))
+                            except Exception:
+                                pass
+                            break
+                    except UnicodeDecodeError:
+                        pass
+                    if consecutive_failures >= max_consecutive_failures:
+                        break
+                    continue
+
+                # Reset failure counter on successful header read
+                consecutive_failures = 0
 
                 stream_type = header[0]
                 payload_size = struct.unpack('>I', header[4:8])[0]
                 logger.debug(f"[PTC] _read_from_container: header stream={stream_type} size={payload_size}")
+
+                # Sanity check payload size (max 1MB)
+                if payload_size > 1024 * 1024:
+                    logger.warning(f"[PTC] _read_from_container: payload size too large ({payload_size}), might be corrupted")
+                    # Try to interpret header as raw text
+                    try:
+                        decoded = header.decode("utf-8", errors="replace")
+                        result_parts.append(decoded)
+                    except Exception:
+                        pass
+                    break
 
                 if payload_size == 0:
                     continue

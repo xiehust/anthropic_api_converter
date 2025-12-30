@@ -157,18 +157,30 @@ async def ptc_health_check():
         docker_available = ptc_service.is_docker_available()
 
         if docker_available:
-            # Check if sandbox image exists
-            try:
-                import docker
-                client = docker.from_env()
-                images = client.images.list(name=settings.ptc_sandbox_image)
-                image_available = len(images) > 0
-            except Exception:
-                image_available = False
+            # Check if sandbox image exists, auto-pull if not
+            sandbox_executor = ptc_service.sandbox_executor
+            image_available = sandbox_executor.is_image_available()
+
+            if not image_available:
+                # Try to pull the image automatically
+                logger.info(f"[PTC] Sandbox image not available, attempting auto-pull...")
+                result["image_pull_status"] = "pulling"
+                try:
+                    image_available = await sandbox_executor.ensure_image_available()
+                    if image_available:
+                        result["image_pull_status"] = "success"
+                        logger.info(f"[PTC] Auto-pull completed successfully")
+                    else:
+                        result["image_pull_status"] = "failed"
+                        logger.warning(f"[PTC] Auto-pull failed")
+                except Exception as pull_error:
+                    result["image_pull_status"] = "error"
+                    result["image_pull_error"] = str(pull_error)
+                    logger.error(f"[PTC] Auto-pull error: {pull_error}")
 
             # Get active session count
             try:
-                active_sessions = len(ptc_service.sandbox_executor.active_sessions)
+                active_sessions = len(sandbox_executor.active_sessions)
             except Exception:
                 active_sessions = 0
 

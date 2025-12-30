@@ -69,10 +69,14 @@ export class NetworkStack extends cdk.Stack {
       allowAllOutbound: true,
     });
 
-    // Allow traffic from ALB to ECS on container port
+    // Allow traffic from ALB to ECS
+    // Use allTcp() to support both:
+    // - Fargate: fixed port (8000)
+    // - EC2: dynamic port mapping (ephemeral ports 32768-65535)
+    // This is secure because only ALB (with its own restricted SG) can reach ECS
     this.ecsSecurityGroup.addIngressRule(
       this.albSecurityGroup,
-      ec2.Port.tcp(config.containerPort),
+      ec2.Port.allTcp(),
       'Allow traffic from ALB'
     );
 

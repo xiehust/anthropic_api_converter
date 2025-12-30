@@ -6,6 +6,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
 import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
 import { Construct } from 'constructs';
 import { EnvironmentConfig } from '../config/config';
@@ -23,10 +24,10 @@ export interface ECSStackProps extends cdk.StackProps {
 
 export class ECSStack extends cdk.Stack {
   public readonly cluster: ecs.Cluster;
-  public readonly service: ecs.FargateService;
+  public service: ecs.BaseService;
   public readonly alb: elbv2.ApplicationLoadBalancer;
   public readonly listener: elbv2.ApplicationListener;
-  public readonly taskDefinition: ecs.FargateTaskDefinition;
+  public taskDefinition: ecs.TaskDefinition;
 
   constructor(scope: Construct, id: string, props: ECSStackProps) {
     super(scope, id, props);
@@ -61,19 +62,23 @@ export class ECSStack extends cdk.Stack {
       deletionProtection: false,
     });
 
-    // Create Target Group
+    // Create Target Group - target type depends on launch type
+    const targetType = config.launchType === 'ec2'
+      ? elbv2.TargetType.INSTANCE
+      : elbv2.TargetType.IP;
+
     const targetGroup = new elbv2.ApplicationTargetGroup(this, 'TargetGroup', {
       targetGroupName: `anthropic-proxy-${config.environmentName}-tg`,
       vpc,
       port: config.containerPort,
       protocol: elbv2.ApplicationProtocol.HTTP,
-      targetType: elbv2.TargetType.IP,
+      targetType,
       healthCheck: {
         path: config.healthCheckPath,
         interval: cdk.Duration.seconds(config.healthCheckInterval),
         timeout: cdk.Duration.seconds(config.healthCheckTimeout),
         healthyThresholdCount: config.healthCheckHealthyThreshold,
-        unhealthyThresholdCount: 5, // Increase from 3 to 5 to be more tolerant
+        unhealthyThresholdCount: 5,
         healthyHttpCodes: '200',
       },
       deregistrationDelay: cdk.Duration.seconds(30),
@@ -94,7 +99,6 @@ export class ECSStack extends cdk.Stack {
     });
 
     // Generate a short random suffix to prevent role name conflicts
-    // This allows multiple deployments without role name collisions
     const roleSuffix = Math.random().toString(36).substring(2, 8);
 
     // Create Task Execution Role
@@ -139,7 +143,7 @@ export class ECSStack extends cdk.Stack {
       })
     );
 
-    // Create Secret for Master API Key (optional - can be set via environment)
+    // Create Secret for Master API Key
     const masterApiKeySecret = new secretsmanager.Secret(this, 'MasterAPIKeySecret', {
       secretName: `anthropic-proxy-${config.environmentName}-master-api-key`,
       description: 'Master API key for Anthropic proxy',
@@ -154,163 +158,91 @@ export class ECSStack extends cdk.Stack {
     // Grant read access to secret
     masterApiKeySecret.grantRead(taskRole);
 
-    // Create Task Definition
     // Map platform string to ECS CpuArchitecture
     const cpuArchitecture = config.platform === 'arm64'
       ? ecs.CpuArchitecture.ARM64
       : ecs.CpuArchitecture.X86_64;
 
-    this.taskDefinition = new ecs.FargateTaskDefinition(this, 'TaskDefinition', {
-      family: `anthropic-proxy-${config.environmentName}`,
-      cpu: config.ecsCpu,
-      memoryLimitMiB: config.ecsMemory,
-      executionRole: taskExecutionRole,
-      taskRole: taskRole,
-      runtimePlatform: {
-        cpuArchitecture,
-        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
-      },
-    });
-
-    // Add Container
     // Map platform string to Docker Platform
     const dockerPlatform = config.platform === 'arm64'
       ? Platform.LINUX_ARM64
       : Platform.LINUX_AMD64;
 
-    const container = this.taskDefinition.addContainer('app', {
-      containerName: 'anthropic-proxy',
-      image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../'), {
-        file: 'Dockerfile',
-        exclude: ['cdk/cdk.out', 'cdk/node_modules', 'cdk/.git'],
-        platform: dockerPlatform,
-      }),
-      logging: ecs.LogDriver.awsLogs({
-        streamPrefix: 'anthropic-proxy',
-        logGroup,
-      }),
-      environment: {
-        // AWS Configuration
-        AWS_REGION: config.region,
-        AWS_DEFAULT_REGION: config.region,
+    // Common environment variables
+    const environmentVars: { [key: string]: string } = {
+      // AWS Configuration
+      AWS_REGION: config.region,
+      AWS_DEFAULT_REGION: config.region,
 
-        // Environment
-        ENVIRONMENT: config.environmentName === 'prod' ? 'production' : 'development',
-        LOG_LEVEL: config.environmentName === 'prod' ? 'INFO' : 'DEBUG',
+      // Environment
+      ENVIRONMENT: config.environmentName === 'prod' ? 'production' : 'development',
+      LOG_LEVEL: config.environmentName === 'prod' ? 'INFO' : 'DEBUG',
 
-        // DynamoDB Tables
-        DYNAMODB_API_KEYS_TABLE: apiKeysTable.tableName,
-        DYNAMODB_USAGE_TABLE: usageTable.tableName,
-        DYNAMODB_MODEL_MAPPING_TABLE: modelMappingTable.tableName,
+      // DynamoDB Tables
+      DYNAMODB_API_KEYS_TABLE: apiKeysTable.tableName,
+      DYNAMODB_USAGE_TABLE: usageTable.tableName,
+      DYNAMODB_MODEL_MAPPING_TABLE: modelMappingTable.tableName,
 
-        // Authentication
-        API_KEY_HEADER: 'x-api-key',
-        REQUIRE_API_KEY: config.requireApiKey.toString(),
+      // Authentication
+      API_KEY_HEADER: 'x-api-key',
+      REQUIRE_API_KEY: config.requireApiKey.toString(),
 
-        // Rate Limiting
-        RATE_LIMIT_ENABLED: config.rateLimitEnabled.toString(),
-        RATE_LIMIT_REQUESTS: config.rateLimitRequests.toString(),
-        RATE_LIMIT_WINDOW: config.rateLimitWindow.toString(),
+      // Rate Limiting
+      RATE_LIMIT_ENABLED: config.rateLimitEnabled.toString(),
+      RATE_LIMIT_REQUESTS: config.rateLimitRequests.toString(),
+      RATE_LIMIT_WINDOW: config.rateLimitWindow.toString(),
 
-        // Features
-        ENABLE_TOOL_USE: 'True',
-        ENABLE_EXTENDED_THINKING: 'True',
-        ENABLE_DOCUMENT_SUPPORT: 'True',
-        PROMPT_CACHING_ENABLED: 'True',
-        FINE_GRAINED_TOOL_STREAMING_ENABLED: 'True',
-        INTERLEAVED_THINKING_ENABLED: 'True',
+      // Features
+      ENABLE_TOOL_USE: 'True',
+      ENABLE_EXTENDED_THINKING: 'True',
+      ENABLE_DOCUMENT_SUPPORT: 'True',
+      PROMPT_CACHING_ENABLED: 'True',
+      FINE_GRAINED_TOOL_STREAMING_ENABLED: 'True',
+      INTERLEAVED_THINKING_ENABLED: 'True',
 
-        // Metrics
-        ENABLE_METRICS: config.enableMetrics.toString(),
+      // PTC (Programmatic Tool Calling)
+      ENABLE_PROGRAMMATIC_TOOL_CALLING: config.enablePtc.toString(),
+      PTC_SANDBOX_IMAGE: config.ptcSandboxImage,
+      PTC_SESSION_TIMEOUT: config.ptcSessionTimeout.toString(),
+      PTC_EXECUTION_TIMEOUT: config.ptcExecutionTimeout.toString(),
+      PTC_MEMORY_LIMIT: config.ptcMemoryLimit,
 
-        // Streaming
-        STREAMING_TIMEOUT: '300',
+      // Metrics
+      ENABLE_METRICS: config.enableMetrics.toString(),
 
-        // Bedrock Concurrency
-        BEDROCK_THREAD_POOL_SIZE: config.bedrockThreadPoolSize.toString(),
-        BEDROCK_SEMAPHORE_SIZE: config.bedrockSemaphoreSize.toString(),
-      },
-      secrets: {
-        // Master API key from Secrets Manager
-        MASTER_API_KEY: ecs.Secret.fromSecretsManager(masterApiKeySecret, 'password'),
-      },
-      portMappings: [
-        {
-          containerPort: config.containerPort,
-          protocol: ecs.Protocol.TCP,
-        },
-      ],
-      healthCheck: {
-        command: [
-          'CMD-SHELL',
-          `curl -f http://localhost:${config.containerPort}/health || exit 1`,
-        ],
-        interval: cdk.Duration.seconds(30),
-        timeout: cdk.Duration.seconds(5),
-        retries: 3,
-        startPeriod: cdk.Duration.seconds(90),
-      },
-    });
+      // Streaming
+      STREAMING_TIMEOUT: '300',
 
-    // Create Fargate Service
-    this.service = new ecs.FargateService(this, 'Service', {
-      serviceName: `anthropic-proxy-${config.environmentName}`,
-      cluster: this.cluster,
-      taskDefinition: this.taskDefinition,
-      desiredCount: config.ecsDesiredCount,
-      assignPublicIp: false,
-      securityGroups: [ecsSecurityGroup],
-      vpcSubnets: {
-        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
-      },
-      healthCheckGracePeriod: cdk.Duration.seconds(180),
-      circuitBreaker: {
-        rollback: true,
-      },
-      enableExecuteCommand: config.environmentName !== 'prod',
-      // Deployment configuration for zero-downtime deployments
-      minHealthyPercent: 100,  // Keep all tasks running during deployment
-      maxHealthyPercent: 200,  // Allow spinning up new tasks before draining old ones
-    });
+      // Bedrock Concurrency
+      BEDROCK_THREAD_POOL_SIZE: config.bedrockThreadPoolSize.toString(),
+      BEDROCK_SEMAPHORE_SIZE: config.bedrockSemaphoreSize.toString(),
+    };
 
-    // Attach to Target Group
-    this.service.attachToApplicationTargetGroup(targetGroup);
-
-    // Auto Scaling
-    const scaling = this.service.autoScaleTaskCount({
-      minCapacity: config.ecsMinCapacity,
-      maxCapacity: config.ecsMaxCapacity,
-    });
-
-    // CPU-based auto scaling
-    scaling.scaleOnCpuUtilization('CpuScaling', {
-      targetUtilizationPercent: config.ecsTargetCpuUtilization,
-      scaleInCooldown: cdk.Duration.seconds(60),
-      scaleOutCooldown: cdk.Duration.seconds(60),
-    });
-
-    // Memory-based auto scaling
-    scaling.scaleOnMemoryUtilization('MemoryScaling', {
-      targetUtilizationPercent: 70,
-      scaleInCooldown: cdk.Duration.seconds(60),
-      scaleOutCooldown: cdk.Duration.seconds(60),
-    });
-
-    // Request count based scaling
-    scaling.scaleOnRequestCount('RequestCountScaling', {
-      requestsPerTarget: 1000,
-      targetGroup,
-      scaleInCooldown: cdk.Duration.seconds(60),
-      scaleOutCooldown: cdk.Duration.seconds(60),
-    });
+    // Create service based on launch type
+    if (config.launchType === 'ec2') {
+      // ========== EC2 Launch Type ==========
+      this.createEc2Service(
+        config, vpc, ecsSecurityGroup, targetGroup, logGroup,
+        taskExecutionRole, taskRole, masterApiKeySecret,
+        cpuArchitecture, dockerPlatform, environmentVars
+      );
+    } else {
+      // ========== Fargate Launch Type (Default) ==========
+      this.createFargateService(
+        config, ecsSecurityGroup, targetGroup, logGroup,
+        taskExecutionRole, taskRole, masterApiKeySecret,
+        cpuArchitecture, dockerPlatform, environmentVars
+      );
+    }
 
     // Apply tags
     cdk.Tags.of(this.cluster).add('Environment', config.environmentName);
+    cdk.Tags.of(this.cluster).add('LaunchType', config.launchType);
     Object.entries(config.tags).forEach(([key, value]) => {
       cdk.Tags.of(this.cluster).add(key, value);
     });
 
-    // Outputs - exportName omitted to avoid cross-stack conflicts
+    // Outputs
     new cdk.CfnOutput(this, 'ClusterName', {
       value: this.cluster.clusterName,
       description: 'ECS Cluster Name',
@@ -334,6 +266,355 @@ export class ECSStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'MasterAPIKeySecretName', {
       value: masterApiKeySecret.secretName,
       description: 'Master API Key Secret Name',
+    });
+
+    new cdk.CfnOutput(this, 'LaunchType', {
+      value: config.launchType.toUpperCase(),
+      description: 'ECS Launch Type',
+    });
+
+    new cdk.CfnOutput(this, 'PTCEnabled', {
+      value: config.enablePtc.toString(),
+      description: 'PTC (Programmatic Tool Calling) Enabled',
+    });
+  }
+
+  /**
+   * Create Fargate-based ECS service (default, no PTC support)
+   */
+  private createFargateService(
+    config: EnvironmentConfig,
+    ecsSecurityGroup: ec2.SecurityGroup,
+    targetGroup: elbv2.ApplicationTargetGroup,
+    logGroup: logs.LogGroup,
+    taskExecutionRole: iam.Role,
+    taskRole: iam.Role,
+    masterApiKeySecret: secretsmanager.Secret,
+    cpuArchitecture: ecs.CpuArchitecture,
+    dockerPlatform: Platform,
+    environmentVars: { [key: string]: string }
+  ): void {
+    // Create Fargate Task Definition
+    const taskDefinition = new ecs.FargateTaskDefinition(this, 'TaskDefinition', {
+      family: `anthropic-proxy-${config.environmentName}`,
+      cpu: config.ecsCpu,
+      memoryLimitMiB: config.ecsMemory,
+      executionRole: taskExecutionRole,
+      taskRole: taskRole,
+      runtimePlatform: {
+        cpuArchitecture,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      },
+    });
+
+    // Add Container
+    taskDefinition.addContainer('app', {
+      containerName: 'anthropic-proxy',
+      image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../'), {
+        file: 'Dockerfile',
+        exclude: ['cdk/cdk.out', 'cdk/node_modules', 'cdk/.git'],
+        platform: dockerPlatform,
+      }),
+      logging: ecs.LogDriver.awsLogs({
+        streamPrefix: 'anthropic-proxy',
+        logGroup,
+      }),
+      environment: environmentVars,
+      secrets: {
+        MASTER_API_KEY: ecs.Secret.fromSecretsManager(masterApiKeySecret, 'password'),
+      },
+      portMappings: [
+        {
+          containerPort: config.containerPort,
+          protocol: ecs.Protocol.TCP,
+        },
+      ],
+      healthCheck: {
+        command: [
+          'CMD-SHELL',
+          `curl -f http://localhost:${config.containerPort}/health || exit 1`,
+        ],
+        interval: cdk.Duration.seconds(30),
+        timeout: cdk.Duration.seconds(5),
+        retries: 3,
+        startPeriod: cdk.Duration.seconds(90),
+      },
+    });
+
+    this.taskDefinition = taskDefinition;
+
+    // Create Fargate Service
+    const service = new ecs.FargateService(this, 'Service', {
+      serviceName: `anthropic-proxy-${config.environmentName}`,
+      cluster: this.cluster,
+      taskDefinition,
+      desiredCount: config.ecsDesiredCount,
+      assignPublicIp: false,
+      securityGroups: [ecsSecurityGroup],
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      },
+      healthCheckGracePeriod: cdk.Duration.seconds(300),
+      circuitBreaker: {
+        rollback: true,
+      },
+      enableExecuteCommand: config.environmentName !== 'prod',
+      minHealthyPercent: 100,
+      maxHealthyPercent: 200,
+    });
+
+    // Attach to Target Group
+    service.attachToApplicationTargetGroup(targetGroup);
+
+    // Auto Scaling
+    const scaling = service.autoScaleTaskCount({
+      minCapacity: config.ecsMinCapacity,
+      maxCapacity: config.ecsMaxCapacity,
+    });
+
+    scaling.scaleOnCpuUtilization('CpuScaling', {
+      targetUtilizationPercent: config.ecsTargetCpuUtilization,
+      scaleInCooldown: cdk.Duration.seconds(60),
+      scaleOutCooldown: cdk.Duration.seconds(60),
+    });
+
+    scaling.scaleOnMemoryUtilization('MemoryScaling', {
+      targetUtilizationPercent: 70,
+      scaleInCooldown: cdk.Duration.seconds(60),
+      scaleOutCooldown: cdk.Duration.seconds(60),
+    });
+
+    scaling.scaleOnRequestCount('RequestCountScaling', {
+      requestsPerTarget: 1000,
+      targetGroup,
+      scaleInCooldown: cdk.Duration.seconds(60),
+      scaleOutCooldown: cdk.Duration.seconds(60),
+    });
+
+    this.service = service;
+  }
+
+  /**
+   * Create EC2-based ECS service (supports PTC with Docker socket)
+   */
+  private createEc2Service(
+    config: EnvironmentConfig,
+    vpc: ec2.Vpc,
+    ecsSecurityGroup: ec2.SecurityGroup,
+    targetGroup: elbv2.ApplicationTargetGroup,
+    logGroup: logs.LogGroup,
+    taskExecutionRole: iam.Role,
+    taskRole: iam.Role,
+    masterApiKeySecret: secretsmanager.Secret,
+    cpuArchitecture: ecs.CpuArchitecture,
+    dockerPlatform: Platform,
+    environmentVars: { [key: string]: string }
+  ): void {
+    // Get the appropriate ECS-optimized AMI based on platform
+    const machineImage = config.platform === 'arm64'
+      ? ecs.EcsOptimizedImage.amazonLinux2(ecs.AmiHardwareType.ARM)
+      : ecs.EcsOptimizedImage.amazonLinux2(ecs.AmiHardwareType.STANDARD);
+
+    // Create Launch Template for EC2 instances
+    const launchTemplate = new ec2.LaunchTemplate(this, 'LaunchTemplate', {
+      launchTemplateName: `anthropic-proxy-${config.environmentName}-lt`,
+      machineImage,
+      instanceType: new ec2.InstanceType(config.ec2InstanceType),
+      securityGroup: ecsSecurityGroup,
+      blockDevices: [
+        {
+          deviceName: '/dev/xvda',
+          volume: ec2.BlockDeviceVolume.ebs(config.ec2RootVolumeSize, {
+            volumeType: ec2.EbsDeviceVolumeType.GP3,
+            encrypted: true,
+          }),
+        },
+      ],
+      userData: ec2.UserData.forLinux(),
+      role: new iam.Role(this, 'EC2InstanceRole', {
+        assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
+        managedPolicies: [
+          iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonEC2ContainerServiceforEC2Role'),
+          iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
+        ],
+      }),
+    });
+
+    // Add user data to configure ECS agent
+    launchTemplate.userData!.addCommands(
+      '#!/bin/bash',
+      `echo ECS_CLUSTER=${this.cluster.clusterName} >> /etc/ecs/ecs.config`,
+      'echo ECS_ENABLE_CONTAINER_METADATA=true >> /etc/ecs/ecs.config',
+      // Ensure Docker socket has correct permissions for PTC
+      'chmod 666 /var/run/docker.sock',
+    );
+
+    // Create Auto Scaling Group
+    const autoScalingGroup = new autoscaling.AutoScalingGroup(this, 'ASG', {
+      autoScalingGroupName: `anthropic-proxy-${config.environmentName}-asg`,
+      vpc,
+      launchTemplate,
+      minCapacity: config.ecsMinCapacity,
+      maxCapacity: config.ecsMaxCapacity,
+      desiredCapacity: config.ecsDesiredCount,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      },
+      healthChecks: autoscaling.HealthChecks.ec2({
+        gracePeriod: cdk.Duration.seconds(300),
+      }),
+      updatePolicy: autoscaling.UpdatePolicy.rollingUpdate({
+        maxBatchSize: 1,
+        minInstancesInService: config.ecsMinCapacity,
+        pauseTime: cdk.Duration.minutes(5),
+      }),
+      newInstancesProtectedFromScaleIn: false,
+    });
+
+    // Use Spot instances if configured (for cost savings in dev)
+    if (config.ec2UseSpot) {
+      const cfnLaunchTemplate = launchTemplate.node.defaultChild as ec2.CfnLaunchTemplate;
+      cfnLaunchTemplate.addPropertyOverride('LaunchTemplateData.InstanceMarketOptions', {
+        MarketType: 'spot',
+        SpotOptions: {
+          SpotInstanceType: 'one-time',
+          ...(config.ec2SpotMaxPrice && { MaxPrice: config.ec2SpotMaxPrice }),
+        },
+      });
+    }
+
+    // Add capacity provider
+    const capacityProvider = new ecs.AsgCapacityProvider(this, 'AsgCapacityProvider', {
+      capacityProviderName: `anthropic-proxy-${config.environmentName}-cp`,
+      autoScalingGroup,
+      enableManagedScaling: true,
+      enableManagedTerminationProtection: false,
+      targetCapacityPercent: 100,
+    });
+
+    this.cluster.addAsgCapacityProvider(capacityProvider);
+
+    // Create EC2 Task Definition
+    const taskDefinition = new ecs.Ec2TaskDefinition(this, 'TaskDefinition', {
+      family: `anthropic-proxy-${config.environmentName}`,
+      executionRole: taskExecutionRole,
+      taskRole: taskRole,
+      networkMode: ecs.NetworkMode.BRIDGE,
+    });
+
+    // Add Docker socket volume for PTC support
+    if (config.ec2EnableDockerSocket) {
+      taskDefinition.addVolume({
+        name: 'docker-socket',
+        host: {
+          sourcePath: '/var/run/docker.sock',
+        },
+      });
+    }
+
+    // Add Container
+    const container = taskDefinition.addContainer('app', {
+      containerName: 'anthropic-proxy',
+      image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../'), {
+        file: 'Dockerfile',
+        exclude: ['cdk/cdk.out', 'cdk/node_modules', 'cdk/.git'],
+        platform: dockerPlatform,
+      }),
+      logging: ecs.LogDriver.awsLogs({
+        streamPrefix: 'anthropic-proxy',
+        logGroup,
+      }),
+      environment: environmentVars,
+      secrets: {
+        MASTER_API_KEY: ecs.Secret.fromSecretsManager(masterApiKeySecret, 'password'),
+      },
+      memoryReservationMiB: config.ecsMemory,
+      cpu: config.ecsCpu,
+      portMappings: [
+        {
+          containerPort: config.containerPort,
+          hostPort: 0, // Dynamic port mapping for bridge mode
+          protocol: ecs.Protocol.TCP,
+        },
+      ],
+      healthCheck: {
+        command: [
+          'CMD-SHELL',
+          `curl -f http://localhost:${config.containerPort}/health || exit 1`,
+        ],
+        interval: cdk.Duration.seconds(30),
+        timeout: cdk.Duration.seconds(5),
+        retries: 3,
+        startPeriod: cdk.Duration.seconds(90),
+      },
+    });
+
+    // Mount Docker socket for PTC
+    if (config.ec2EnableDockerSocket) {
+      container.addMountPoints({
+        containerPath: '/var/run/docker.sock',
+        sourceVolume: 'docker-socket',
+        readOnly: false,
+      });
+    }
+
+    this.taskDefinition = taskDefinition;
+
+    // Create EC2 Service
+    // Note: In bridge networking mode, security groups are applied at EC2 instance level (via ASG),
+    // not at the service level. Do not specify securityGroups, vpcSubnets, or assignPublicIp here.
+    const service = new ecs.Ec2Service(this, 'Service', {
+      serviceName: `anthropic-proxy-${config.environmentName}`,
+      cluster: this.cluster,
+      taskDefinition,
+      desiredCount: config.ecsDesiredCount,
+      healthCheckGracePeriod: cdk.Duration.seconds(300),
+      circuitBreaker: {
+        rollback: true,
+      },
+      enableExecuteCommand: config.environmentName !== 'prod',
+      minHealthyPercent: 100,
+      maxHealthyPercent: 200,
+      capacityProviderStrategies: [
+        {
+          capacityProvider: capacityProvider.capacityProviderName,
+          weight: 1,
+        },
+      ],
+    });
+
+    // Attach to Target Group
+    service.attachToApplicationTargetGroup(targetGroup);
+
+    // Service Auto Scaling (separate from EC2 Auto Scaling)
+    const scaling = service.autoScaleTaskCount({
+      minCapacity: config.ecsMinCapacity,
+      maxCapacity: config.ecsMaxCapacity,
+    });
+
+    scaling.scaleOnCpuUtilization('CpuScaling', {
+      targetUtilizationPercent: config.ecsTargetCpuUtilization,
+      scaleInCooldown: cdk.Duration.seconds(60),
+      scaleOutCooldown: cdk.Duration.seconds(60),
+    });
+
+    scaling.scaleOnMemoryUtilization('MemoryScaling', {
+      targetUtilizationPercent: 70,
+      scaleInCooldown: cdk.Duration.seconds(60),
+      scaleOutCooldown: cdk.Duration.seconds(60),
+    });
+
+    this.service = service;
+
+    // Output EC2-specific information
+    new cdk.CfnOutput(this, 'EC2InstanceType', {
+      value: config.ec2InstanceType,
+      description: 'EC2 Instance Type',
+    });
+
+    new cdk.CfnOutput(this, 'EC2UseSpot', {
+      value: config.ec2UseSpot.toString(),
+      description: 'Using Spot Instances',
     });
   }
 }

@@ -27,6 +27,7 @@ This lightweight API convertion service enables you to use various large languag
 **Key Advantages:**
 - 🔄 **Zero Code Migration** - Fully compatible with Anthropic API, no code changes required
 - 🚀 **Ready to Use** - Supports all advanced features including streaming/non-streaming, tool calling, and multi-modal content
+- 🤖 **Programmatic Tool Calling** - First proxy service to implement Anthropic-compatible PTC API on Bedrock
 - 💰 **Cost Optimization** - Flexibly use open-source models on Bedrock to significantly reduce inference costs
 - 🔐 **Enterprise-Grade** - Built-in API key management, rate limiting, usage tracking, and monitoring metrics
 - ☁️ **Cloud-Native** - One-click deployment to AWS ECS with auto-scaling and high availability
@@ -44,9 +45,18 @@ This lightweight API convertion service enables you to use various large languag
 
 ### Advanced Features
 - **Tool Use (Function Calling)**: Convert and execute tool definitions
+- **Programmatic Tool Calling (PTC)**: Full implementation of Anthropic PTC API, enabling Claude to generate and execute Python code for tool calling
+  - Fully compatible PTC interface with Anthropic API (`anthropic-beta: advanced-tool-use-2025-11-20`)
+  - Secure Docker Sandbox code execution environment
+  - Client-side tool execution mode (tools executed by client, results returned to proxy)
+  - Support for multi-round code execution and tool calling
+  - Support for `asyncio.gather` parallel tool calls
+  - Session management with container reuse for improved performance
 - **Extended Thinking**: Support for thinking blocks in responses
 - **Multi-Modal Content**: Text, images, and document support
 - **Prompt Caching**: Map cache control hints (where supported)
+- **Beta Header Mapping**: Automatically map Anthropic beta headers to Bedrock beta headers (e.g., `advanced-tool-use-2025-11-20` → `tool-examples-2025-10-29`)
+- **Tool Input Examples**: Support for `input_examples` parameter to provide example inputs for tools, helping models better understand tool usage
 
 ### Infrastructure
 - **Authentication**: API key-based authentication with DynamoDB storage

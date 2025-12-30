@@ -8,12 +8,14 @@ set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Default values
 ENVIRONMENT="prod"
 REGION="${AWS_REGION:-us-west-2}"
 PLATFORM=""
+LAUNCH_TYPE="fargate"
 SKIP_BUILD=false
 DESTROY=false
 
@@ -25,22 +27,39 @@ Usage: $0 [OPTIONS]
 Deploy Anthropic-Bedrock API Proxy to AWS using CDK
 
 OPTIONS:
-    -e, --environment ENV    Environment to deploy (dev|prod) [default: prod]
-    -r, --region REGION      AWS region [default: us-west-2]
-    -p, --platform PLATFORM  Platform architecture (arm64|amd64) [REQUIRED]
-    -s, --skip-build         Skip npm install and build
-    -d, --destroy            Destroy the stack instead of deploying
-    -h, --help               Show this help message
+    -e, --environment ENV      Environment to deploy (dev|prod) [default: prod]
+    -r, --region REGION        AWS region [default: us-west-2]
+    -p, --platform PLATFORM    Platform architecture (arm64|amd64) [REQUIRED]
+    -l, --launch-type TYPE     ECS launch type (fargate|ec2) [default: fargate]
+                               - fargate: Serverless, no Docker access, lower cost
+                               - ec2: EC2 instances, supports PTC (Docker socket)
+    -s, --skip-build           Skip npm install and build
+    -d, --destroy              Destroy the stack instead of deploying
+    -h, --help                 Show this help message
 
 EXAMPLES:
-    # Deploy to dev environment with ARM64 (Graviton)
+    # Deploy to dev environment with Fargate (default, no PTC support)
     ./scripts/deploy.sh -e dev -p arm64
 
-    # Deploy to prod with AMD64 in us-east-1
-    ./scripts/deploy.sh -e prod -r us-east-1 -p amd64
+    # Deploy to dev with EC2 launch type (enables PTC support)
+    ./scripts/deploy.sh -e dev -p arm64 -l ec2
+
+    # Deploy to prod with AMD64 and EC2 for PTC
+    ./scripts/deploy.sh -e prod -r us-east-1 -p amd64 -l ec2
 
     # Destroy dev environment
     ./scripts/deploy.sh -e dev -p arm64 -d
+
+LAUNCH TYPE COMPARISON:
+    +----------+------------+-----------+----------+-------------+
+    | Type     | PTC Support| Cost      | Scaling  | Management  |
+    +----------+------------+-----------+----------+-------------+
+    | fargate  | No         | Pay/use   | Fast     | Zero        |
+    | ec2      | Yes        | Instance  | Slower   | Some        |
+    +----------+------------+-----------+----------+-------------+
+
+    * Use 'fargate' (default) for most deployments
+    * Use 'ec2' only if you need Programmatic Tool Calling (PTC) feature
 
 PREREQUISITES:
     - AWS CLI configured with appropriate credentials
@@ -65,6 +84,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -p|--platform)
             PLATFORM="$2"
+            shift 2
+            ;;
+        -l|--launch-type)
+            LAUNCH_TYPE="$2"
             shift 2
             ;;
         -s|--skip-build)
@@ -102,15 +125,52 @@ if [[ ! "$ENVIRONMENT" =~ ^(dev|prod)$ ]]; then
     exit 1
 fi
 
+# Validate launch type
+if [[ ! "$LAUNCH_TYPE" =~ ^(fargate|ec2)$ ]]; then
+    echo -e "${RED}Error: Launch type must be 'fargate' or 'ec2'${NC}"
+    exit 1
+fi
+
+# Determine PTC status
+if [[ "$LAUNCH_TYPE" == "ec2" ]]; then
+    PTC_STATUS="${GREEN}Enabled${NC}"
+else
+    PTC_STATUS="${YELLOW}Disabled (requires EC2 launch type)${NC}"
+fi
+
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Anthropic Proxy Deployment${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo -e "Environment: ${YELLOW}${ENVIRONMENT}${NC}"
 echo -e "Region: ${YELLOW}${REGION}${NC}"
 echo -e "Platform: ${YELLOW}${PLATFORM}${NC}"
+echo -e "Launch Type: ${YELLOW}${LAUNCH_TYPE}${NC}"
+echo -e "PTC Support: ${PTC_STATUS}"
 echo -e "Action: ${YELLOW}$([ "$DESTROY" = true ] && echo "DESTROY" || echo "DEPLOY")${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo
+
+# Show EC2 info if using EC2 launch type
+if [[ "$LAUNCH_TYPE" == "ec2" ]]; then
+    echo -e "${BLUE}EC2 Launch Type Configuration:${NC}"
+    if [[ "$ENVIRONMENT" == "dev" ]]; then
+        if [[ "$PLATFORM" == "arm64" ]]; then
+            echo -e "  Instance Type: ${YELLOW}t4g.medium (ARM64 Graviton)${NC}"
+        else
+            echo -e "  Instance Type: ${YELLOW}t3.medium (x86_64)${NC}"
+        fi
+        echo -e "  Spot Instances: ${YELLOW}Yes (cost savings)${NC}"
+    else
+        if [[ "$PLATFORM" == "arm64" ]]; then
+            echo -e "  Instance Type: ${YELLOW}t4g.large (ARM64 Graviton)${NC}"
+        else
+            echo -e "  Instance Type: ${YELLOW}t3.large (x86_64)${NC}"
+        fi
+        echo -e "  Spot Instances: ${YELLOW}No (production stability)${NC}"
+    fi
+    echo -e "  Docker Socket: ${YELLOW}Mounted (for PTC)${NC}"
+    echo
+fi
 
 # Check prerequisites
 echo -e "${YELLOW}Checking prerequisites...${NC}"
@@ -176,6 +236,7 @@ export CDK_DEFAULT_REGION="$REGION"
 export CDK_DEFAULT_ACCOUNT="$ACCOUNT_ID"
 export CDK_ENVIRONMENT="$ENVIRONMENT"
 export CDK_PLATFORM="$PLATFORM"
+export CDK_LAUNCH_TYPE="$LAUNCH_TYPE"
 
 # Clean cdk.out directory to prevent ENAMETOOLONG errors
 echo -e "${YELLOW}Cleaning previous CDK output...${NC}"
@@ -219,10 +280,16 @@ else
         --query 'Stacks[0].Outputs[?OutputKey==`ALBDNSName`].OutputValue' \
         --output text 2>/dev/null || echo "N/A")
 
-    CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
-        --stack-name "AnthropicProxy-${ENVIRONMENT}-CloudFront" \
-        --region us-east-1 \
-        --query 'Stacks[0].Outputs[?OutputKey==`DistributionURL`].OutputValue' \
+    LAUNCH_TYPE_OUTPUT=$(aws cloudformation describe-stacks \
+        --stack-name "AnthropicProxy-${ENVIRONMENT}-ECS" \
+        --region "$REGION" \
+        --query 'Stacks[0].Outputs[?OutputKey==`LaunchType`].OutputValue' \
+        --output text 2>/dev/null || echo "N/A")
+
+    PTC_ENABLED=$(aws cloudformation describe-stacks \
+        --stack-name "AnthropicProxy-${ENVIRONMENT}-ECS" \
+        --region "$REGION" \
+        --query 'Stacks[0].Outputs[?OutputKey==`PTCEnabled`].OutputValue' \
         --output text 2>/dev/null || echo "N/A")
 
     SECRET_NAME=$(aws cloudformation describe-stacks \
@@ -234,7 +301,10 @@ else
     echo
     echo -e "${GREEN}Access URLs:${NC}"
     echo -e "  ALB: http://${ALB_DNS}"
-    [ "$CLOUDFRONT_URL" != "N/A" ] && echo -e "  CloudFront: ${CLOUDFRONT_URL}"
+    echo
+    echo -e "${GREEN}Deployment Configuration:${NC}"
+    echo -e "  Launch Type: ${LAUNCH_TYPE_OUTPUT}"
+    echo -e "  PTC Enabled: ${PTC_ENABLED}"
     echo
     echo -e "${GREEN}Master API Key Secret:${NC}"
     echo -e "  Secret Name: ${SECRET_NAME}"
@@ -243,7 +313,10 @@ else
     echo -e "${YELLOW}Next Steps:${NC}"
     echo -e "  1. Create API keys using: ./scripts/create-api-key.sh"
     echo -e "  2. Test the health endpoint: curl http://${ALB_DNS}/health"
-    echo -e "  3. Review CloudWatch logs in the AWS Console"
+    if [[ "$PTC_ENABLED" == "true" ]]; then
+        echo -e "  3. Test PTC health: curl http://${ALB_DNS}/health/ptc"
+    fi
+    echo -e "  4. Review CloudWatch logs in the AWS Console"
 fi
 
 echo -e "${GREEN}========================================${NC}"

@@ -449,10 +449,25 @@ Docker Compose Stack:
 ```
 
 ### Production (AWS ECS)
+
+The proxy supports two ECS launch types with different capabilities:
+
+#### Launch Type Comparison
+
+| Feature | Fargate | EC2 |
+|---------|---------|-----|
+| **Management** | Serverless, zero management | Some instance management |
+| **Scaling** | Fast (seconds) | Slower (minutes) |
+| **Cost Model** | Pay per vCPU/memory/second | Pay per EC2 instance |
+| **Docker Socket** | Not available | Available |
+| **PTC Support** | ❌ No | ✅ Yes |
+| **Use Case** | General workloads | PTC-enabled deployments |
+
+#### Fargate Launch Type (Default)
 ```
 Load Balancer (ALB)
     ↓
-ECS Service (Multi-AZ)
+ECS Fargate Service (Multi-AZ)
     ├── Task 1 (us-east-1a)
     ├── Task 2 (us-east-1b)
     └── Task 3 (us-east-1c)
@@ -463,6 +478,78 @@ AWS Services:
     ├── CloudWatch Logs
     └── CloudWatch Metrics
 ```
+
+**Deploy with:**
+```bash
+./scripts/deploy.sh -e prod -p arm64 -l fargate
+```
+
+#### EC2 Launch Type (For PTC Support)
+```
+Load Balancer (ALB)
+    ↓
+ECS EC2 Service (Multi-AZ)
+    ├── EC2 Instance (us-east-1a)
+    │   ├── ECS Agent
+    │   ├── API Proxy Container
+    │   │   └── Docker Socket Mount (/var/run/docker.sock)
+    │   └── PTC Sandbox Containers (spawned on demand)
+    ├── EC2 Instance (us-east-1b)
+    │   └── ... (same structure)
+    └── Auto Scaling Group
+    ↓
+AWS Services:
+    ├── Bedrock Runtime
+    ├── DynamoDB Tables
+    ├── CloudWatch Logs
+    └── CloudWatch Metrics
+```
+
+**Deploy with:**
+```bash
+./scripts/deploy.sh -e prod -p arm64 -l ec2
+```
+
+**EC2 Configuration Details:**
+- **Instance Types**: t4g.medium/large (ARM64) or t3.medium/large (AMD64)
+- **Spot Instances**: Enabled for dev (cost savings), disabled for prod (stability)
+- **Docker Socket**: Mounted to containers for PTC sandbox execution
+- **Auto Scaling**: EC2 Auto Scaling Group with ECS Capacity Provider
+
+### PTC (Programmatic Tool Calling) on ECS EC2
+
+When deploying with EC2 launch type, PTC is automatically enabled:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  EC2 Instance                                                    │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  API Proxy Container                                      │   │
+│  │  ┌────────────────┐    ┌─────────────────────────────┐   │   │
+│  │  │ PTCService     │───→│ Docker Socket               │   │   │
+│  │  │ - Execute code │    │ /var/run/docker.sock        │   │   │
+│  │  │ - Manage       │    └──────────────┬──────────────┘   │   │
+│  │  │   sessions     │                   │                   │   │
+│  │  └────────────────┘                   │                   │   │
+│  └───────────────────────────────────────│──────────────────┘   │
+│                                          │                       │
+│  ┌───────────────────────────────────────▼──────────────────┐   │
+│  │  PTC Sandbox Containers (spawned on demand)              │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │   │
+│  │  │ Sandbox 1   │  │ Sandbox 2   │  │ Sandbox N   │      │   │
+│  │  │ (session A) │  │ (session B) │  │ (session X) │      │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘      │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Components:**
+- **Docker Socket Mount**: Allows API proxy to create sandbox containers
+- **PTC Sandbox Containers**: Isolated Python environments for code execution
+- **Session Management**: Container reuse with configurable timeout (4.5 min default)
 
 ### Production (Kubernetes)
 ```

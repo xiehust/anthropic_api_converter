@@ -75,6 +75,66 @@ ruff check app tests
 mypy app
 ```
 
+## AWS Deployment (CDK)
+
+The service can be deployed to AWS ECS using CDK. Two launch types are supported:
+
+### Launch Type Comparison
+
+| Feature | Fargate | EC2 |
+|---------|---------|-----|
+| **PTC Support** | No | Yes |
+| **Management** | Serverless (zero) | Some (ASG, AMI) |
+| **Cost Model** | Pay per use | Instance-based |
+| **Scaling** | Fast (seconds) | Slower (minutes) |
+| **Docker Access** | No | Yes (socket mount) |
+| **Best For** | Standard API proxy | PTC-enabled deployments |
+
+### Fargate Deployment (Default)
+
+```bash
+cd cdk
+
+# Deploy to dev environment (ARM64, Fargate)
+./scripts/deploy.sh -e dev -p arm64
+
+# Deploy to prod environment (AMD64, Fargate)
+./scripts/deploy.sh -e prod -p amd64 -r us-east-1
+```
+
+### EC2 Deployment (For PTC Support)
+
+```bash
+cd cdk
+
+# Deploy to dev with EC2 (enables PTC, uses Spot instances)
+./scripts/deploy.sh -e dev -p arm64 -l ec2
+
+# Deploy to prod with EC2 (On-Demand instances for stability)
+./scripts/deploy.sh -e prod -p arm64 -l ec2
+```
+
+### Key CDK Files
+
+- `cdk/config/config.ts` - Environment configurations (VPC, ECS, EC2, PTC settings)
+- `cdk/lib/ecs-stack.ts` - ECS infrastructure (supports both Fargate and EC2)
+- `cdk/scripts/deploy.sh` - Deployment script with options
+
+### CDK Environment Variables
+
+The deploy script sets these environment variables:
+- `CDK_PLATFORM` - Architecture: `arm64` or `amd64`
+- `CDK_LAUNCH_TYPE` - Launch type: `fargate` or `ec2`
+- `CDK_ENVIRONMENT` - Environment name: `dev` or `prod`
+
+### EC2 Instance Types
+
+Platform-specific instance types are automatically selected:
+- **ARM64**: t4g.medium (dev), t4g.large (prod) - Graviton processors
+- **AMD64**: t3.medium (dev), t3.large (prod) - Intel/AMD processors
+
+Dev environments use Spot instances for cost savings; prod uses On-Demand.
+
 ## Architecture
 
 ### Dual API Mode
@@ -385,11 +445,16 @@ curl http://localhost:8000/health/ptc
 **Requirements:**
 - Docker must be running and accessible
 - `python:3.11-slim` image (or configured `PTC_SANDBOX_IMAGE`)
+- **For AWS ECS deployment**: Must use EC2 launch type (not Fargate)
+  - Fargate doesn't provide Docker daemon access
+  - EC2 launch type mounts Docker socket (`/var/run/docker.sock`)
+  - Deploy with: `./scripts/deploy.sh -e dev -p arm64 -l ec2`
 
 **Limitations:**
 - Non-streaming only (streaming PTC not yet implemented)
 - Network disabled in sandbox by default
 - Tools are executed client-side (not in the sandbox)
+- **ECS Fargate not supported** (no Docker daemon access)
 
 ### Beta Header Mapping and Tool Input Examples
 

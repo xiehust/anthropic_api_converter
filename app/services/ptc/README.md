@@ -311,3 +311,111 @@ TOOLS_INFO = [
     {"name": "read_file", "description": "读取文件"}
 ]
 ```
+
+## 10. 示意流程
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant Orch as Orchestrator
+    participant Claude as Bedrock API
+    participant Sandbox as 沙箱执行器
+    participant Container as Docker容器
+    participant Tools as 工具注册表
+    Note over Tools: ⚙️ 初始化阶段<br/>客户端需注册工具:<br/>- query_database()<br/>- send_email()<br/>- ...
+
+    User->>Orch: 发送请求
+    Orch->>Claude: 调用API（附带工具文档）
+    Claude->>Orch: 返回 execute_code 调用
+    
+    Orch->>Sandbox: 执行代码
+    Sandbox->>Container: 创建容器并运行代码
+    
+    Container->>Sandbox: IPC请求：调用工具
+    Sandbox->>Tools: 执行实际工具函数
+    Tools->>Sandbox: 返回结果
+    Sandbox->>Container: 返回工具结果
+    
+    Container->>Sandbox: 代码执行完成
+    Sandbox->>Orch: 返回输出
+    
+    Orch->>Claude: 发送执行结果
+    Claude->>Orch: 生成最终回复
+    Orch->>User: 返回答案
+```
+
+## 11. 详细流程
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant Registry as ToolRegistry<br/>工具注册表
+    participant Orch as Orchestrator<br/>协调器
+    participant Claude as Bedrock API
+    participant Sandbox as SandboxExecutor<br/>沙箱执行器
+    participant Container as Docker Container<br/>容器
+    participant Process as 主进程<br/>IPC处理
+
+    %% 初始化阶段
+    rect rgb(240, 248, 255)
+        Note over User,Registry: 1. 初始化阶段
+        User->>Registry: 注册工具函数
+        Registry->>Registry: 存储工具函数
+        Registry->>Registry: 生成 Schema
+        Registry->>Registry: 生成文档
+    end
+
+    %% 请求处理流程
+    rect rgb(255, 250, 240)
+        Note over User,Claude: 2. 请求处理流程
+        User->>Orch: 发送用户请求
+        Orch->>Orch: 1. 构建 System Prompt<br/>（包含工具文档）
+        Orch->>Orch: 2. 添加 execute_code<br/>工具定义
+        Orch->>Claude: 3. 调用 Claude API
+    end
+
+    %% Claude 决策
+    rect rgb(240, 255, 240)
+        Note over Claude: 3. Claude 决策使用工具
+        Claude->>Claude: 分析请求<br/>决定使用 execute_code
+        Claude->>Orch: 返回 tool_use<br/>{"type": "tool_use",<br/>"name": "execute_code",<br/>"input": {"code": "..."}}
+    end
+
+    %% 沙箱执行
+    rect rgb(255, 240, 245)
+        Note over Orch,Container: 4. 沙箱执行阶段
+        Orch->>Sandbox: execute(code)
+        Sandbox->>Container: 1. 创建 Docker 容器<br/>（无网络、资源限制）
+        Sandbox->>Container: 2. 注入 runner.py 脚本
+        Sandbox->>Container: 3. 通过 stdin 发送代码
+        activate Container
+        Container->>Container: 执行用户代码<br/>result = await query_database(...)
+    end
+
+    %% IPC 通信
+    rect rgb(255, 255, 240)
+        Note over Container,Process: 5. IPC 工具调用
+        Container->>Container: 调用 stub 函数
+        Container->>Process: 发送 IPC 请求到 stderr<br/>（工具调用请求）
+        Process->>Registry: execute(tool_name, params)
+        Registry->>Registry: 执行实际工具函数<br/>（如 query_database）
+        Registry->>Process: 返回工具执行结果
+        Process->>Container: 通过 stdin 返回结果
+        Container->>Container: 继续执行代码
+    end
+
+    %% 执行完成
+    rect rgb(245, 245, 245)
+        Note over Container,Orch: 6. 执行完成
+        Container->>Sandbox: 返回最终 print 输出
+        deactivate Container
+        Sandbox->>Orch: 返回执行结果
+    end
+
+    %% 最终回复
+    rect rgb(240, 248, 255)
+        Note over Orch,User: 7. 生成最终回复
+        Orch->>Claude: 发送 tool_result<br/>"分析完成。Top 5 客户: ..."
+        Claude->>Claude: 基于结果生成回复
+        Claude->>Orch: 返回最终回复
+        Orch->>User: "根据分析，您的销售数据显示..."
+    end
+```

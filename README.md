@@ -330,6 +330,17 @@ cd anthropic_api_converter
 
 ### 选项 1. AWS ECS 部署（推荐）
 
+#### 启动类型选择
+
+| 特性 | Fargate（默认） | EC2 |
+|------|----------------|-----|
+| **PTC 支持** | 否 | 是 |
+| **管理复杂度** | 零（无服务器） | 需要管理 ASG |
+| **成本模式** | 按使用量付费 | 按实例付费 |
+| **扩展速度** | 快（秒级） | 较慢（分钟级） |
+| **Docker 访问** | 否 | 是（挂载 socket） |
+| **推荐场景** | 标准 API 代理 | 需要 PTC 功能 |
+
 #### 1. 安装依赖
 
 ```bash
@@ -338,16 +349,43 @@ npm install
 ```
 
 #### 2. 部署到生产环境
-**⚠️⚠️⚠️注意-p 参数需要根据当前的编译平台更改成amd64或者arm64， 如使用x86芯片的开发平台编译，则改成-p amd64**
+
+**Fargate 部署（默认，适合不需要 PTC 的场景）：**
+
 ```bash
+# ⚠️ -p 参数需要根据当前的编译平台更改成 amd64 或 arm64
+# ARM64（AWS Graviton、Apple Silicon）
 ./scripts/deploy.sh -e prod -r us-west-2 -p arm64
+
+# AMD64（Intel/AMD 服务器）
+./scripts/deploy.sh -e prod -r us-west-2 -p amd64
 ```
+
+**EC2 部署（启用 PTC 功能）：**
+
+```bash
+# 使用 -l ec2 参数启用 EC2 启动类型，自动启用 PTC
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64 -l ec2
+
+# 开发环境（使用 Spot 实例节省成本）
+./scripts/deploy.sh -e dev -r us-west-2 -p arm64 -l ec2
+```
+
+**EC2 启动类型配置：**
+
+| 环境 | 实例类型 | Spot 实例 | Docker Socket |
+|------|---------|----------|---------------|
+| dev + ARM64 | t4g.medium | 是 | 已挂载 |
+| dev + AMD64 | t3.medium | 是 | 已挂载 |
+| prod + ARM64 | t4g.large | 否 | 已挂载 |
+| prod + AMD64 | t3.large | 否 | 已挂载 |
 
 这将部署：
 - DynamoDB 表
 - 带有 NAT 网关的 VPC
-- ECS Fargate 集群和服务
+- ECS Fargate/EC2 集群和服务
 - 应用程序负载均衡器
+- （EC2 模式）Auto Scaling Group 和容量提供程序
 
 部署大约需要 **15-20 分钟**。
 

@@ -179,6 +179,20 @@ class PTCExecutionState(BaseModel):
     pending_batch_call_ids: Optional[List[str]] = None  # For parallel tool calls
     tool_call_count: int = 0
     created_at: datetime = Field(default_factory=datetime.now)
+    # Preserve original request context for finalization
+    original_system: Optional[Any] = None  # Original system message
+    original_model: Optional[str] = None
+    original_max_tokens: Optional[int] = None
+    original_temperature: Optional[float] = None
+    original_top_p: Optional[float] = None
+    original_top_k: Optional[int] = None
+    original_stop_sequences: Optional[List[str]] = None
+    original_tool_choice: Optional[Any] = None
+    original_thinking: Optional[Dict[str, Any]] = None
+    original_anthropic_beta: Optional[str] = None  # Original beta header
+    # Preserve Claude's original response content (including thinking blocks)
+    original_assistant_content: Optional[List[Any]] = None
+    original_execute_code_id: Optional[str] = None  # Original execute_code tool_use ID
 
 
 # ==================== Beta Header Constants ====================

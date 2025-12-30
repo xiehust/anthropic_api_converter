@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 def _filter_non_direct_tool_calls(messages: List[Any]) -> List[Any]:
     """
     Filter out non-direct tool calls and their corresponding results from messages.
+    Also strips the 'caller' field from all tool_use blocks (Bedrock doesn't accept it).
 
     In PTC mode, tool calls with caller.type != "direct" are executed by the sandbox,
     not by Claude directly. These should NOT be included in conversation history
@@ -51,6 +52,7 @@ def _filter_non_direct_tool_calls(messages: List[Any]) -> List[Any]:
     2. Removes those tool_use blocks from assistant messages
     3. Removes corresponding tool_result blocks from user messages
     4. Also removes server_tool_use blocks (code_execution internal blocks)
+    5. Strips the 'caller' field from all remaining tool_use blocks
 
     Args:
         messages: List of message dicts with role and content
@@ -59,7 +61,9 @@ def _filter_non_direct_tool_calls(messages: List[Any]) -> List[Any]:
         Filtered messages list
     """
     # First pass: collect tool_use IDs that should be filtered out
+    # Also check if any tool_use blocks have 'caller' field that needs stripping
     non_direct_tool_ids = set()
+    has_caller_fields = False
 
     for message in messages:
         if isinstance(message, dict):
@@ -90,10 +94,11 @@ def _filter_non_direct_tool_calls(messages: List[Any]) -> List[Any]:
                 if block_id:
                     non_direct_tool_ids.add(block_id)
 
-            # Filter tool_use blocks with non-direct caller
+            # Check tool_use blocks
             if block_type == "tool_use":
                 caller = block_dict.get("caller")
                 if caller:
+                    has_caller_fields = True
                     caller_type = caller.get("type") if isinstance(caller, dict) else (
                         caller.type if hasattr(caller, "type") else None
                     )
@@ -103,15 +108,17 @@ def _filter_non_direct_tool_calls(messages: List[Any]) -> List[Any]:
                         if block_id:
                             non_direct_tool_ids.add(block_id)
 
-    if not non_direct_tool_ids:
+    # Only return early if nothing needs to be modified
+    if not non_direct_tool_ids and not has_caller_fields:
         return messages
 
-    logger.debug(f"[PTC] Filtering {len(non_direct_tool_ids)} non-direct tool call IDs from messages")
+    logger.debug(f"[PTC] Processing messages: filtering {len(non_direct_tool_ids)} non-direct tool call IDs, has_caller_fields={has_caller_fields}")
 
     # Second pass: filter messages
     filtered_messages = []
+    logger.info(f"[_filter_non_direct_tool_calls] Processing {len(messages)} messages, filtering {len(non_direct_tool_ids)} non-direct tool IDs")
 
-    for message in messages:
+    for msg_idx, message in enumerate(messages):
         if isinstance(message, dict):
             role = message.get("role")
             content = message.get("content", [])
@@ -126,8 +133,11 @@ def _filter_non_direct_tool_calls(messages: List[Any]) -> List[Any]:
             filtered_messages.append(message)
             continue
 
-        # Filter content blocks
-        filtered_content = []
+        # Filter content blocks - separate thinking blocks to ensure correct ordering
+        # Bedrock requires: if any thinking blocks exist in assistant messages, they must come first
+        thinking_blocks = []
+        other_blocks = []
+
         for block in content:
             block_dict = block if isinstance(block, dict) else (
                 block.model_dump() if hasattr(block, "model_dump") else {}
@@ -144,6 +154,12 @@ def _filter_non_direct_tool_calls(messages: List[Any]) -> List[Any]:
                 block_id = block_dict.get("id")
                 if block_id in non_direct_tool_ids:
                     continue
+                # Strip the 'caller' field from tool_use blocks - Bedrock doesn't accept it
+                if "caller" in block_dict:
+                    block_dict = {k: v for k, v in block_dict.items() if k != "caller"}
+                # Use the modified block_dict for tool_use blocks
+                other_blocks.append(block_dict)
+                continue
 
             # Filter tool_result blocks for non-direct tool calls
             if block_type == "tool_result":
@@ -151,8 +167,23 @@ def _filter_non_direct_tool_calls(messages: List[Any]) -> List[Any]:
                 if tool_use_id in non_direct_tool_ids:
                     continue
 
-            # Keep this block
-            filtered_content.append(block)
+            # Separate thinking blocks for assistant messages to ensure they come first
+            if role == "assistant" and block_type in ("thinking", "redacted_thinking"):
+                thinking_blocks.append(block_dict)
+            else:
+                other_blocks.append(block_dict)
+
+        # Combine with thinking blocks first (only relevant for assistant messages)
+        filtered_content = thinking_blocks + other_blocks
+
+        # Debug: Log filtering result for assistant messages
+        if role == "assistant":
+            original_types = [
+                b.get("type") if isinstance(b, dict) else getattr(b, "type", "?")
+                for b in content if isinstance(b, (dict,)) or hasattr(b, "type")
+            ]
+            filtered_types = [b.get("type") if isinstance(b, dict) else "?" for b in filtered_content]
+            logger.info(f"[_filter_non_direct_tool_calls] msg[{msg_idx}] assistant: {original_types} -> {filtered_types} (thinking_blocks={len(thinking_blocks)})")
 
         # Only add message if it has content
         if filtered_content:
@@ -168,6 +199,84 @@ def _filter_non_direct_tool_calls(messages: List[Any]) -> List[Any]:
                 filtered_messages.append(msg_dict)
 
     return filtered_messages
+
+
+def _filter_content_blocks_for_bedrock(content_blocks: List[Any]) -> List[Any]:
+    """
+    Filter content blocks to remove Bedrock-incompatible elements.
+
+    This filters a list of content blocks (from an assistant message) to:
+    1. Remove server_tool_use blocks (Bedrock only accepts specific server tools)
+    2. Remove server_tool_result blocks
+    3. Remove tool_use blocks with caller.type != "direct" (called from code execution)
+       - These tool calls were made from sandbox code and their tool_results are being skipped
+       - Including them would cause "tool_use without tool_result" validation errors
+    4. Strip 'caller' field from remaining tool_use blocks
+    5. Ensure thinking/redacted_thinking blocks come first (Bedrock requirement)
+
+    Args:
+        content_blocks: List of content block dicts
+
+    Returns:
+        Filtered list of content blocks with thinking blocks first
+    """
+    # Separate thinking blocks from other blocks to ensure correct ordering
+    # Bedrock requires: if any thinking blocks exist, they must come first
+    thinking_blocks = []
+    other_blocks = []
+
+    for block in content_blocks:
+        block_dict = block if isinstance(block, dict) else (
+            block.model_dump() if hasattr(block, "model_dump") else {}
+        )
+
+        block_type = block_dict.get("type")
+
+        # Safety check: Log warning if we can't determine block type
+        if not block_type:
+            logger.warning(f"[_filter_content_blocks_for_bedrock] Block has no type: {type(block).__name__}, block={block}")
+
+        # Skip server_tool_use blocks - Bedrock only accepts specific server tools
+        # (web_search, tool_search_tool_regex, tool_search_tool_bm25)
+        # Our code_execution is NOT a Bedrock server tool
+        if block_type == "server_tool_use":
+            logger.debug(f"[PTC] Filtering out server_tool_use block: {block_dict.get('name')}")
+            continue
+
+        # Skip server_tool_result blocks
+        if block_type == "server_tool_result":
+            logger.debug(f"[PTC] Filtering out server_tool_result block")
+            continue
+
+        # Handle tool_use blocks
+        if block_type == "tool_use":
+            caller = block_dict.get("caller")
+            if caller:
+                caller_type = caller.get("type") if isinstance(caller, dict) else (
+                    caller.type if hasattr(caller, "type") else None
+                )
+                # Skip non-direct tool_use blocks (called from code execution)
+                # These don't have corresponding tool_result in the messages we're building
+                if caller_type and caller_type != "direct":
+                    logger.debug(f"[PTC] Filtering out non-direct tool_use block: {block_dict.get('id')}")
+                    continue
+                # Strip 'caller' field from remaining (direct) tool_use blocks
+                block_dict = {k: v for k, v in block_dict.items() if k != "caller"}
+            other_blocks.append(block_dict)
+            continue
+
+        # Separate thinking blocks to ensure they come first
+        if block_type in ("thinking", "redacted_thinking"):
+            thinking_blocks.append(block_dict)
+        else:
+            other_blocks.append(block_dict)
+
+    # Return with thinking blocks first (Bedrock requirement)
+    result = thinking_blocks + other_blocks
+    if thinking_blocks:
+        result_types = [b.get("type") if isinstance(b, dict) else "?" for b in result]
+        logger.info(f"[_filter_content_blocks_for_bedrock] Reordered with {len(thinking_blocks)} thinking blocks first: {result_types}")
+    return result
 
 
 class PTCService:
@@ -353,6 +462,12 @@ This significantly improves performance by executing multiple tool calls concurr
             if tool_dict.get("type") == PTC_TOOL_TYPE:
                 continue
 
+            # Skip execute_code tool (we add it ourselves above)
+            # This prevents duplicates when request.tools already contains execute_code
+            # from a previous prepare_bedrock_request() call
+            if tool_dict.get("name") == "execute_code":
+                continue
+
             # Check if tool is direct-callable
             allowed_callers = tool_dict.get("allowed_callers", ["direct"])
             if "direct" in allowed_callers:
@@ -363,6 +478,10 @@ This significantly improves performance by executing multiple tool calls concurr
         # Create modified request
         request_dict = request.model_dump()
         request_dict["tools"] = new_tools
+
+        # Filter messages to strip 'caller' fields from tool_use blocks
+        # Bedrock doesn't accept the 'caller' field which is an Anthropic PTC extension
+        request_dict["messages"] = _filter_non_direct_tool_calls(request_dict.get("messages", []))
 
         # Append PTC system prompt for parallel execution guidance
         ptc_system_prompt = self._build_ptc_system_prompt(ptc_callable_tools)
@@ -664,7 +783,8 @@ Before writing code, verify:
         bedrock_service: Any,
         request_id: str,
         service_tier: str,
-        container_id: Optional[str] = None
+        container_id: Optional[str] = None,
+        anthropic_beta: Optional[str] = None,
     ) -> Tuple[MessageResponse, Optional[ContainerInfo]]:
         """
         Handle a PTC request.
@@ -682,6 +802,7 @@ Before writing code, verify:
             request_id: Request ID
             service_tier: Bedrock service tier
             container_id: Optional container ID for session reuse
+            anthropic_beta: Optional beta header from Anthropic client
 
         Returns:
             Tuple of (response, container_info)
@@ -693,6 +814,16 @@ Before writing code, verify:
                 "Please ensure Docker is running."
             )
 
+        # Debug: Log incoming messages to see what the client sent
+        logger.info(f"[PTC] handle_ptc_request incoming messages ({len(request.messages)}):")
+        for idx, msg in enumerate(request.messages):
+            content = msg.content
+            if isinstance(content, str):
+                logger.info(f"[PTC]   messages[{idx}]: role={msg.role}, content=str")
+            elif isinstance(content, list):
+                types = [getattr(b, "type", "?") if hasattr(b, "type") else b.get("type", "?") for b in content]
+                logger.info(f"[PTC]   messages[{idx}]: role={msg.role}, content_types={types}")
+
         # Get PTC tools
         _, ptc_callable_tools = self.get_ptc_tools(request)
 
@@ -703,9 +834,9 @@ Before writing code, verify:
         session = await self._get_or_create_session(container_id, ptc_callable_tools)
 
         try:
-            # Call Bedrock
+            # Call Bedrock (with beta header)
             response = await bedrock_service.invoke_model(
-                bedrock_request, request_id, service_tier
+                bedrock_request, request_id, service_tier, anthropic_beta
             )
 
             # Check if Claude called execute_code
@@ -713,15 +844,18 @@ Before writing code, verify:
 
             if execute_code_call:
                 # Execute code in sandbox
+                # Pass bedrock_request (which includes PTC system prompt) instead of original request
+                # This ensures the PTC system prompt is preserved in continuation requests
                 return await self._handle_code_execution(
                     execute_code_call,
                     response,
                     session,
-                    request,
+                    bedrock_request,  # Use prepared request with PTC system prompt
                     bedrock_service,
                     request_id,
                     service_tier,
-                    ptc_callable_tools
+                    ptc_callable_tools,
+                    anthropic_beta,
                 )
             else:
                 # No code execution, return response with container info
@@ -787,7 +921,8 @@ Before writing code, verify:
         bedrock_service: Any,
         request_id: str,
         service_tier: str,
-        ptc_callable_tools: List[dict]
+        ptc_callable_tools: List[dict],
+        anthropic_beta: Optional[str] = None,
     ) -> Tuple[MessageResponse, Optional[ContainerInfo]]:
         """
         Handle code execution in sandbox.
@@ -834,6 +969,18 @@ Before writing code, verify:
 
         logger.info(f"Executing code in sandbox:\n{code}")
 
+        # Extract original assistant content (including thinking blocks) for later use
+        # This is needed when thinking is enabled - Claude requires assistant messages to start with thinking
+        original_assistant_content = []
+        for block in claude_response.content:
+            if hasattr(block, "model_dump"):
+                original_assistant_content.append(block.model_dump())
+            elif isinstance(block, dict):
+                original_assistant_content.append(block)
+
+        # Get the original execute_code tool_use ID
+        original_execute_code_id = execute_code_call.get("id")
+
         # Execute code in sandbox (using async generator pattern)
         gen = self.sandbox_executor.execute_code(code, session)
 
@@ -854,7 +1001,7 @@ Before writing code, verify:
                     first_call = result.requests[0]
                     pending_call_ids = [r.call_id for r in result.requests]
 
-                    # Store execution state for resume
+                    # Store execution state for resume (including original request context)
                     state = PTCExecutionState(
                         session_id=session.session_id,
                         code_execution_tool_id=code_execution_tool_id,
@@ -863,6 +1010,20 @@ Before writing code, verify:
                         pending_tool_name=first_call.tool_name,
                         pending_tool_input=first_call.arguments,
                         pending_batch_call_ids=pending_call_ids,  # Track all call IDs
+                        # Preserve original request context for finalization
+                        original_system=original_request.system,
+                        original_model=original_request.model,
+                        original_max_tokens=original_request.max_tokens,
+                        original_temperature=original_request.temperature,
+                        original_top_p=original_request.top_p,
+                        original_top_k=original_request.top_k,
+                        original_stop_sequences=original_request.stop_sequences,
+                        original_tool_choice=original_request.tool_choice,
+                        original_thinking=original_request.thinking,
+                        original_anthropic_beta=anthropic_beta,
+                        # Preserve original assistant content (including thinking blocks)
+                        original_assistant_content=original_assistant_content,
+                        original_execute_code_id=original_execute_code_id,
                     )
                     self._execution_states[session.session_id] = state
                     self._execution_generators[session.session_id] = gen
@@ -889,7 +1050,7 @@ Before writing code, verify:
 
                 else:
                     # Single tool call (original behavior)
-                    # Store execution state for resume
+                    # Store execution state for resume (including original request context)
                     state = PTCExecutionState(
                         session_id=session.session_id,
                         code_execution_tool_id=code_execution_tool_id,
@@ -897,6 +1058,20 @@ Before writing code, verify:
                         pending_tool_call_id=result.call_id,
                         pending_tool_name=result.tool_name,
                         pending_tool_input=result.arguments,
+                        # Preserve original request context for finalization
+                        original_system=original_request.system,
+                        original_model=original_request.model,
+                        original_max_tokens=original_request.max_tokens,
+                        original_temperature=original_request.temperature,
+                        original_top_p=original_request.top_p,
+                        original_top_k=original_request.top_k,
+                        original_stop_sequences=original_request.stop_sequences,
+                        original_tool_choice=original_request.tool_choice,
+                        original_thinking=original_request.thinking,
+                        original_anthropic_beta=anthropic_beta,
+                        # Preserve original assistant content (including thinking blocks)
+                        original_assistant_content=original_assistant_content,
+                        original_execute_code_id=original_execute_code_id,
                     )
                     self._execution_states[session.session_id] = state
                     self._execution_generators[session.session_id] = gen
@@ -936,7 +1111,8 @@ Before writing code, verify:
                     request_id,
                     service_tier,
                     session,
-                    ptc_callable_tools
+                    ptc_callable_tools,
+                    anthropic_beta,
                 )
 
         except StopAsyncIteration:
@@ -1045,6 +1221,16 @@ Before writing code, verify:
 
         logger.info(f"[PTC] Resuming execution for session {session_id}, tool={state.pending_tool_name}")
 
+        # Debug: Log incoming messages during continuation to see what the client echoed back
+        logger.info(f"[PTC] handle_tool_result_continuation incoming messages ({len(original_request.messages)}):")
+        for idx, msg in enumerate(original_request.messages):
+            content = msg.content
+            if isinstance(content, str):
+                logger.info(f"[PTC]   messages[{idx}]: role={msg.role}, content=str")
+            elif isinstance(content, list):
+                types = [getattr(b, "type", "?") if hasattr(b, "type") else b.get("type", "?") for b in content]
+                logger.info(f"[PTC]   messages[{idx}]: role={msg.role}, content_types={types}")
+
         # Get PTC tools for potential continuation
         _, ptc_callable_tools = self.get_ptc_tools(original_request)
 
@@ -1131,6 +1317,7 @@ Before writing code, verify:
             )
 
             # Call Claude with the code execution result to get final response
+            # Pass the saved execution state to preserve original request context
             return await self._finalize_code_execution(
                 result=result,
                 code_execution_tool_id=state.code_execution_tool_id,
@@ -1140,7 +1327,8 @@ Before writing code, verify:
                 service_tier=service_tier,
                 session=session,
                 ptc_callable_tools=ptc_callable_tools,
-                code=state.code
+                code=state.code,
+                execution_state=state,  # Pass saved state for original request context
             )
 
         else:
@@ -1203,13 +1391,20 @@ Before writing code, verify:
         service_tier: str,
         session: SandboxSession,
         ptc_callable_tools: List[dict],
-        code: str = "" 
+        code: str = "",
+        execution_state: Optional[PTCExecutionState] = None,
     ) -> Tuple[MessageResponse, Optional[ContainerInfo]]:
         """
         Finalize code execution by calling Claude with the result.
 
         This is called after sandbox code completes (in continuation flow).
         It sends the code output to Claude and returns Claude's final response.
+
+        Args:
+            execution_state: Optional saved state containing original request parameters.
+                           When provided, uses saved system/model/etc. instead of original_request.
+                           This is important for continuation requests where client may not
+                           include original system message.
         """
         # Build tool result content
         if result.success:
@@ -1217,55 +1412,238 @@ Before writing code, verify:
         else:
             tool_result_content = f"Error: {result.stderr}"
 
-        logger.info(f"[PTC] Finalizing code execution, sending result to Claude: {tool_result_content[:200]}...")
+        # Use saved state parameters if available, fall back to original_request
+        # This ensures we preserve the original system message even in continuation requests
+        effective_system = (
+            execution_state.original_system if execution_state and execution_state.original_system is not None
+            else original_request.system
+        )
+        effective_model = (
+            execution_state.original_model if execution_state and execution_state.original_model
+            else original_request.model
+        )
+        effective_max_tokens = (
+            execution_state.original_max_tokens if execution_state and execution_state.original_max_tokens
+            else original_request.max_tokens
+        )
+        effective_temperature = (
+            execution_state.original_temperature if execution_state and execution_state.original_temperature is not None
+            else original_request.temperature
+        )
+        effective_top_p = (
+            execution_state.original_top_p if execution_state and execution_state.original_top_p is not None
+            else original_request.top_p
+        )
+        effective_top_k = (
+            execution_state.original_top_k if execution_state and execution_state.original_top_k is not None
+            else original_request.top_k
+        )
+        effective_stop_sequences = (
+            execution_state.original_stop_sequences if execution_state and execution_state.original_stop_sequences
+            else original_request.stop_sequences
+        )
+        effective_tool_choice = (
+            execution_state.original_tool_choice if execution_state and execution_state.original_tool_choice
+            else original_request.tool_choice
+        )
+        effective_thinking = (
+            execution_state.original_thinking if execution_state and execution_state.original_thinking
+            else original_request.thinking
+        )
+        effective_anthropic_beta = (
+            execution_state.original_anthropic_beta if execution_state and execution_state.original_anthropic_beta
+            else None
+        )
+
+        has_system = effective_system is not None
+        logger.info(f"[PTC] Finalizing code execution, sending result to Claude")
+        logger.info(f"[PTC] Effective parameters - Has system: {has_system}, Model: {effective_model}, Beta: {effective_anthropic_beta}")
 
         # Build continuation messages
-        # The original_request.messages should contain the conversation history
-        # We need to add an assistant message with execute_code tool_use
-        # and a user message with the tool_result
-        # Filter out non-direct tool calls and their results from history
-        messages = _filter_non_direct_tool_calls(list(original_request.messages))
+        # The original_request.messages contains the conversation history echoed by the client
+        # When thinking is enabled, the client's echoed assistant message is incomplete (missing thinking blocks)
+        # We need to rebuild the conversation using only user messages from the client + our stored assistant content
 
         # Add assistant message with execute_code tool call
-        # (This is what Claude would have sent that triggered the code execution)
-        messages.append({
-            "role": "assistant",
-            "content": [{
-                "type": "tool_use",
-                "id": f"toolu_{code_execution_tool_id[-12:]}",  # Use a derived ID
-                "name": "execute_code",
-                "input": {"code": code}  # Don't need actual code
-            }]
-        })
+        # When thinking is enabled, Claude requires assistant messages to start with thinking blocks
+        # Use the stored original_assistant_content which includes thinking blocks
+        if execution_state and execution_state.original_assistant_content:
+            # When we have stored assistant content (with thinking blocks), we MUST rebuild messages:
+            # The client's echoed messages contain:
+            #   - Original conversation history (user/assistant turns) - KEEP these
+            #   - The incomplete assistant message we sent back (missing thinking) - SKIP this (last assistant)
+            #   - User message with tool_result for internal tool - SKIP this (not for Claude)
+            #
+            # We rebuild by:
+            # 1. Keep all messages except the LAST assistant message and user messages with tool_result
+            # 2. Append our stored original_assistant_content (has thinking blocks)
+            # 3. Append tool_result for execute_code (code output)
+            #
+            # This avoids having an incomplete assistant message (without thinking) in the history.
+
+            messages = []
+            msg_list = list(original_request.messages)
+
+            logger.info(f"[PTC] Input messages count: {len(msg_list)}")
+
+            # Find the index of the last assistant message (which is the incomplete one we sent)
+            last_assistant_idx = -1
+            for i in range(len(msg_list) - 1, -1, -1):
+                msg = msg_list[i]
+                if isinstance(msg, dict):
+                    role = msg.get("role")
+                elif hasattr(msg, "role"):
+                    role = msg.role
+                else:
+                    continue
+                if role == "assistant":
+                    last_assistant_idx = i
+                    break
+
+            logger.info(f"[PTC] Last assistant message index: {last_assistant_idx}")
+
+            for i, msg in enumerate(msg_list):
+                if isinstance(msg, dict):
+                    role = msg.get("role")
+                    content = msg.get("content", [])
+                elif hasattr(msg, "role"):
+                    role = msg.role
+                    content = msg.content if hasattr(msg, "content") else []
+                else:
+                    continue
+
+                # Log each message for debugging
+                content_types = []
+                if isinstance(content, list):
+                    for b in content:
+                        if isinstance(b, dict):
+                            content_types.append(b.get("type", "unknown"))
+                        elif hasattr(b, "type"):
+                            content_types.append(b.type)
+                logger.info(f"[PTC] Input msg[{i}]: role={role}, content_types={content_types}")
+
+                # Skip the LAST assistant message (it's incomplete, missing thinking blocks)
+                # Previous assistant messages from earlier turns are valid and should be kept
+                if role == "assistant" and i == last_assistant_idx:
+                    logger.info(f"[PTC] Skipping msg[{i}] (last assistant)")
+                    continue
+
+                # Skip user messages containing tool_result (those are for internal tools)
+                if role == "user" and isinstance(content, list):
+                    has_tool_result = any(
+                        (isinstance(b, dict) and b.get("type") == "tool_result") or
+                        (hasattr(b, "type") and b.type == "tool_result")
+                        for b in content
+                    )
+                    if has_tool_result:
+                        logger.info(f"[PTC] Skipping msg[{i}] (user with tool_result)")
+                        continue
+
+                msg_dict = msg if isinstance(msg, dict) else msg.model_dump()
+
+                # Filter assistant message content blocks for Bedrock compatibility
+                # Earlier assistant messages may contain server_tool_use blocks from previous code execution rounds
+                if role == "assistant" and isinstance(msg_dict.get("content"), list):
+                    msg_dict = dict(msg_dict)  # Make a copy to avoid mutating original
+                    original_types = [b.get("type") if isinstance(b, dict) else getattr(b, "type", "?") for b in msg_dict["content"]]
+                    msg_dict["content"] = _filter_content_blocks_for_bedrock(msg_dict["content"])
+                    filtered_types = [b.get("type") if isinstance(b, dict) else getattr(b, "type", "?") for b in msg_dict["content"]]
+                    logger.info(f"[PTC] Filtered msg[{i}] assistant content: {original_types} -> {filtered_types}")
+
+                    # Skip messages that end up with empty content after filtering
+                    # Bedrock rejects messages with empty content
+                    if not msg_dict["content"]:
+                        logger.info(f"[PTC] Skipping msg[{i}] (empty content after filtering)")
+                        continue
+
+                messages.append(msg_dict)
+                logger.info(f"[PTC] Kept msg[{i}] as messages[{len(messages)-1}]")
+
+            logger.info(f"[PTC] Kept {len(messages)} messages total")
+
+            # Append our stored assistant content (which includes thinking blocks)
+            # Filter out server_tool_use/server_tool_result blocks - they're not valid for Bedrock
+            original_content_types = [b.get("type") if isinstance(b, dict) else getattr(b, "type", "?") for b in execution_state.original_assistant_content]
+            filtered_assistant_content = _filter_content_blocks_for_bedrock(
+                execution_state.original_assistant_content
+            )
+            filtered_content_types = [b.get("type") if isinstance(b, dict) else getattr(b, "type", "?") for b in filtered_assistant_content]
+            messages.append({
+                "role": "assistant",
+                "content": filtered_assistant_content
+            })
+            logger.info(f"[PTC] Appended stored assistant content as messages[{len(messages)-1}]: {original_content_types} -> {filtered_content_types}")
+            # Use the original execute_code ID for the tool_result
+            execute_code_id = execution_state.original_execute_code_id or f"toolu_{code_execution_tool_id[-12:]}"
+        else:
+            # Fallback: no stored assistant content, use client's messages directly
+            # This path is used when thinking is NOT enabled
+            messages = _filter_non_direct_tool_calls(list(original_request.messages))
+            execute_code_id = f"toolu_{code_execution_tool_id[-12:]}"
+            messages.append({
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": execute_code_id,
+                    "name": "execute_code",
+                    "input": {"code": code}
+                }]
+            })
 
         # Add tool result for the execute_code call
         messages.append({
             "role": "user",
             "content": [{
                 "type": "tool_result",
-                "tool_use_id": f"toolu_{code_execution_tool_id[-12:]}",
+                "tool_use_id": execute_code_id,
                 "content": tool_result_content
             }]
         })
+        logger.info(f"[PTC] Appended tool_result as messages[{len(messages)-1}]")
 
-        # Create continuation request
+        # Log final messages summary
+        logger.info(f"[PTC] Final messages array ({len(messages)} messages):")
+        for idx, msg in enumerate(messages):
+            role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", "?")
+            content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", [])
+            if isinstance(content, list):
+                types = [b.get("type") if isinstance(b, dict) else getattr(b, "type", "?") for b in content]
+                logger.info(f"[PTC]   messages[{idx}]: role={role}, content_types={types}")
+            else:
+                logger.info(f"[PTC]   messages[{idx}]: role={role}, content=str")
+
+        # Create continuation request using effective (preserved) parameters
         continuation_request = MessageRequest(
-            model=original_request.model,
+            model=effective_model,
             messages=messages,
-            max_tokens=original_request.max_tokens,
-            system=original_request.system,
-            temperature=original_request.temperature,
-            top_p=original_request.top_p,
-            top_k=original_request.top_k,
-            stop_sequences=original_request.stop_sequences,
+            max_tokens=effective_max_tokens,
+            system=effective_system,
+            temperature=effective_temperature,
+            top_p=effective_top_p,
+            top_k=effective_top_k,
+            stop_sequences=effective_stop_sequences,
             tools=self.prepare_bedrock_request(original_request, ptc_callable_tools).tools,
-            tool_choice=original_request.tool_choice,
-            thinking=original_request.thinking,
+            tool_choice=effective_tool_choice,
+            thinking=effective_thinking,
         )
 
-        # Call Bedrock to get Claude's final response
+        # Debug: Verify MessageRequest didn't reorder content after Pydantic validation
+        logger.info(f"[PTC] After MessageRequest creation, checking messages:")
+        for idx, msg in enumerate(continuation_request.messages):
+            content = msg.content
+            if isinstance(content, list):
+                types = [getattr(b, "type", "?") if hasattr(b, "type") else b.get("type", "?") for b in content]
+                logger.info(f"[PTC]   continuation_request.messages[{idx}]: role={msg.role}, content_types={types}")
+                # Extra detail for messages[1] if it's assistant
+                if idx == 1 and msg.role == "assistant":
+                    logger.info(f"[PTC]   DETAIL messages[1].content:")
+                    for i, block in enumerate(content):
+                        block_type = getattr(block, "type", "?") if hasattr(block, "type") else block.get("type", "?")
+                        logger.info(f"[PTC]     [{i}] type={block_type}, block={block}")
+
+        # Call Bedrock to get Claude's final response (with preserved beta header)
         final_response = await bedrock_service.invoke_model(
-            continuation_request, request_id, service_tier
+            continuation_request, request_id, service_tier, effective_anthropic_beta
         )
 
         # Check if Claude called execute_code again
@@ -1273,15 +1651,31 @@ Before writing code, verify:
 
         if next_execute_code:
             # Recursive call for multi-round code execution
+            # Build request with effective (preserved) parameters
+            # Use prepare_bedrock_request to filter out code_execution_20250825 tool type
+            recursive_request = MessageRequest(
+                model=effective_model,
+                messages=messages,
+                max_tokens=effective_max_tokens,
+                system=effective_system,
+                temperature=effective_temperature,
+                top_p=effective_top_p,
+                top_k=effective_top_k,
+                stop_sequences=effective_stop_sequences,
+                tools=self.prepare_bedrock_request(original_request, ptc_callable_tools).tools,
+                tool_choice=effective_tool_choice,
+                thinking=effective_thinking,
+            )
             return await self._handle_code_execution(
                 next_execute_code,
                 final_response,
                 session,
-                MessageRequest(**{**original_request.model_dump(), "messages": messages}),
+                recursive_request,
                 bedrock_service,
                 request_id,
                 service_tier,
-                ptc_callable_tools
+                ptc_callable_tools,
+                effective_anthropic_beta,  # Pass preserved beta header
             )
 
         # Add caller: {type: "direct"} to any direct tool_use blocks
@@ -1438,11 +1832,15 @@ Before writing code, verify:
 
         if next_execute_code:
             # Recursive call for multi-round code execution
+            # Build request with filtered tools (code_execution_20250825 removed)
+            recursive_request_dict = original_request.model_dump()
+            recursive_request_dict["messages"] = messages
+            recursive_request_dict["tools"] = self.prepare_bedrock_request(original_request, ptc_callable_tools).tools
             return await self._handle_code_execution(
                 next_execute_code,
                 final_response,
                 session,
-                MessageRequest(**{**original_request.model_dump(), "messages": messages}),
+                MessageRequest(**recursive_request_dict),
                 bedrock_service,
                 request_id,
                 service_tier,
@@ -1479,18 +1877,41 @@ Before writing code, verify:
     ) -> MessageResponse:
         """Build response with tool_use block including caller info."""
         # Create new content with tool_use
-        content = []
+        # IMPORTANT: Thinking blocks must come first for Bedrock compatibility
+        thinking_blocks = []
+        other_blocks = []
 
-        # Add any text content from original response
+        # Separate thinking blocks from other content (text only)
         for block in original_response.content:
             if hasattr(block, "type"):
-                if block.type == "text":
-                    content.append({
+                block_type = block.type
+                if block_type in ("thinking", "redacted_thinking"):
+                    # Include thinking blocks for client to echo back correctly
+                    if block_type == "thinking":
+                        thinking_blocks.append({
+                            "type": "thinking",
+                            "thinking": block.thinking if hasattr(block, "thinking") else "",
+                            "signature": block.signature if hasattr(block, "signature") else None
+                        })
+                    else:
+                        thinking_blocks.append({
+                            "type": "redacted_thinking",
+                            "data": block.data if hasattr(block, "data") else ""
+                        })
+                elif block_type == "text":
+                    other_blocks.append({
                         "type": "text",
                         "text": block.text if hasattr(block, "text") else ""
                     })
-            elif isinstance(block, dict) and block.get("type") == "text":
-                content.append(block)
+            elif isinstance(block, dict):
+                block_type = block.get("type")
+                if block_type in ("thinking", "redacted_thinking"):
+                    thinking_blocks.append(block)
+                elif block_type == "text":
+                    other_blocks.append(block)
+
+        # Combine: thinking first, then text
+        content = thinking_blocks + other_blocks
 
         # Add server_tool_use for code_execution
         content.append({
@@ -1524,7 +1945,8 @@ Before writing code, verify:
             "usage": original_response.usage.model_dump() if hasattr(original_response.usage, "model_dump") else original_response.usage,
         }
 
-        logger.debug(f"[PTC] Built tool_use response content: {json.dumps(content, indent=2)}")
+        content_types = [b.get("type") if isinstance(b, dict) else getattr(b, "type", "?") for b in content]
+        logger.info(f"[PTC] Built tool_use response: {len(thinking_blocks)} thinking blocks first, content_types={content_types}")
         return MessageResponse(**response_dict)
 
     def _build_batch_tool_use_response(
@@ -1537,18 +1959,41 @@ Before writing code, verify:
     ) -> MessageResponse:
         """Build response with multiple tool_use blocks for parallel tool calls."""
         # Create new content
-        content = []
+        # IMPORTANT: Thinking blocks must come first for Bedrock compatibility
+        thinking_blocks = []
+        other_blocks = []
 
-        # Add any text content from original response
+        # Separate thinking blocks from other content (text only)
         for block in original_response.content:
             if hasattr(block, "type"):
-                if block.type == "text":
-                    content.append({
+                block_type = block.type
+                if block_type in ("thinking", "redacted_thinking"):
+                    # Include thinking blocks for client to echo back correctly
+                    if block_type == "thinking":
+                        thinking_blocks.append({
+                            "type": "thinking",
+                            "thinking": block.thinking if hasattr(block, "thinking") else "",
+                            "signature": block.signature if hasattr(block, "signature") else None
+                        })
+                    else:
+                        thinking_blocks.append({
+                            "type": "redacted_thinking",
+                            "data": block.data if hasattr(block, "data") else ""
+                        })
+                elif block_type == "text":
+                    other_blocks.append({
                         "type": "text",
                         "text": block.text if hasattr(block, "text") else ""
                     })
-            elif isinstance(block, dict) and block.get("type") == "text":
-                content.append(block)
+            elif isinstance(block, dict):
+                block_type = block.get("type")
+                if block_type in ("thinking", "redacted_thinking"):
+                    thinking_blocks.append(block)
+                elif block_type == "text":
+                    other_blocks.append(block)
+
+        # Combine: thinking first, then text
+        content = thinking_blocks + other_blocks
 
         # Add server_tool_use for code_execution
         content.append({
@@ -1583,7 +2028,8 @@ Before writing code, verify:
             "usage": original_response.usage.model_dump() if hasattr(original_response.usage, "model_dump") else original_response.usage,
         }
 
-        logger.info(f"[PTC] Built batch tool_use response with {len(batch_request)} tool calls")
+        content_types = [b.get("type") if isinstance(b, dict) else getattr(b, "type", "?") for b in content]
+        logger.info(f"[PTC] Built batch tool_use response: {len(thinking_blocks)} thinking blocks first, {len(batch_request)} tool calls, content_types={content_types}")
         return MessageResponse(**response_dict)
 
     async def _complete_code_execution(
@@ -1596,7 +2042,8 @@ Before writing code, verify:
         request_id: str,
         service_tier: str,
         session: SandboxSession,
-        ptc_callable_tools: List[dict]
+        ptc_callable_tools: List[dict],
+        anthropic_beta: Optional[str] = None,
     ) -> Tuple[MessageResponse, Optional[ContainerInfo]]:
         """
         Complete code execution and continue conversation with Claude.
@@ -1616,6 +2063,7 @@ Before writing code, verify:
         messages = _filter_non_direct_tool_calls(list(original_request.messages))
 
         # Add assistant message with execute_code call
+        # Filter out server_tool_use/server_tool_result blocks - they're not valid for Bedrock
         assistant_content = []
         for block in claude_response.content:
             if hasattr(block, "model_dump"):
@@ -1623,9 +2071,11 @@ Before writing code, verify:
             elif isinstance(block, dict):
                 assistant_content.append(block)
 
+        filtered_assistant_content = _filter_content_blocks_for_bedrock(assistant_content)
+        logger.info(f"[PTC _complete] Filtered assistant content: {[b.get('type') for b in assistant_content]} -> {[b.get('type') for b in filtered_assistant_content]}")
         messages.append({
             "role": "assistant",
-            "content": assistant_content
+            "content": filtered_assistant_content
         })
 
         # Add tool result
@@ -1637,6 +2087,15 @@ Before writing code, verify:
                 "content": tool_result_content
             }]
         })
+
+        # Debug: Log final messages before creating request
+        logger.info(f"[PTC _complete] Final messages ({len(messages)}):")
+        for idx, msg in enumerate(messages):
+            role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", "?")
+            content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", [])
+            if isinstance(content, list):
+                types = [b.get("type") if isinstance(b, dict) else getattr(b, "type", "?") for b in content]
+                logger.info(f"[PTC _complete]   messages[{idx}]: role={role}, content_types={types}")
 
         # Create continuation request
         continuation_request = MessageRequest(
@@ -1653,9 +2112,9 @@ Before writing code, verify:
             thinking=original_request.thinking,
         )
 
-        # Call Bedrock again
+        # Call Bedrock again (with beta header)
         final_response = await bedrock_service.invoke_model(
-            continuation_request, request_id, service_tier
+            continuation_request, request_id, service_tier, anthropic_beta
         )
 
         # Check if Claude called execute_code again
@@ -1663,15 +2122,20 @@ Before writing code, verify:
 
         if next_execute_code:
             # Recursive call for multi-round code execution
+            # Build request with filtered tools (code_execution_20250825 removed)
+            recursive_request_dict = original_request.model_dump()
+            recursive_request_dict["messages"] = messages
+            recursive_request_dict["tools"] = self.prepare_bedrock_request(original_request, ptc_callable_tools).tools
             return await self._handle_code_execution(
                 next_execute_code,
                 final_response,
                 session,
-                MessageRequest(**{**original_request.model_dump(), "messages": messages}),
+                MessageRequest(**recursive_request_dict),
                 bedrock_service,
                 request_id,
                 service_tier,
-                ptc_callable_tools
+                ptc_callable_tools,
+                anthropic_beta,  # Pass beta header
             )
 
         # Add caller: {type: "direct"} to any direct tool_use blocks

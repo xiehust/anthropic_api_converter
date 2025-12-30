@@ -80,7 +80,7 @@ class BedrockService:
             connect_timeout=30,
             retries={"max_attempts": 3, "mode": "standard"},
         )
-        print(f"-------settings--------:\n{settings}")
+        # print(f"-------settings--------:\n{settings}")
         self.client = boto3.client(
             "bedrock-runtime",
             region_name=settings.aws_region,
@@ -151,24 +151,45 @@ class BedrockService:
         }
 
         # Convert messages
-        for msg in request.messages:
+        for msg_idx, msg in enumerate(request.messages):
             message_dict: Dict[str, Any] = {"role": msg.role}
 
             # Handle content
             if isinstance(msg.content, str):
                 message_dict["content"] = msg.content
             else:
+                # Debug: Log content types BEFORE conversion to see Pydantic's order
+                if msg.role == "assistant":
+                    pre_convert_types = []
+                    for b in msg.content:
+                        if hasattr(b, "type"):
+                            pre_convert_types.append(b.type)
+                        elif isinstance(b, dict):
+                            pre_convert_types.append(b.get("type", "?"))
+                        else:
+                            pre_convert_types.append(type(b).__name__)
+                    print(f"[BEDROCK NATIVE CONVERT] msg[{msg_idx}] assistant BEFORE convert: {pre_convert_types}")
+
                 # Convert content blocks to native format
                 content_list = []
                 for block in msg.content:
                     if hasattr(block, "model_dump"):
                         block_dict = block.model_dump(exclude_none=True)
                     elif isinstance(block, dict):
-                        block_dict = block
+                        block_dict = dict(block)  # Make a copy to avoid mutating original
                     else:
                         continue
+                    # Strip 'caller' field from tool_use blocks - Bedrock doesn't accept it
+                    # This is a PTC extension that's only valid in Anthropic API responses
+                    if block_dict.get("type") == "tool_use" and "caller" in block_dict:
+                        block_dict = {k: v for k, v in block_dict.items() if k != "caller"}
                     content_list.append(block_dict)
                 message_dict["content"] = content_list
+
+                # Debug: Log content types for assistant messages to debug thinking block ordering
+                if msg.role == "assistant":
+                    content_types = [b.get("type", "?") for b in content_list]
+                    print(f"[BEDROCK NATIVE CONVERT] msg[{msg_idx}] assistant content_types: {content_types}")
 
             native_request["messages"].append(message_dict)
 
@@ -512,6 +533,16 @@ class BedrockService:
         print(f"  - Has tools: {bool(native_request.get('tools'))}")
         print(f"  - Has thinking: {bool(native_request.get('thinking'))}")
         print(f"  - Beta headers: {native_request.get('anthropic_beta', [])}")
+
+        # Debug: Log each message's content types for debugging thinking block ordering
+        for idx, msg in enumerate(native_request.get('messages', [])):
+            role = msg.get('role', '?')
+            content = msg.get('content', [])
+            if isinstance(content, list):
+                content_types = [b.get('type', '?') if isinstance(b, dict) else '?' for b in content]
+                print(f"  - messages[{idx}]: role={role}, content_types={content_types}")
+            else:
+                print(f"  - messages[{idx}]: role={role}, content=str")
 
         try:
             print(f"[BEDROCK NATIVE] Calling InvokeModel API...")

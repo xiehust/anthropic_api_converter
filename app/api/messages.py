@@ -275,6 +275,7 @@ async def create_message(
                         request_id=request_id,
                         service_tier=service_tier,
                         container_id=container_id,
+                        anthropic_beta=anthropic_beta,
                     )
 
                 # Record usage

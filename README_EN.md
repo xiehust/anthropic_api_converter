@@ -307,15 +307,53 @@ cd cdk
 #### More detail in [CDK Deployment](cdk/DEPLOYMENT.md)
 
 
-### Option 2. Run Docker 
+### Option 2. Run Docker
 
-Build and run with Docker:
+#### 2.1 Build Main Proxy Service Image
 
 ```bash
-# Build image
+# Basic build (uses current platform architecture)
 docker build -t anthropic-bedrock-proxy:latest .
 
-# Run container
+# Platform-specific builds (for cross-platform deployment)
+# ARM64 architecture (e.g., AWS Graviton, Apple Silicon)
+docker build --platform linux/arm64 -t anthropic-bedrock-proxy:arm64 .
+
+# AMD64 architecture (e.g., Intel/AMD servers)
+docker build --platform linux/amd64 -t anthropic-bedrock-proxy:amd64 .
+```
+
+#### 2.2 Build PTC Sandbox Image (Optional)
+
+If you need data analysis packages (pandas, numpy, scipy, etc.) in PTC, build a custom sandbox image:
+
+```bash
+cd docker/ptc-sandbox
+
+# Build data science version (includes pandas, numpy, scipy, matplotlib, scikit-learn)
+./build.sh
+
+# Or build minimal version (only pandas, numpy, smaller image)
+./build.sh minimal
+
+# Build all versions
+./build.sh all
+```
+
+**Image Comparison:**
+
+| Image | Size | Included Packages |
+|-------|------|-------------------|
+| `python:3.11-slim` (default) | ~50MB | Python standard library only |
+| `ptc-sandbox:minimal` | ~200MB | numpy, pandas, requests, httpx |
+| `ptc-sandbox:datascience` | ~800MB | numpy, pandas, scipy, matplotlib, scikit-learn, statsmodels |
+
+See [PTC Sandbox Custom Image Documentation](docker/ptc-sandbox/README.md) for details.
+
+#### 2.3 Run Container
+
+```bash
+# Basic run (without PTC support)
 docker run -d \
   -p 8000:8000 \
   -e AWS_REGION=us-east-1 \
@@ -324,6 +362,32 @@ docker run -d \
   -e MASTER_API_KEY=your-master-key \
   --name api-proxy \
   anthropic-bedrock-proxy:latest
+
+# With PTC support (requires Docker socket mount)
+docker run -d \
+  -p 8000:8000 \
+  -e AWS_REGION=us-east-1 \
+  -e AWS_ACCESS_KEY_ID=your-key \
+  -e AWS_SECRET_ACCESS_KEY=your-secret \
+  -e MASTER_API_KEY=your-master-key \
+  -e ENABLE_PROGRAMMATIC_TOOL_CALLING=true \
+  -e PTC_SANDBOX_IMAGE=ptc-sandbox:datascience \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  --name api-proxy \
+  anthropic-bedrock-proxy:latest
+```
+
+#### 2.4 Using Docker Compose (Recommended for Local Development)
+
+```bash
+# Start all services (includes DynamoDB Local, Prometheus, Grafana)
+docker-compose up -d
+
+# View logs
+docker-compose logs -f api-proxy
+
+# Stop services
+docker-compose down
 ```
 
 ## Option 3. Local start
@@ -334,6 +398,7 @@ docker run -d \
 - AWS Account with Bedrock access
 - AWS credentials configured
 - DynamoDB access
+- **Docker** (required only for PTC) - If you need Programmatic Tool Calling feature
 
 ### Installation
 
@@ -362,7 +427,51 @@ uv run scripts/setup_tables.py
 uv run scripts/create_api_key.py --user-id dev-user --name "Development Key"
 ```
 
-5. **Run the service**:
+5. **(Optional) Setup PTC Docker Sandbox**:
+
+If you need to use the Programmatic Tool Calling (PTC) feature, prepare the Docker environment:
+
+```bash
+# 1. Ensure Docker is installed and running
+docker --version
+docker ps
+
+# 2. Pre-pull the sandbox image (optional, will auto-pull on first use)
+docker pull python:3.11-slim
+
+# 3. Verify PTC is ready
+# After starting the service, check PTC health status
+curl http://localhost:8000/health/ptc
+# Expected response: {"status": "healthy", "docker": "connected", ...}
+```
+
+**Notes:**
+- PTC sandbox uses the standard Docker Hub image `python:3.11-slim`, **no build required**
+- The image (~50MB) will be automatically pulled on first PTC use; pre-pulling avoids initial request delay
+- To use a custom image, set the environment variable `PTC_SANDBOX_IMAGE=your-image:tag`
+- Docker daemon must be running; user needs Docker socket access permission
+
+**Custom Sandbox Image (with data analysis packages):**
+
+If you need pandas, numpy, scipy, etc. in the sandbox, build a custom image:
+
+```bash
+# Navigate to sandbox image directory
+cd docker/ptc-sandbox
+
+# Build data science image (pandas, numpy, scipy, matplotlib, scikit-learn)
+./build.sh
+
+# Or build minimal version (only pandas, numpy)
+./build.sh minimal
+
+# Configure to use custom image
+echo "PTC_SANDBOX_IMAGE=ptc-sandbox:datascience" >> .env
+```
+
+See [PTC Sandbox Custom Image Documentation](docker/ptc-sandbox/README.md) for details
+
+6. **Run the service**:
 ```bash
 uv run uvicorn app.main:app --reload  --port 8000
 ```
@@ -410,6 +519,28 @@ ENABLE_TOOL_USE=True
 ENABLE_EXTENDED_THINKING=True
 ENABLE_DOCUMENT_SUPPORT=True
 PROMPT_CACHING_ENABLED=False
+ENABLE_PROGRAMMATIC_TOOL_CALLING=True  # Requires Docker
+```
+
+#### Programmatic Tool Calling (PTC) Configuration
+```bash
+# Enable PTC feature (requires Docker)
+ENABLE_PROGRAMMATIC_TOOL_CALLING=True
+
+# Docker sandbox image (uses official Python image, no build required)
+PTC_SANDBOX_IMAGE=python:3.11-slim
+
+# Session timeout in seconds (default: 270 = 4.5 minutes)
+PTC_SESSION_TIMEOUT=270
+
+# Code execution timeout in seconds
+PTC_EXECUTION_TIMEOUT=60
+
+# Container memory limit
+PTC_MEMORY_LIMIT=256m
+
+# Disable network access in container (security, default: true)
+PTC_NETWORK_DISABLED=True
 ```
 
 #### Bedrock Service Tier

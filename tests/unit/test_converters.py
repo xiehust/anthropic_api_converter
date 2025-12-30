@@ -99,8 +99,8 @@ class TestAnthropicToBedrockConverter:
         assert "tools" in bedrock_request["toolConfig"]
         assert len(bedrock_request["toolConfig"]["tools"]) == 1
 
-    def test_anthropic_beta_features_enabled_for_claude(self):
-        """Test that anthropic_beta features are added for Claude models when enabled."""
+    def test_anthropic_beta_features_passthrough_for_claude(self):
+        """Test that client-provided beta headers are passed through for Claude models."""
         request = MessageRequest(
             model="claude-sonnet-4-5-20250929",
             max_tokens=1024,
@@ -112,24 +112,19 @@ class TestAnthropicToBedrockConverter:
             ],
         )
 
-        bedrock_request = self.converter.convert_request(request)
+        # Pass beta headers via anthropic_beta parameter
+        anthropic_beta = "fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14"
+        bedrock_request = self.converter.convert_request(request, anthropic_beta)
 
-        # Both features should be enabled by default
+        # Both features should be present when provided by client
         assert "additionalModelRequestFields" in bedrock_request
         assert "anthropic_beta" in bedrock_request["additionalModelRequestFields"]
         beta_features = bedrock_request["additionalModelRequestFields"]["anthropic_beta"]
         assert "fine-grained-tool-streaming-2025-05-14" in beta_features
         assert "interleaved-thinking-2025-05-14" in beta_features
 
-    @patch("app.converters.anthropic_to_bedrock.settings")
-    def test_anthropic_beta_features_disabled(self, mock_settings):
-        """Test that anthropic_beta features are not added when disabled."""
-        mock_settings.fine_grained_tool_streaming_enabled = False
-        mock_settings.interleaved_thinking_enabled = False
-        mock_settings.default_model_mapping = {
-            "claude-sonnet-4-5-20250929": "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
-        }
-
+    def test_anthropic_beta_not_added_without_client_headers(self):
+        """Test that anthropic_beta features are not added when client doesn't provide them."""
         request = MessageRequest(
             model="claude-sonnet-4-5-20250929",
             max_tokens=1024,
@@ -141,21 +136,15 @@ class TestAnthropicToBedrockConverter:
             ],
         )
 
+        # No anthropic_beta parameter provided
         bedrock_request = self.converter.convert_request(request)
 
-        # anthropic_beta should not be present when both features are disabled
+        # anthropic_beta should not be present when client doesn't provide beta headers
         if "additionalModelRequestFields" in bedrock_request:
             assert "anthropic_beta" not in bedrock_request["additionalModelRequestFields"]
 
-    @patch("app.converters.anthropic_to_bedrock.settings")
-    def test_anthropic_beta_only_fine_grained_tool_streaming(self, mock_settings):
-        """Test that only fine-grained tool streaming is added when enabled."""
-        mock_settings.fine_grained_tool_streaming_enabled = True
-        mock_settings.interleaved_thinking_enabled = False
-        mock_settings.default_model_mapping = {
-            "claude-sonnet-4-5-20250929": "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
-        }
-
+    def test_anthropic_beta_single_header_passthrough(self):
+        """Test that a single client-provided beta header is passed through."""
         request = MessageRequest(
             model="claude-sonnet-4-5-20250929",
             max_tokens=1024,
@@ -167,7 +156,9 @@ class TestAnthropicToBedrockConverter:
             ],
         )
 
-        bedrock_request = self.converter.convert_request(request)
+        # Only pass one beta header
+        anthropic_beta = "fine-grained-tool-streaming-2025-05-14"
+        bedrock_request = self.converter.convert_request(request, anthropic_beta)
 
         assert "additionalModelRequestFields" in bedrock_request
         assert "anthropic_beta" in bedrock_request["additionalModelRequestFields"]

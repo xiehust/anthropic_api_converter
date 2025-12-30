@@ -2,13 +2,16 @@
 Messages API endpoints (Anthropic-compatible).
 
 Implements POST /v1/messages for both streaming and non-streaming message creation.
+Supports Programmatic Tool Calling (PTC) via Docker sandbox execution.
 """
+import logging
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi.responses import JSONResponse, StreamingResponse
 
+from app.core.config import settings
 from app.core.exceptions import BedrockAPIError
 from app.db.dynamodb import DynamoDBClient, UsageTracker
 from app.middleware.auth import get_api_key_info
@@ -20,6 +23,112 @@ from app.schemas.anthropic import (
     MessageResponse,
 )
 from app.services.bedrock_service import BedrockService
+from app.services.ptc_service import PTCService, get_ptc_service
+from app.services.ptc import DockerNotAvailableError, SandboxError, ToolCallRequest, ExecutionResult
+
+logger = logging.getLogger(__name__)
+
+
+def _extract_ptc_tool_result(request: MessageRequest, container_id: Optional[str], ptc_service: PTCService) -> Optional[tuple]:
+    """
+    Check if request is a tool_result continuation for a pending PTC execution.
+
+    Returns:
+        For single tool result:
+            Tuple of (session_id, tool_use_id, tool_result_content, is_error)
+        For batch tool results:
+            Tuple of (session_id, "batch", {call_id: result_content}, has_any_error)
+        None if not a PTC continuation.
+    """
+    if not container_id:
+        return None
+
+    # Check if there's a pending execution for this container
+    pending_state = ptc_service.get_pending_execution(container_id)
+    if not pending_state:
+        return None
+
+    # Check if the last message contains a tool_result
+    if not request.messages:
+        return None
+
+    last_message = request.messages[-1]
+    if isinstance(last_message, dict):
+        if last_message.get("role") != "user":
+            return None
+        content = last_message.get("content", [])
+    elif hasattr(last_message, "role"):
+        if last_message.role != "user":
+            return None
+        content = last_message.content if hasattr(last_message, "content") else []
+    else:
+        return None
+
+    # Find tool_result(s) in content
+    if isinstance(content, str):
+        return None
+
+    # Collect all tool_results
+    tool_results = []
+    for block in content:
+        if isinstance(block, dict):
+            if block.get("type") == "tool_result":
+                tool_use_id = block.get("tool_use_id")
+                result_content = block.get("content", "")
+                is_error = block.get("is_error", False)
+                if tool_use_id:
+                    tool_results.append((tool_use_id, result_content, is_error))
+        elif hasattr(block, "type") and block.type == "tool_result":
+            tool_use_id = block.tool_use_id if hasattr(block, "tool_use_id") else None
+            result_content = block.content if hasattr(block, "content") else ""
+            is_error = block.is_error if hasattr(block, "is_error") else False
+            if tool_use_id:
+                tool_results.append((tool_use_id, result_content, is_error))
+
+    if not tool_results:
+        return None
+
+    # Check if this is a batch result (multiple tool_results or pending batch)
+    is_batch = len(tool_results) > 1 or (
+        pending_state.pending_batch_call_ids and len(pending_state.pending_batch_call_ids) > 1
+    )
+
+    if is_batch:
+        # Build dict mapping call_id to result
+        # The tool_use_id format is "toolu_<call_id[:12]>", extract call_id
+        batch_results = {}
+        has_any_error = False
+
+        # Get the pending call IDs to map tool_use_id back to call_id
+        pending_call_ids = pending_state.pending_batch_call_ids or []
+
+        for tool_use_id, result_content, is_error in tool_results:
+            # Extract the call_id portion from tool_use_id (format: toolu_<12chars>)
+            id_suffix = tool_use_id.replace("toolu_", "")
+
+            # Find matching call_id
+            matched_call_id = None
+            for call_id in pending_call_ids:
+                if call_id.startswith(id_suffix) or call_id[:12] == id_suffix:
+                    matched_call_id = call_id
+                    break
+
+            if matched_call_id:
+                batch_results[matched_call_id] = result_content
+            else:
+                # Fallback: use tool_use_id as key
+                batch_results[id_suffix] = result_content
+
+            if is_error:
+                has_any_error = True
+
+        logger.info(f"[PTC] Found batch tool_results ({len(batch_results)} results)")
+        return (container_id, "batch", batch_results, has_any_error)
+    else:
+        # Single tool result
+        tool_use_id, result_content, is_error = tool_results[0]
+        logger.info(f"[PTC] Found tool_result for tool_use_id={tool_use_id}, pending={pending_state.pending_tool_call_id}")
+        return (container_id, tool_use_id, result_content, is_error)
 
 router = APIRouter()
 
@@ -35,6 +144,12 @@ def get_usage_tracker(request: Request) -> UsageTracker:
     """Get usage tracker instance."""
     dynamodb_client = request.app.state.dynamodb_client
     return UsageTracker(dynamodb_client)
+
+
+# Dependency to get PTC service
+def get_ptc_service_dep() -> PTCService:
+    """Get PTC service instance."""
+    return get_ptc_service()
 
 
 @router.post(
@@ -54,10 +169,11 @@ def get_usage_tracker(request: Request) -> UsageTracker:
 async def create_message(
     request_data: MessageRequest,
     request: Request,
-    beta: Optional[str] = None,
+    anthropic_beta: Optional[str] = Header(None, alias="anthropic-beta"),
     api_key_info: dict = Depends(get_api_key_info),
     bedrock_service: BedrockService = Depends(get_bedrock_service),
     usage_tracker: UsageTracker = Depends(get_usage_tracker),
+    ptc_service: PTCService = Depends(get_ptc_service_dep),
 ):
     """
     Create a message (Anthropic-compatible endpoint).
@@ -72,14 +188,16 @@ async def create_message(
     - Multiple content types (text, images, documents)
     - System messages
     - Stop sequences
+    - Programmatic Tool Calling (PTC) via Docker sandbox
 
     Args:
         request_data: Message request in Anthropic format
         request: FastAPI request object
-        beta: Optional beta features flag (e.g., "true" for beta features)
+        anthropic_beta: Beta features header (e.g., "advanced-tool-use-2025-11-20")
         api_key_info: API key information from auth middleware
         bedrock_service: Bedrock service instance
         usage_tracker: Usage tracker instance
+        ptc_service: PTC service instance
 
     Returns:
         MessageResponse for non-streaming, StreamingResponse for streaming
@@ -89,11 +207,16 @@ async def create_message(
     """
     request_id = f"msg-{uuid4().hex}"
 
+    # Get container ID from request body for session reuse (plain string)
+    container_id = request_data.container
+
+    logger.info(f"Request {request_id}: model={request_data.model}, stream={request_data.stream}, beta={anthropic_beta}")
+
     print(f"\n{'='*80}")
     print(f"[REQUEST] ID: {request_id}")
     print(f"[REQUEST] Model: {request_data.model}")
     print(f"[REQUEST] Stream: {request_data.stream}")
-    print(f"[REQUEST] Beta: {beta}")
+    print(f"[REQUEST] Beta: {anthropic_beta}")
     print(f"[REQUEST] API Key: {api_key_info.get('api_key', 'unknown')[:20]}...")
     print(f"{'='*80}\n")
 
@@ -101,7 +224,98 @@ async def create_message(
     service_tier = api_key_info.get("service_tier", "default")
     print(f"[REQUEST] Service Tier: {service_tier}")
 
+    # Check if this is a PTC request
+    is_ptc = PTCService.is_ptc_request(request_data, anthropic_beta)
+    if is_ptc:
+        logger.info(f"Request {request_id}: Detected PTC request")
+        print(f"[PTC] Detected Programmatic Tool Calling request")
+
     try:
+        # Handle PTC requests (non-streaming only for now)
+        if is_ptc:
+            if request_data.stream:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "type": "invalid_request_error",
+                        "message": "Programmatic Tool Calling does not support streaming yet. "
+                                   "Please set stream=false in your request.",
+                    },
+                )
+
+            try:
+                # Check if this is a tool_result continuation for a pending sandbox
+                ptc_continuation = _extract_ptc_tool_result(request_data, container_id, ptc_service)
+
+                if ptc_continuation:
+                    # Resume sandbox execution with tool result(s)
+                    session_id, tool_use_id, tool_result_content, is_error = ptc_continuation
+
+                    # Check if this is a batch result
+                    is_batch = tool_use_id == "batch"
+                    if is_batch:
+                        logger.info(f"[PTC] Resuming sandbox with batch results ({len(tool_result_content)} tools)")
+                    else:
+                        logger.info(f"[PTC] Resuming sandbox execution for session {session_id}")
+
+                    response, container_info = await ptc_service.handle_tool_result_continuation(
+                        session_id=session_id,
+                        tool_result=tool_result_content,  # dict for batch, value for single
+                        is_error=is_error,
+                        original_request=request_data,
+                        bedrock_service=bedrock_service,
+                        request_id=request_id,
+                        service_tier=service_tier,
+                    )
+                else:
+                    # New PTC request - call Bedrock
+                    response, container_info = await ptc_service.handle_ptc_request(
+                        request=request_data,
+                        bedrock_service=bedrock_service,
+                        request_id=request_id,
+                        service_tier=service_tier,
+                        container_id=container_id,
+                        anthropic_beta=anthropic_beta,
+                    )
+
+                # Record usage
+                usage_tracker.record_usage(
+                    api_key=api_key_info.get("api_key"),
+                    request_id=request_id,
+                    model=request_data.model,
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                    cached_tokens=getattr(response.usage, 'cache_read_input_tokens', 0) or 0,
+                    success=True,
+                )
+
+                # Add container info to response
+                response_dict = response.model_dump()
+                if container_info:
+                    response_dict["container"] = container_info.model_dump()
+
+                logger.debug(f"[PTC] Final response: {response_dict}")
+                return JSONResponse(content=response_dict)
+
+            except DockerNotAvailableError as e:
+                logger.error(f"Request {request_id}: Docker not available for PTC: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "type": "api_error",
+                        "message": str(e),
+                    },
+                )
+            except SandboxError as e:
+                logger.error(f"Request {request_id}: Sandbox error: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={
+                        "type": "api_error",
+                        "message": f"Code execution error: {str(e)}",
+                    },
+                )
+
         # Check if streaming is requested
         if request_data.stream:
             # Return streaming response
@@ -113,6 +327,7 @@ async def create_message(
                     bedrock_service,
                     usage_tracker,
                     service_tier,
+                    anthropic_beta,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -123,7 +338,9 @@ async def create_message(
             )
         else:
             # Handle non-streaming request (async to not block event loop)
-            response = await bedrock_service.invoke_model(request_data, request_id, service_tier)
+            response = await bedrock_service.invoke_model(
+                request_data, request_id, service_tier, anthropic_beta
+            )
 
             # Record usage
             usage_tracker.record_usage(
@@ -207,6 +424,7 @@ async def _handle_streaming_request(
     bedrock_service: BedrockService,
     usage_tracker: UsageTracker,
     service_tier: str = "default",
+    anthropic_beta: Optional[str] = None,
 ):
     """
     Handle streaming request and yield SSE events.
@@ -218,6 +436,7 @@ async def _handle_streaming_request(
         bedrock_service: Bedrock service instance
         usage_tracker: Usage tracker instance
         service_tier: Bedrock service tier
+        anthropic_beta: Optional beta header from Anthropic client (comma-separated)
 
     Yields:
         SSE-formatted event strings
@@ -230,9 +449,9 @@ async def _handle_streaming_request(
     print(f"[STREAMING] Service tier: {service_tier}")
 
     try:
-        # Stream events from Bedrock
+        # Stream events from Bedrock (with beta header mapping)
         async for sse_event in bedrock_service.invoke_model_stream(
-            request_data, request_id, service_tier
+            request_data, request_id, service_tier, anthropic_beta
         ):
             # Parse event to track usage
             if "usage" in sse_event:

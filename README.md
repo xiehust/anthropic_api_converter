@@ -47,6 +47,8 @@
 - **扩展思考**：支持响应中的思考块
 - **多模态内容**：支持文本、图像和文档
 - **提示词缓存**：映射缓存控制提示（在支持的情况下）
+- **Beta Header 映射**：自动将 Anthropic beta headers 映射到 Bedrock beta headers（如 `advanced-tool-use-2025-11-20` → `tool-examples-2025-10-29`）
+- **工具输入示例**：支持 `input_examples` 参数，为工具提供示例输入以帮助模型更好地理解工具用法
 
 ### 基础设施
 - **身份验证**：基于 API 密钥的身份验证，使用 DynamoDB 存储
@@ -177,6 +179,81 @@ Bedrock Service Tier 功能允许您在成本和延迟之间进行权衡选择�
 
 > **注意**：具体模型对服务层级的支持可能会随 AWS Bedrock 更新而变化，请参考 [AWS 官方文档](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-service-tiers.html) 获取最新信息。
 
+## Beta Header 映射与工具输入示例
+
+### Beta Header 映射
+
+代理服务支持将 Anthropic beta headers 自动映射到 Bedrock beta headers，使您可以在使用 Bedrock 时访问 Anthropic 的 beta 功能。
+
+**默认映射：**
+
+| Anthropic Beta Header | Bedrock Beta Headers |
+|----------------------|---------------------|
+| `advanced-tool-use-2025-11-20` | `tool-examples-2025-10-29`, `tool-search-tool-2025-10-19` |
+
+**支持的模型：**
+- Claude Opus 4.5 (`claude-opus-4-5-20251101`)
+
+**使用示例：**
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-your-api-key",
+    base_url="http://localhost:8000"
+)
+
+# 使用 beta header
+message = client.beta.messages.create(
+    model="claude-opus-4-5-20251101",
+    max_tokens=1024,
+    betas=["advanced-tool-use-2025-11-20"],
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+### 工具输入示例 (input_examples)
+
+`input_examples` 参数允许您为工具定义提供示例输入，帮助模型更好地理解如何使用该工具。
+
+**使用示例：**
+
+```python
+message = client.messages.create(
+    model="claude-opus-4-5-20251101",
+    max_tokens=1024,
+    tools=[
+        {
+            "name": "get_weather",
+            "description": "获取指定位置的天气信息",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "城市名称"},
+                    "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+                },
+                "required": ["location"]
+            },
+            "input_examples": [
+                {"location": "北京", "unit": "celsius"},
+                {"location": "San Francisco, CA", "unit": "fahrenheit"},
+                {"location": "东京"}  # unit 是可选的
+            ]
+        }
+    ],
+    messages=[{"role": "user", "content": "今天北京天气怎么样？"}]
+)
+```
+
+### 配置扩展
+
+**添加新的 beta header 映射：**
+在 `.env` 或 `app/core/config.py` 中修改 `BETA_HEADER_MAPPING`。
+
+**为更多模型启用 beta header 映射：**
+将模型 ID 添加到 `BETA_HEADER_SUPPORTED_MODELS` 列表。
+
 ## 架构
 
 ```
@@ -306,13 +383,51 @@ cd cdk
 
 ### 选项 2. 运行 Docker
 
-使用 Docker 构建并运行：
+#### 2.1 构建主代理服务镜像
 
 ```bash
-# 构建镜像
+# 基本构建（使用当前平台架构）
 docker build -t anthropic-bedrock-proxy:latest .
 
-# 运行容器
+# 指定平台构建（用于跨平台部署）
+# ARM64 架构（如 AWS Graviton、Apple Silicon）
+docker build --platform linux/arm64 -t anthropic-bedrock-proxy:arm64 .
+
+# AMD64 架构（如 Intel/AMD 服务器）
+docker build --platform linux/amd64 -t anthropic-bedrock-proxy:amd64 .
+```
+
+#### 2.2 构建 PTC Sandbox 镜像（可选）
+
+如果需要在 PTC 中使用数据分析包（pandas、numpy、scipy 等），需要构建自定义 sandbox 镜像：
+
+```bash
+cd docker/ptc-sandbox
+
+# 构建数据科学版本（包含 pandas, numpy, scipy, matplotlib, scikit-learn）
+./build.sh
+
+# 或构建最小版本（仅 pandas, numpy，镜像更小）
+./build.sh minimal
+
+# 构建所有版本
+./build.sh all
+```
+
+**镜像对比：**
+
+| 镜像 | 大小 | 包含的包 |
+|------|------|---------|
+| `python:3.11-slim`（默认） | ~50MB | 仅 Python 标准库 |
+| `ptc-sandbox:minimal` | ~200MB | numpy, pandas, requests, httpx |
+| `ptc-sandbox:datascience` | ~800MB | numpy, pandas, scipy, matplotlib, scikit-learn, statsmodels |
+
+详细说明请参见 [PTC Sandbox 自定义镜像文档](docker/ptc-sandbox/README.md)
+
+#### 2.3 运行容器
+
+```bash
+# 基本运行（无 PTC 支持）
 docker run -d \
   -p 8000:8000 \
   -e AWS_REGION=us-east-1 \
@@ -321,6 +436,32 @@ docker run -d \
   -e MASTER_API_KEY=your-master-key \
   --name api-proxy \
   anthropic-bedrock-proxy:latest
+
+# 启用 PTC 支持（需要挂载 Docker socket）
+docker run -d \
+  -p 8000:8000 \
+  -e AWS_REGION=us-east-1 \
+  -e AWS_ACCESS_KEY_ID=your-key \
+  -e AWS_SECRET_ACCESS_KEY=your-secret \
+  -e MASTER_API_KEY=your-master-key \
+  -e ENABLE_PROGRAMMATIC_TOOL_CALLING=true \
+  -e PTC_SANDBOX_IMAGE=ptc-sandbox:datascience \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  --name api-proxy \
+  anthropic-bedrock-proxy:latest
+```
+
+#### 2.4 使用 Docker Compose（推荐本地开发）
+
+```bash
+# 启动所有服务（包括 DynamoDB Local、Prometheus、Grafana）
+docker-compose up -d
+
+# 查看日志
+docker-compose logs -f api-proxy
+
+# 停止服务
+docker-compose down
 ```
 
 ## 选项 3. 本地启动
@@ -331,6 +472,7 @@ docker run -d \
 - 具有 Bedrock 访问权限的 AWS 账户
 - 配置好的 AWS 凭证
 - DynamoDB 访问权限
+- **Docker**（仅 PTC 功能需要）- 如需使用 Programmatic Tool Calling 功能
 
 ### 安装
 
@@ -379,7 +521,51 @@ uv run python scripts/create_api_key.py --help
 
 **注意：** Claude 模型仅支持 `default` 和 `reserved` 层级。如果对 Claude 使用 `flex`，系统会自动回退到 `default`。
 
-5. **运行服务**：
+5. **（可选）设置 PTC Docker Sandbox**：
+
+如果需要使用 Programmatic Tool Calling (PTC) 功能，需要准备 Docker 环境：
+
+```bash
+# 1. 确保 Docker 已安装并运行
+docker --version
+docker ps
+
+# 2. 预先拉取 sandbox 镜像（可选，首次使用时会自动拉取）
+docker pull python:3.11-slim
+
+# 3. 验证 PTC 功能就绪
+# 启动服务后，检查 PTC 健康状态
+curl http://localhost:8000/health/ptc
+# 预期返回: {"status": "healthy", "docker": "connected", ...}
+```
+
+**说明：**
+- PTC sandbox 使用标准 Docker Hub 镜像 `python:3.11-slim`，**无需自行构建**
+- 首次使用 PTC 时会自动拉取镜像（约 50MB），预先拉取可避免首次请求延迟
+- 如需使用自定义镜像，设置环境变量 `PTC_SANDBOX_IMAGE=your-image:tag`
+- Docker daemon 必须运行，用户需要有 Docker socket 访问权限
+
+**自定义 Sandbox 镜像（包含数据分析包）：**
+
+如果需要在 sandbox 中使用 pandas、numpy、scipy 等数据分析包，请构建自定义镜像：
+
+```bash
+# 进入 sandbox 镜像目录
+cd docker/ptc-sandbox
+
+# 构建包含数据科学包的镜像（pandas, numpy, scipy, matplotlib, scikit-learn）
+./build.sh
+
+# 或构建最小版本（仅 pandas, numpy）
+./build.sh minimal
+
+# 配置使用自定义镜像
+echo "PTC_SANDBOX_IMAGE=ptc-sandbox:datascience" >> .env
+```
+
+详细说明请参见 [PTC Sandbox 自定义镜像文档](docker/ptc-sandbox/README.md)
+
+6. **运行服务**：
 ```bash
 uv run uvicorn app.main:app --reload --port 8000
 ```
@@ -426,6 +612,28 @@ ENABLE_TOOL_USE=True
 ENABLE_EXTENDED_THINKING=True
 ENABLE_DOCUMENT_SUPPORT=True
 PROMPT_CACHING_ENABLED=False
+ENABLE_PROGRAMMATIC_TOOL_CALLING=True  # 需要 Docker
+```
+
+#### Programmatic Tool Calling (PTC) 配置
+```bash
+# PTC 功能开关（需要 Docker）
+ENABLE_PROGRAMMATIC_TOOL_CALLING=True
+
+# Docker sandbox 镜像（默认使用官方 Python 镜像，无需构建）
+PTC_SANDBOX_IMAGE=python:3.11-slim
+
+# 会话超时（秒），默认 270 秒（4.5 分钟）
+PTC_SESSION_TIMEOUT=270
+
+# 代码执行超时（秒）
+PTC_EXECUTION_TIMEOUT=60
+
+# 容器内存限制
+PTC_MEMORY_LIMIT=256m
+
+# 禁用容器网络访问（安全考虑，默认禁用）
+PTC_NETWORK_DISABLED=True
 ```
 
 #### Bedrock 服务层级（Service Tier）

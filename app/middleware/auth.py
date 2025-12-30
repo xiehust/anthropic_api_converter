@@ -49,7 +49,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             HTTPException: If authentication fails
         """
         # Skip authentication for health check and docs endpoints
-        if request.url.path in ["/health", "/docs", "/openapi.json", "/redoc"]:
+        skip_auth_paths = ["/health", "/health/ptc", "/ready", "/liveness", "/docs", "/openapi.json", "/redoc", "/"]
+        if request.url.path in skip_auth_paths:
             return await call_next(request)
 
         # Skip if API key is not required

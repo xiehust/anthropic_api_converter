@@ -1,5 +1,9 @@
 """
-Bedrock service for interacting with AWS Bedrock Converse API.
+Bedrock service for interacting with AWS Bedrock APIs.
+
+Supports two API modes:
+1. Converse API (default): Used for most models, provides unified interface
+2. InvokeModel API: Used for Claude models when beta features require it
 
 Handles both streaming and non-streaming requests to Bedrock models.
 
@@ -76,7 +80,7 @@ class BedrockService:
             connect_timeout=30,
             retries={"max_attempts": 3, "mode": "standard"},
         )
-
+        # print(f"-------settings--------:\n{settings}")
         self.client = boto3.client(
             "bedrock-runtime",
             region_name=settings.aws_region,
@@ -96,9 +100,249 @@ class BedrockService:
         self.anthropic_to_bedrock = AnthropicToBedrockConverter(dynamodb_client)
         self.bedrock_to_anthropic = BedrockToAnthropicConverter()
 
+    def _is_claude_model(self, model_id: str) -> bool:
+        """
+        Check if the model is a Claude/Anthropic model.
+
+        Claude models should use InvokeModel API instead of Converse API
+        because InvokeModel supports more features (beta headers, etc.).
+
+        Args:
+            model_id: Model identifier (Anthropic or Bedrock format)
+
+        Returns:
+            True if it's a Claude model
+        """
+        model_lower = model_id.lower()
+        return "anthropic" in model_lower or "claude" in model_lower
+
+    def _get_bedrock_model_id(self, anthropic_model_id: str) -> str:
+        """
+        Get the Bedrock model ID for an Anthropic model ID.
+
+        Args:
+            anthropic_model_id: Anthropic model identifier
+
+        Returns:
+            Bedrock model ID
+        """
+        # Use the converter's model mapping logic
+        return self.anthropic_to_bedrock._convert_model_id(anthropic_model_id)
+
+    def _convert_to_anthropic_native_request(
+        self, request: MessageRequest, anthropic_beta: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Convert MessageRequest to native Anthropic Messages API format.
+
+        This format is used for InvokeModel API with Claude models.
+
+        Args:
+            request: Anthropic MessageRequest
+            anthropic_beta: Optional beta header
+
+        Returns:
+            Dictionary in native Anthropic Messages API format
+        """
+        native_request: Dict[str, Any] = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": request.max_tokens,
+            "messages": [],
+        }
+
+        # Convert messages
+        for msg_idx, msg in enumerate(request.messages):
+            message_dict: Dict[str, Any] = {"role": msg.role}
+
+            # Handle content
+            if isinstance(msg.content, str):
+                message_dict["content"] = msg.content
+            else:
+                # Debug: Log content types BEFORE conversion to see Pydantic's order
+                if msg.role == "assistant":
+                    pre_convert_types = []
+                    for b in msg.content:
+                        if hasattr(b, "type"):
+                            pre_convert_types.append(b.type)
+                        elif isinstance(b, dict):
+                            pre_convert_types.append(b.get("type", "?"))
+                        else:
+                            pre_convert_types.append(type(b).__name__)
+                    print(f"[BEDROCK NATIVE CONVERT] msg[{msg_idx}] assistant BEFORE convert: {pre_convert_types}")
+
+                # Convert content blocks to native format
+                content_list = []
+                for block in msg.content:
+                    if hasattr(block, "model_dump"):
+                        block_dict = block.model_dump(exclude_none=True)
+                    elif isinstance(block, dict):
+                        block_dict = dict(block)  # Make a copy to avoid mutating original
+                    else:
+                        continue
+                    # Strip 'caller' field from tool_use blocks - Bedrock doesn't accept it
+                    # This is a PTC extension that's only valid in Anthropic API responses
+                    if block_dict.get("type") == "tool_use" and "caller" in block_dict:
+                        block_dict = {k: v for k, v in block_dict.items() if k != "caller"}
+                    content_list.append(block_dict)
+                message_dict["content"] = content_list
+
+                # Debug: Log content types for assistant messages to debug thinking block ordering
+                if msg.role == "assistant":
+                    content_types = [b.get("type", "?") for b in content_list]
+                    print(f"[BEDROCK NATIVE CONVERT] msg[{msg_idx}] assistant content_types: {content_types}")
+
+            native_request["messages"].append(message_dict)
+
+        # Add system message
+        if request.system:
+            if isinstance(request.system, str):
+                native_request["system"] = request.system
+            else:
+                # Convert list of SystemMessage to string or list format
+                system_parts = []
+                for sys_msg in request.system:
+                    if hasattr(sys_msg, "text"):
+                        system_parts.append({"type": "text", "text": sys_msg.text})
+                    elif isinstance(sys_msg, dict):
+                        system_parts.append(sys_msg)
+                native_request["system"] = system_parts
+
+        # Add optional parameters
+        if request.temperature is not None:
+            native_request["temperature"] = request.temperature
+
+        if request.top_p is not None:
+            native_request["top_p"] = request.top_p
+
+        if request.top_k is not None:
+            native_request["top_k"] = request.top_k
+
+        if request.stop_sequences:
+            native_request["stop_sequences"] = request.stop_sequences
+
+        # Add tools if present
+        if request.tools and settings.enable_tool_use:
+            tools_list = []
+            # Special tool types that should be passed through (beta features)
+            # These are recognized by Bedrock natively
+            special_tool_types = {
+                "tool_search_tool_regex",
+                "tool_search_tool",
+            }
+            # Mapping from Anthropic tool types to Bedrock tool types
+            # Anthropic SDK may use versioned types that Bedrock doesn't recognize
+            tool_type_mapping = {
+                "tool_search_tool_regex_20251119": "tool_search_tool_regex",
+                "tool_search_tool_20251119": "tool_search_tool",
+            }
+            for tool in request.tools:
+                if isinstance(tool, dict):
+                    tool_type = tool.get("type")
+                    # Skip PTC code_execution tools
+                    if tool_type == "code_execution_20250825":
+                        continue
+                    # Map versioned tool types to Bedrock-recognized types
+                    mapped_type = tool_type_mapping.get(tool_type, tool_type)
+                    # Pass through special tool types (beta features)
+                    if mapped_type in special_tool_types:
+                        # Create a copy with the mapped type
+                        tool_copy = dict(tool)
+                        if mapped_type != tool_type:
+                            tool_copy["type"] = mapped_type
+                            print(f"[BEDROCK NATIVE] Mapped tool type: {tool_type} → {mapped_type}")
+                        else:
+                            print(f"[BEDROCK NATIVE] Passing through special tool type: {tool_type}")
+                        tools_list.append(tool_copy)
+                        continue
+                    # Regular tool conversion
+                    tool_dict = {
+                        "name": tool.get("name"),
+                        "description": tool.get("description", ""),
+                        "input_schema": tool.get("input_schema", {}),
+                    }
+                    # Include input_examples if present (for beta feature)
+                    if tool.get("input_examples"):
+                        tool_dict["input_examples"] = tool["input_examples"]
+                    # Include defer_loading if present (for tool search beta)
+                    if tool.get("defer_loading") is not None:
+                        tool_dict["defer_loading"] = tool["defer_loading"]
+                    tools_list.append(tool_dict)
+                elif hasattr(tool, "name"):
+                    tool_type = getattr(tool, "type", None)
+                    # Skip PTC code_execution tools
+                    if tool_type == "code_execution_20250825":
+                        continue
+                    # Map versioned tool types to Bedrock-recognized types
+                    mapped_type = tool_type_mapping.get(tool_type, tool_type) if tool_type else None
+                    # Pass through special tool types
+                    if mapped_type in special_tool_types:
+                        tool_data = tool.model_dump() if hasattr(tool, "model_dump") else vars(tool)
+                        if mapped_type != tool_type:
+                            tool_data["type"] = mapped_type
+                            print(f"[BEDROCK NATIVE] Mapped tool type: {tool_type} → {mapped_type}")
+                        else:
+                            print(f"[BEDROCK NATIVE] Passing through special tool type: {tool_type}")
+                        tools_list.append(tool_data)
+                        continue
+                    # Regular tool conversion
+                    tool_dict = {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "input_schema": tool.input_schema.model_dump() if hasattr(tool.input_schema, "model_dump") else tool.input_schema,
+                    }
+                    # Include input_examples if present
+                    if hasattr(tool, "input_examples") and tool.input_examples:
+                        tool_dict["input_examples"] = tool.input_examples
+                    # Include defer_loading if present
+                    if hasattr(tool, "defer_loading") and tool.defer_loading is not None:
+                        tool_dict["defer_loading"] = tool.defer_loading
+                    tools_list.append(tool_dict)
+
+            if tools_list:
+                native_request["tools"] = tools_list
+
+        # Add tool_choice if present
+        if request.tool_choice:
+            native_request["tool_choice"] = request.tool_choice
+
+        # Add thinking configuration if enabled
+        if request.thinking and settings.enable_extended_thinking:
+            native_request["thinking"] = request.thinking
+
+        # Add metadata if present
+        if request.metadata:
+            native_request["metadata"] = request.metadata.model_dump() if hasattr(request.metadata, "model_dump") else request.metadata
+
+        # Add beta headers from client
+        # Some headers are mapped (Anthropic → Bedrock), others pass through directly
+        bedrock_beta = []
+
+        if anthropic_beta:
+            beta_values = [b.strip() for b in anthropic_beta.split(",")]
+            for beta_value in beta_values:
+                if beta_value in settings.beta_header_mapping:
+                    # Map Anthropic beta headers to Bedrock beta headers
+                    mapped = settings.beta_header_mapping[beta_value]
+                    bedrock_beta.extend(mapped)
+                    print(f"[BEDROCK NATIVE] Mapped beta header '{beta_value}' → {mapped}")
+                elif beta_value in settings.beta_headers_passthrough:
+                    # Pass through directly without mapping
+                    bedrock_beta.append(beta_value)
+                    print(f"[BEDROCK NATIVE] Passing through beta header: {beta_value}")
+                else:
+                    # Unknown beta header - pass through as-is (may or may not work)
+                    bedrock_beta.append(beta_value)
+                    print(f"[BEDROCK NATIVE] Unknown beta header, passing through: {beta_value}")
+
+        if bedrock_beta:
+            native_request["anthropic_beta"] = bedrock_beta
+            print(f"[BEDROCK NATIVE] Added anthropic_beta: {bedrock_beta}")
+
+        return native_request
+
     async def invoke_model(
         self, request: MessageRequest, request_id: Optional[str] = None,
-        service_tier: Optional[str] = None
+        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None
     ) -> MessageResponse:
         """
         Invoke Bedrock model (non-streaming) asynchronously.
@@ -110,6 +354,7 @@ class BedrockService:
             request: Anthropic MessageRequest
             request_id: Optional request ID
             service_tier: Optional Bedrock service tier ('default', 'flex', 'priority', 'reserved')
+            anthropic_beta: Optional beta header from Anthropic client (comma-separated)
 
         Returns:
             Anthropic MessageResponse
@@ -126,20 +371,24 @@ class BedrockService:
                 self._invoke_model_sync,
                 request,
                 request_id,
-                service_tier
+                service_tier,
+                anthropic_beta
             )
 
     def _invoke_model_sync(
         self, request: MessageRequest, request_id: Optional[str] = None,
-        service_tier: Optional[str] = None
+        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None
     ) -> MessageResponse:
         """
         Synchronous Bedrock model invocation (runs in thread pool).
+
+        Routes to InvokeModel API for Claude models, Converse API for others.
 
         Args:
             request: Anthropic MessageRequest
             request_id: Optional request ID
             service_tier: Optional Bedrock service tier
+            anthropic_beta: Optional beta header from Anthropic client (comma-separated)
 
         Returns:
             Anthropic MessageResponse
@@ -147,10 +396,15 @@ class BedrockService:
         Raises:
             Exception: If Bedrock API call fails
         """
+        # Route Claude models to InvokeModel API for better feature support
+        if self._is_claude_model(request.model):
+            print(f"[BEDROCK] Using InvokeModel API for Claude model: {request.model}")
+            return self._invoke_model_native_sync(request, request_id, anthropic_beta)
+
         print(f"[BEDROCK] Converting request to Bedrock format for request {request_id}")
 
-        # Convert request to Bedrock format
-        bedrock_request = self.anthropic_to_bedrock.convert_request(request)
+        # Convert request to Bedrock format (with beta header mapping)
+        bedrock_request = self.anthropic_to_bedrock.convert_request(request, anthropic_beta)
 
         # Determine service tier to use
         effective_service_tier = service_tier or settings.default_service_tier
@@ -245,12 +499,182 @@ class BedrockService:
                 error_type="api_error"
             )
 
+    def _invoke_model_native_sync(
+        self, request: MessageRequest, request_id: Optional[str] = None,
+        anthropic_beta: Optional[str] = None
+    ) -> MessageResponse:
+        """
+        Invoke Bedrock InvokeModel API for Claude models (native Anthropic format).
+
+        This uses the InvokeModel API which accepts native Anthropic Messages API
+        format and returns native Anthropic response format.
+
+        Args:
+            request: Anthropic MessageRequest
+            request_id: Optional request ID
+            anthropic_beta: Optional beta header from Anthropic client
+
+        Returns:
+            Anthropic MessageResponse
+
+        Raises:
+            BedrockAPIError: If Bedrock API call fails
+        """
+        # Get Bedrock model ID
+        bedrock_model_id = self._get_bedrock_model_id(request.model)
+
+        # Convert request to native Anthropic format
+        native_request = self._convert_to_anthropic_native_request(request, anthropic_beta)
+
+        print(f"[BEDROCK NATIVE] InvokeModel request for {request_id}:")
+        print(f"  - Model ID: {bedrock_model_id}")
+        print(f"  - Messages count: {len(native_request.get('messages', []))}")
+        print(f"  - Has system: {bool(native_request.get('system'))}")
+        print(f"  - Has tools: {bool(native_request.get('tools'))}")
+        print(f"  - Has thinking: {bool(native_request.get('thinking'))}")
+        print(f"  - Beta headers: {native_request.get('anthropic_beta', [])}")
+
+        # Debug: Log each message's content types for debugging thinking block ordering
+        for idx, msg in enumerate(native_request.get('messages', [])):
+            role = msg.get('role', '?')
+            content = msg.get('content', [])
+            if isinstance(content, list):
+                content_types = [b.get('type', '?') if isinstance(b, dict) else '?' for b in content]
+                print(f"  - messages[{idx}]: role={role}, content_types={content_types}")
+            else:
+                print(f"  - messages[{idx}]: role={role}, content=str")
+
+        try:
+            print(f"[BEDROCK NATIVE] Calling InvokeModel API...")
+
+            # Call InvokeModel API with native Anthropic format
+            response = self.client.invoke_model(
+                modelId=bedrock_model_id,
+                contentType="application/json",
+                accept="application/json",
+                body=json.dumps(native_request)
+            )
+
+            # Parse response body (native Anthropic format)
+            response_body = json.loads(response["body"].read())
+
+            print(f"[BEDROCK NATIVE] Received response from InvokeModel")
+            print(f"  - Stop reason: {response_body.get('stop_reason')}")
+            print(f"  - Usage: {response_body.get('usage')}")
+
+            # Convert native response to MessageResponse
+            message_id = request_id or f"msg_{uuid4().hex}"
+            anthropic_response = self._convert_native_response_to_message_response(
+                response_body, request.model, message_id
+            )
+
+            print(f"[BEDROCK NATIVE] Successfully created MessageResponse")
+
+            return anthropic_response
+
+        except ClientError as e:
+            error_code = e.response["Error"]["Code"]
+            error_message = e.response["Error"]["Message"]
+            print(f"\n[ERROR] InvokeModel ClientError in request {request_id}")
+            print(f"[ERROR] Code: {error_code}")
+            print(f"[ERROR] Message: {error_message}")
+            print(f"[ERROR] Response: {e.response}\n")
+
+            # Map Bedrock error to appropriate exception
+            raise map_bedrock_error(error_code, error_message)
+
+        except BedrockAPIError:
+            raise
+        except Exception as e:
+            print(f"\n[ERROR] Exception in InvokeModel for request {request_id}")
+            print(f"[ERROR] Type: {type(e).__name__}")
+            print(f"[ERROR] Message: {str(e)}")
+            import traceback
+            print(f"[ERROR] Traceback:\n{traceback.format_exc()}\n")
+            raise BedrockAPIError(
+                error_code="InternalError",
+                error_message=f"Failed to invoke model: {str(e)}",
+                http_status=500,
+                error_type="api_error"
+            )
+
+    def _convert_native_response_to_message_response(
+        self, response_body: Dict[str, Any], model: str, message_id: str
+    ) -> MessageResponse:
+        """
+        Convert native Anthropic response to MessageResponse.
+
+        Args:
+            response_body: Native Anthropic response body
+            model: Model ID
+            message_id: Message ID
+
+        Returns:
+            MessageResponse object
+        """
+        from app.schemas.anthropic import (
+            MessageResponse, Usage, TextContent, ThinkingContent,
+            RedactedThinkingContent, ToolUseContent
+        )
+
+        # Extract content blocks
+        content_blocks = []
+        for block in response_body.get("content", []):
+            block_type = block.get("type")
+
+            if block_type == "text":
+                content_blocks.append(TextContent(
+                    type="text",
+                    text=block.get("text", "")
+                ))
+            elif block_type == "thinking":
+                content_blocks.append(ThinkingContent(
+                    type="thinking",
+                    thinking=block.get("thinking", ""),
+                    signature=block.get("signature")
+                ))
+            elif block_type == "redacted_thinking":
+                content_blocks.append(RedactedThinkingContent(
+                    type="redacted_thinking",
+                    data=block.get("data", "")
+                ))
+            elif block_type == "tool_use":
+                content_blocks.append(ToolUseContent(
+                    type="tool_use",
+                    id=block.get("id", ""),
+                    name=block.get("name", ""),
+                    input=block.get("input", {})
+                ))
+
+        # Extract usage
+        usage_data = response_body.get("usage", {})
+        usage = Usage(
+            input_tokens=usage_data.get("input_tokens", 0),
+            output_tokens=usage_data.get("output_tokens", 0),
+            cache_creation_input_tokens=usage_data.get("cache_creation_input_tokens"),
+            cache_read_input_tokens=usage_data.get("cache_read_input_tokens")
+        )
+
+        return MessageResponse(
+            id=message_id,
+            type="message",
+            role="assistant",
+            content=content_blocks,
+            model=model,
+            stop_reason=response_body.get("stop_reason"),
+            stop_sequence=response_body.get("stop_sequence"),
+            usage=usage
+        )
+
     async def invoke_model_stream(
         self, request: MessageRequest, request_id: Optional[str] = None,
-        service_tier: Optional[str] = None
+        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None
     ) -> AsyncGenerator[str, None]:
         """
         Invoke Bedrock model with streaming (Server-Sent Events format).
+
+        Routes to InvokeModelWithResponseStream API for Claude models,
+        ConverseStream API for others.
 
         Uses a thread pool + queue pattern to prevent blocking the event loop.
         The synchronous boto3 streaming call runs in a separate thread, and
@@ -260,29 +684,13 @@ class BedrockService:
             request: Anthropic MessageRequest
             request_id: Optional request ID
             service_tier: Optional Bedrock service tier
+            anthropic_beta: Optional beta header from Anthropic client (comma-separated)
 
         Yields:
             SSE-formatted event strings
         """
         semaphore = _get_semaphore()
         async with semaphore:
-            print(f"[BEDROCK STREAM] Converting request to Bedrock format for request {request_id}")
-
-            # Convert request to Bedrock format
-            bedrock_request = self.anthropic_to_bedrock.convert_request(request)
-
-            # Determine service tier to use
-            effective_service_tier = service_tier or settings.default_service_tier
-
-            print(f"[BEDROCK STREAM] Bedrock request params:")
-            print(f"  - Model ID: {bedrock_request.get('modelId')}")
-            print(f"  - Messages count: {len(bedrock_request.get('messages', []))}")
-            print(f"  - Service tier: {effective_service_tier}")
-
-            # Add serviceTier to request if not 'default'
-            if effective_service_tier and effective_service_tier != "default":
-                bedrock_request["serviceTier"] = {"type": effective_service_tier}
-
             message_id = request_id or f"msg_{uuid4().hex}"
 
             # Create queue for thread-to-async communication
@@ -292,16 +700,60 @@ class BedrockService:
             executor = _get_executor()
             loop = asyncio.get_event_loop()
 
-            # Submit the stream worker to the thread pool
-            future = loop.run_in_executor(
-                executor,
-                self._stream_worker,
-                bedrock_request,
-                request,
-                message_id,
-                effective_service_tier,
-                event_queue
-            )
+            # Route Claude models to InvokeModelWithResponseStream for better feature support
+            if self._is_claude_model(request.model):
+                print(f"[BEDROCK STREAM] Using InvokeModelWithResponseStream for Claude model: {request.model}")
+
+                # Get Bedrock model ID
+                bedrock_model_id = self._get_bedrock_model_id(request.model)
+
+                # Convert request to native Anthropic format
+                native_request = self._convert_to_anthropic_native_request(request, anthropic_beta)
+
+                print(f"[BEDROCK STREAM NATIVE] Request params:")
+                print(f"  - Model ID: {bedrock_model_id}")
+                print(f"  - Messages count: {len(native_request.get('messages', []))}")
+                print(f"  - Has tools: {bool(native_request.get('tools'))}")
+                print(f"  - Beta headers: {native_request.get('anthropic_beta', [])}")
+
+                # Submit the native stream worker to the thread pool
+                future = loop.run_in_executor(
+                    executor,
+                    self._stream_worker_native,
+                    bedrock_model_id,
+                    native_request,
+                    request,
+                    message_id,
+                    event_queue
+                )
+            else:
+                print(f"[BEDROCK STREAM] Converting request to Bedrock format for request {request_id}")
+
+                # Convert request to Bedrock format (with beta header mapping)
+                bedrock_request = self.anthropic_to_bedrock.convert_request(request, anthropic_beta)
+
+                # Determine service tier to use
+                effective_service_tier = service_tier or settings.default_service_tier
+
+                print(f"[BEDROCK STREAM] Bedrock request params:")
+                print(f"  - Model ID: {bedrock_request.get('modelId')}")
+                print(f"  - Messages count: {len(bedrock_request.get('messages', []))}")
+                print(f"  - Service tier: {effective_service_tier}")
+
+                # Add serviceTier to request if not 'default'
+                if effective_service_tier and effective_service_tier != "default":
+                    bedrock_request["serviceTier"] = {"type": effective_service_tier}
+
+                # Submit the stream worker to the thread pool
+                future = loop.run_in_executor(
+                    executor,
+                    self._stream_worker,
+                    bedrock_request,
+                    request,
+                    message_id,
+                    effective_service_tier,
+                    event_queue
+                )
 
             # Consume events from queue asynchronously
             try:
@@ -470,6 +922,82 @@ class BedrockService:
 
         except Exception as e:
             print(f"[ERROR] Exception in stream worker: {type(e).__name__}: {e}")
+            import traceback
+            print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
+            event_queue.put(("error", ("internal_error", str(e))))
+
+    def _stream_worker_native(
+        self,
+        bedrock_model_id: str,
+        native_request: Dict[str, Any],
+        _request: MessageRequest,  # Kept for potential future use
+        _message_id: str,  # Kept for potential future use
+        event_queue: queue.Queue
+    ) -> None:
+        """
+        Worker function for InvokeModelWithResponseStream (native Anthropic format).
+
+        Processes native Anthropic SSE stream events and puts them in the queue
+        for async consumption.
+
+        Args:
+            bedrock_model_id: Bedrock model ID
+            native_request: Native Anthropic-formatted request
+            request: Original Anthropic request
+            message_id: Message ID for the response
+            event_queue: Queue for passing events to async consumer
+        """
+        try:
+            print(f"[BEDROCK STREAM NATIVE] Calling InvokeModelWithResponseStream API...")
+
+            # Call InvokeModelWithResponseStream API
+            response = self.client.invoke_model_with_response_stream(
+                modelId=bedrock_model_id,
+                contentType="application/json",
+                accept="application/json",
+                body=json.dumps(native_request)
+            )
+
+            stream = response.get("body")
+            if not stream:
+                print(f"[ERROR] No stream body returned from Bedrock")
+                event_queue.put(("error", ("no_stream", "No stream body returned from Bedrock")))
+                return
+
+            print(f"[BEDROCK STREAM NATIVE] Processing native stream events...")
+
+            # Process native Anthropic SSE events
+            for event in stream:
+                # InvokeModelWithResponseStream returns events in a specific format
+                chunk = event.get("chunk")
+                if chunk:
+                    chunk_bytes = chunk.get("bytes")
+                    if chunk_bytes:
+                        # Parse the event data
+                        event_data = json.loads(chunk_bytes.decode("utf-8"))
+                        event_type = event_data.get("type", "unknown")
+
+                        # Format as SSE and put in queue
+                        sse_event = f"event: {event_type}\ndata: {json.dumps(event_data)}\n\n"
+                        event_queue.put(("event", sse_event))
+
+                        # Log message_start for debugging
+                        if event_type == "message_start":
+                            print(f"[BEDROCK STREAM NATIVE] message_start received")
+                        elif event_type == "message_delta":
+                            print(f"[BEDROCK STREAM NATIVE] message_delta: stop_reason={event_data.get('delta', {}).get('stop_reason')}")
+
+            print(f"[BEDROCK STREAM NATIVE] Stream completed")
+            event_queue.put(("done", None))
+
+        except ClientError as e:
+            error_code = e.response["Error"]["Code"]
+            error_message = e.response["Error"]["Message"]
+            print(f"[ERROR] InvokeModelWithResponseStream ClientError: {error_code}: {error_message}")
+            event_queue.put(("error", (error_code, error_message)))
+
+        except Exception as e:
+            print(f"[ERROR] Exception in native stream worker: {type(e).__name__}: {e}")
             import traceback
             print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
             event_queue.put(("error", ("internal_error", str(e))))

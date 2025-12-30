@@ -138,17 +138,90 @@ class Settings(BaseSettings):
     enable_document_support: bool = Field(
         default=True, alias="ENABLE_DOCUMENT_SUPPORT"
     )
-    fine_grained_tool_streaming_enabled: bool = Field(
-        default=True, alias="FINE_GRAINED_TOOL_STREAMING_ENABLED"
+
+    # Beta Header Mapping (Anthropic beta headers → Bedrock beta headers)
+    # Maps Anthropic beta header values to corresponding Bedrock beta features
+    beta_header_mapping: Dict[str, List[str]] = Field(
+        default={
+            # advanced-tool-use-2025-11-20 maps to tool examples and tool search in Bedrock
+            "advanced-tool-use-2025-11-20": [
+                "tool-examples-2025-10-29",
+                "tool-search-tool-2025-10-19",
+            ],
+        },
+        alias="BETA_HEADER_MAPPING",
+        description="Mapping of Anthropic beta headers to Bedrock beta headers",
     )
-    interleaved_thinking_enabled: bool = Field(
-        default=True, alias="INTERLEAVED_THINKING_ENABLED"
+
+    # Beta headers that pass through directly without mapping
+    # These are the same between Anthropic and Bedrock APIs
+    beta_headers_passthrough: List[str] = Field(
+        default=[
+            "fine-grained-tool-streaming-2025-05-14",
+            "interleaved-thinking-2025-05-14",
+        ],
+        alias="BETA_HEADERS_PASSTHROUGH",
+        description="Beta headers that pass through to Bedrock without mapping",
+    )
+
+    # Models that support beta header mapping
+    # Only these models will have beta headers mapped and passed to Bedrock
+    beta_header_supported_models: List[str] = Field(
+        default=[
+            "claude-opus-4-5-20251101",
+            "global.anthropic.claude-opus-4-5-20251101-v1:0",
+        ],
+        alias="BETA_HEADER_SUPPORTED_MODELS",
+        description="List of model IDs that support beta header mapping",
+    )
+
+    # Beta features that require InvokeModel API instead of Converse API
+    # These features are only available via InvokeModel/InvokeModelWithResponseStream
+    beta_headers_requiring_invoke_model: List[str] = Field(
+        default=[
+            "tool-examples-2025-10-29",
+            "tool-search-tool-2025-10-19",
+        ],
+        alias="BETA_HEADERS_REQUIRING_INVOKE_MODEL",
+        description="Beta features that require InvokeModel API (not available in Converse API)",
     )
 
     # Bedrock Service Tier Settings
     # Valid values: 'default', 'flex', 'priority', 'reserved'
     # Note: Claude models only support 'default' and 'reserved' (not 'flex')
     default_service_tier: str = Field(default="default", alias="DEFAULT_SERVICE_TIER")
+
+    # Programmatic Tool Calling (PTC) Settings
+    enable_programmatic_tool_calling: bool = Field(
+        default=True,
+        alias="ENABLE_PROGRAMMATIC_TOOL_CALLING",
+        description="Enable Programmatic Tool Calling feature (requires Docker)"
+    )
+    ptc_sandbox_image: str = Field(
+        default="python:3.11-slim",
+        alias="PTC_SANDBOX_IMAGE",
+        description="Docker image for PTC sandbox execution"
+    )
+    ptc_session_timeout: int = Field(
+        default=270,  # 4.5 minutes (matches Anthropic's timeout)
+        alias="PTC_SESSION_TIMEOUT",
+        description="PTC session timeout in seconds"
+    )
+    ptc_execution_timeout: int = Field(
+        default=60,
+        alias="PTC_EXECUTION_TIMEOUT",
+        description="PTC code execution timeout in seconds"
+    )
+    ptc_memory_limit: str = Field(
+        default="256m",
+        alias="PTC_MEMORY_LIMIT",
+        description="Docker container memory limit"
+    )
+    ptc_network_disabled: bool = Field(
+        default=True,
+        alias="PTC_NETWORK_DISABLED",
+        description="Disable network access in PTC sandbox"
+    )
 
     @field_validator("cors_origins", "cors_allow_methods", "cors_allow_headers", mode="before")
     @classmethod

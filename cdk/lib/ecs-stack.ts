@@ -82,6 +82,9 @@ export class ECSStack extends cdk.Stack {
         healthyHttpCodes: '200',
       },
       deregistrationDelay: cdk.Duration.seconds(30),
+      // Enable sticky sessions for PTC (Programmatic Tool Calling)
+      // This ensures continuation requests go to the same instance that created the session
+      stickinessCookieDuration: cdk.Duration.seconds(300), // 5 minutes - matches PTC session timeout
     });
 
     // Create HTTP Listener

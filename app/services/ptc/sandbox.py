@@ -12,12 +12,12 @@ import asyncio
 import json
 import uuid
 import os
-import tempfile
-import shutil
 import threading
 import time as time_module
 import struct
 import select
+import tarfile
+import io
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Generator
@@ -70,7 +70,6 @@ class SandboxConfig:
     cpu_period: int = 100000
     timeout_seconds: float = 60.0
     network_disabled: bool = True
-    read_only: bool = True
     working_dir: str = "/workspace"
     custom_image: str | None = None
     session_timeout_seconds: float = 270.0  # 4.5 minutes (matches Anthropic)
@@ -127,7 +126,6 @@ class SandboxSession:
     session_id: str
     container: Any  # Docker container object
     socket: Any  # IPC socket
-    temp_dir: str
     created_at: datetime
     expires_at: datetime
     last_used_at: datetime
@@ -637,30 +635,26 @@ if __name__ == "__main__":
             if not image_ready:
                 raise ContainerError(f"Failed to pull sandbox image: {image}")
 
-        # Create temp directory for runner script
-        temp_dir = tempfile.mkdtemp(prefix="ptc_sandbox_")
-        os.chmod(temp_dir, 0o755)
-
-        # Write runner script (loop mode for session reuse)
-        runner_path = os.path.join(temp_dir, "runner.py")
-        with open(runner_path, "w") as f:
-            f.write(self._get_runner_script(tools, loop_mode=True))
-        os.chmod(runner_path, 0o644)
+        # Generate runner script content
+        runner_script = self._get_runner_script(tools, loop_mode=True)
 
         # Container configuration
+        # NOTE: We use put_archive instead of bind mounts to support Docker-in-Docker
+        # scenarios (e.g., ECS EC2 with Docker socket mount). Bind mounts resolve
+        # paths from the Docker daemon's perspective (the host), not from inside
+        # the container that's creating the sandbox.
+        # NOTE: read_only is not used because put_archive requires writable filesystem
+        # before container starts. Security is maintained via network_disabled,
+        # no-new-privileges, and cap_drop=ALL.
         container_config = {
             "image": image,
-            "command": ["python", "-u", "/sandbox/runner.py"],
+            "command": ["python", "-u", "/tmp/runner.py"],
             "detach": True,
             "stdin_open": True,
             "network_disabled": self.config.network_disabled,
             "mem_limit": self.config.memory_limit,
             "cpu_period": self.config.cpu_period,
             "cpu_quota": self.config.cpu_quota,
-            "read_only": self.config.read_only,
-            "volumes": {
-                temp_dir: {"bind": "/sandbox", "mode": "ro"}
-            },
             "working_dir": self.config.working_dir,
             "security_opt": ["no-new-privileges"],
             "cap_drop": ["ALL"],
@@ -670,6 +664,12 @@ if __name__ == "__main__":
         container = self.docker_client.containers.create(**container_config)
 
         try:
+            # Copy runner script into container using put_archive to /tmp
+            # /tmp always exists and is writable even in read-only containers
+            # This works in Docker-in-Docker scenarios unlike bind mounts
+            self._copy_file_to_container(container, "/tmp", "runner.py", runner_script)
+            logger.debug(f"Runner script copied to container: {container.id[:12]}")
+
             # IMPORTANT: Attach socket BEFORE starting container to avoid race condition
             # where container outputs data before socket is attached
             socket = container.attach_socket(
@@ -691,7 +691,6 @@ if __name__ == "__main__":
                 session_id=session_id,
                 container=container,
                 socket=socket,
-                temp_dir=temp_dir,
                 created_at=now,
                 expires_at=now + timedelta(seconds=self.config.session_timeout_seconds),
                 last_used_at=now,
@@ -714,7 +713,6 @@ if __name__ == "__main__":
                 container.remove(force=True)
             except Exception:
                 pass
-            shutil.rmtree(temp_dir, ignore_errors=True)
             raise ContainerError(f"Failed to create session: {e}")
 
     async def _wait_for_ready(self, socket, timeout: float = 10.0) -> bool:
@@ -778,9 +776,6 @@ if __name__ == "__main__":
                 session.container.remove(force=True)
             except Exception as e:
                 logger.warning(f"Failed to cleanup container: {e}")
-
-            # Cleanup temp directory
-            shutil.rmtree(session.temp_dir, ignore_errors=True)
 
             return True
 
@@ -1045,6 +1040,34 @@ if __name__ == "__main__":
         self._send_to_container(session.socket, response_line)
 
     # ==================== I/O Helpers ====================
+
+    def _copy_file_to_container(self, container, dest_dir: str, filename: str, content: str) -> None:
+        """
+        Copy a file into a container using put_archive.
+
+        This method works in Docker-in-Docker scenarios (e.g., ECS EC2 with Docker socket mount)
+        where bind mounts fail because the Docker daemon resolves paths from the host's
+        perspective, not from inside the container creating the sandbox.
+
+        Args:
+            container: Docker container object (must be created but not started)
+            dest_dir: Destination directory in the container (e.g., "/sandbox")
+            filename: Name of the file to create (e.g., "runner.py")
+            content: File content as a string
+        """
+        # Create a tar archive in memory containing the file
+        tar_buffer = io.BytesIO()
+        with tarfile.open(fileobj=tar_buffer, mode='w') as tar:
+            # Create file data
+            file_data = content.encode('utf-8')
+            tarinfo = tarfile.TarInfo(name=filename)
+            tarinfo.size = len(file_data)
+            tarinfo.mode = 0o644
+            tar.addfile(tarinfo, io.BytesIO(file_data))
+
+        # Reset buffer position and copy to container
+        tar_buffer.seek(0)
+        container.put_archive(dest_dir, tar_buffer.getvalue())
 
     def _send_to_container(self, socket, data: str) -> None:
         """Send data to container via stdin."""

@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 # Default values
 ENVIRONMENT="prod"
 REGION="${AWS_REGION:-us-west-2}"
-PLATFORM=""
+PLATFORM="arm64"
 LAUNCH_TYPE="fargate"
 SKIP_BUILD=false
 DESTROY=false
@@ -29,7 +29,7 @@ Deploy Anthropic-Bedrock API Proxy to AWS using CDK
 OPTIONS:
     -e, --environment ENV      Environment to deploy (dev|prod) [default: prod]
     -r, --region REGION        AWS region [default: us-west-2]
-    -p, --platform PLATFORM    Platform architecture (arm64|amd64) [REQUIRED]
+    -p, --platform PLATFORM    Platform architecture (arm64|amd64) [default:arm64]
     -l, --launch-type TYPE     ECS launch type (fargate|ec2) [default: fargate]
                                - fargate: Serverless, no Docker access, lower cost
                                - ec2: EC2 instances, supports PTC (Docker socket)
@@ -164,7 +164,7 @@ if [[ "$LAUNCH_TYPE" == "ec2" ]]; then
         if [[ "$PLATFORM" == "arm64" ]]; then
             echo -e "  Instance Type: ${YELLOW}t4g.large (ARM64 Graviton)${NC}"
         else
-            echo -e "  Instance Type: ${YELLOW}t3.large (x86_64)${NC}"
+            echo -e "  Instance Type: ${YELLOW}t3.xwlarge (x86_64)${NC}"
         fi
         echo -e "  Spot Instances: ${YELLOW}No (production stability)${NC}"
     fi

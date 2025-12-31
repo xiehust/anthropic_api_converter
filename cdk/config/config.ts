@@ -154,15 +154,15 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     // ECS
     ecsDesiredCount: 2,
     ecsCpu: 1536,
-    ecsMemory: 3072,
+    ecsMemory: 3072*2,
     ecsMinCapacity: 2,
     ecsMaxCapacity: 10,
     ecsTargetCpuUtilization: 70,
 
     // EC2 Launch Type (used when launchType is 'ec2')
-    ec2InstanceType: 't3.xlarge',   // Will be overridden based on platform
+    ec2InstanceType: 't3.large',   // Will be overridden based on platform
     ec2UseSpot: false,             // Use On-Demand for prod stability
-    ec2RootVolumeSize: 50,         // 50GB root volume
+    ec2RootVolumeSize: 100,         // 50GB root volume
     ec2EnableDockerSocket: true,   // Enable Docker socket for PTC
 
     // Container

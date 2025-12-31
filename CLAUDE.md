@@ -449,12 +449,18 @@ curl http://localhost:8000/health/ptc
   - Fargate doesn't provide Docker daemon access
   - EC2 launch type mounts Docker socket (`/var/run/docker.sock`)
   - Deploy with: `./scripts/deploy.sh -e dev -p arm64 -l ec2`
+- **For multi-instance deployments**: ALB sticky sessions must be enabled
+  - PTC sessions are stored in-memory on individual instances
+  - Continuation requests (with `container.id`) must route to the same instance
+  - CDK automatically enables sticky sessions with 300s duration
+  - Without sticky sessions, continuation requests may go to wrong instance and create new sessions
 
 **Limitations:**
 - Non-streaming only (streaming PTC not yet implemented)
 - Network disabled in sandbox by default
 - Tools are executed client-side (not in the sandbox)
 - **ECS Fargate not supported** (no Docker daemon access)
+- **Multi-instance deployments require sticky sessions** (see Requirements above)
 
 ### Beta Header Mapping and Tool Input Examples
 
@@ -638,6 +644,63 @@ Features like guardrails are Bedrock-specific. Strategy:
 - **Permission denied**: Ensure user has Docker socket access (`/var/run/docker.sock`)
 - **Health check failing**: Check `/health/ptc` endpoint for detailed status
 - **Tool calls not returning**: Verify client sends `tool_result` back to continue execution
+
+### Docker-in-Docker (DinD) Bind Mount Issue
+
+**Problem**: When the proxy runs inside a Docker container (e.g., ECS EC2 with Docker socket mount), PTC sandbox containers fail with "Container failed to become ready" because bind mounts don't work correctly.
+
+**Root Cause**: Docker bind mounts resolve paths from the **Docker daemon's perspective** (the host), not from inside the container making the API call.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ EC2 Host                                                        │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ Proxy Container (ECS Task)                               │   │
+│  │                                                          │   │
+│  │  tempfile.mkdtemp() creates /tmp/ptc_sandbox_xxx         │   │
+│  │  File written: /tmp/ptc_sandbox_xxx/runner.py  ← EXISTS  │   │
+│  │                                                          │   │
+│  │  Docker API call: volumes={"/tmp/ptc_sandbox_xxx": ...}  │   │
+│  └──────────────────────────┬───────────────────────────────┘   │
+│                             │                                   │
+│                             ▼                                   │
+│  Docker daemon receives path "/tmp/ptc_sandbox_xxx"             │
+│  Looks for it on HOST filesystem ← DOESN'T EXIST (or empty)    │
+│                             │                                   │
+│                             ▼                                   │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ Sandbox Container                                        │   │
+│  │  /sandbox/ is EMPTY - runner.py not found!               │   │
+│  │  python /sandbox/runner.py → fails immediately           │   │
+│  └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Solution**: Use Docker's `put_archive` API to copy files directly into the container instead of bind mounts. This works regardless of where the proxy runs.
+
+**How to verify the issue** (via SSM on ECS EC2 instance):
+```bash
+# Check if temp dirs exist on host vs inside proxy container
+echo "=== Host /tmp ===" && ls -la /tmp/ | grep ptc
+echo "=== Inside proxy container /tmp ===" && docker exec <proxy_container_id> ls -la /tmp/ | grep ptc
+
+# Test bind mount behavior
+docker exec <proxy_container_id> sh -c "mkdir -p /tmp/test && echo content > /tmp/test/file.txt"
+docker run --rm -v /tmp/test:/test python:3.11-slim cat /test/file.txt  # Will fail - empty!
+```
+
+**Key code changes** (`app/services/ptc/sandbox.py`):
+- Removed bind mount volumes from container config
+- Added `_copy_file_to_container()` method using `put_archive`
+- Changed runner path from `/sandbox/runner.py` to `/tmp/runner.py`
+- Removed `read_only=True` (incompatible with `put_archive`)
+
+**Security maintained via**:
+- `network_disabled=True` - No network access
+- `security_opt=["no-new-privileges"]` - Prevent privilege escalation
+- `cap_drop=["ALL"]` - Drop all Linux capabilities
+- Memory and CPU limits
 
 ## Project Structure Rationale
 

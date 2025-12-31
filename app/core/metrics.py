@@ -52,7 +52,13 @@ output_tokens_counter = Counter(
 
 cached_tokens_counter = Counter(
     "cached_tokens_total",
-    "Total number of cached tokens used",
+    "Total number of cached tokens read (cache_read_input_tokens)",
+    ["model", "api_key"],
+)
+
+cache_write_tokens_counter = Counter(
+    "cache_write_tokens_total",
+    "Total number of tokens written to cache (cache_creation_input_tokens)",
     ["model", "api_key"],
 )
 
@@ -158,6 +164,7 @@ def record_token_usage(
     input_tokens: int,
     output_tokens: int,
     cached_tokens: int = 0,
+    cache_write_input_tokens: int = 0,
 ):
     """
     Record token usage metrics.
@@ -167,7 +174,8 @@ def record_token_usage(
         api_key: API key (will be masked)
         input_tokens: Number of input tokens
         output_tokens: Number of output tokens
-        cached_tokens: Number of cached tokens
+        cached_tokens: Number of cached tokens read (cache_read_input_tokens)
+        cache_write_input_tokens: Number of tokens written to cache (cache_creation_input_tokens)
     """
     if not settings.enable_metrics:
         return
@@ -190,6 +198,12 @@ def record_token_usage(
             model=model,
             api_key=masked_key,
         ).inc(cached_tokens)
+
+    if cache_write_input_tokens > 0:
+        cache_write_tokens_counter.labels(
+            model=model,
+            api_key=masked_key,
+        ).inc(cache_write_input_tokens)
 
 
 def record_rate_limit_exceeded(api_key: str):

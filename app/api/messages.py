@@ -4,6 +4,7 @@ Messages API endpoints (Anthropic-compatible).
 Implements POST /v1/messages for both streaming and non-streaming message creation.
 Supports Programmatic Tool Calling (PTC) via Docker sandbox execution.
 """
+import json
 import logging
 from typing import Optional
 from uuid import uuid4
@@ -286,6 +287,7 @@ async def create_message(
                     input_tokens=response.usage.input_tokens,
                     output_tokens=response.usage.output_tokens,
                     cached_tokens=getattr(response.usage, 'cache_read_input_tokens', 0) or 0,
+                    cache_write_input_tokens=getattr(response.usage, 'cache_creation_input_tokens', 0) or 0,
                     success=True,
                 )
 
@@ -350,6 +352,7 @@ async def create_message(
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
                 cached_tokens=response.usage.cache_read_input_tokens or 0,
+                cache_write_input_tokens=response.usage.cache_creation_input_tokens or 0,
                 success=True,
             )
 
@@ -441,7 +444,7 @@ async def _handle_streaming_request(
     Yields:
         SSE-formatted event strings
     """
-    accumulated_tokens = {"input": 0, "output": 0, "cached": 0}
+    accumulated_tokens = {"input": 0, "output": 0, "cached": 0, "cache_write": 0}
     success = True
     error_message = None
 
@@ -453,11 +456,42 @@ async def _handle_streaming_request(
         async for sse_event in bedrock_service.invoke_model_stream(
             request_data, request_id, service_tier, anthropic_beta
         ):
-            # Parse event to track usage
-            if "usage" in sse_event:
-                # Extract usage information from events
-                # This is a simplified approach; real implementation would parse JSON
-                pass
+            # Parse event to track usage from message_delta and message_start events
+            # SSE format: "event: <type>\ndata: <json>\n\n"
+            if "data:" in sse_event:
+                try:
+                    # Extract JSON data from SSE event
+                    data_line = [line for line in sse_event.split("\n") if line.startswith("data:")]
+                    if data_line:
+                        event_data = json.loads(data_line[0][5:].strip())
+                        event_type = event_data.get("type")
+
+                        # Extract usage from message_start (initial usage)
+                        if event_type == "message_start" and "message" in event_data:
+                            message = event_data["message"]
+                            if "usage" in message:
+                                usage = message["usage"]
+                                accumulated_tokens["input"] = usage.get("input_tokens", 0)
+                                # cache tokens may be present in message_start
+                                accumulated_tokens["cached"] = usage.get("cache_read_input_tokens", 0)
+                                accumulated_tokens["cache_write"] = usage.get("cache_creation_input_tokens", 0)
+
+                        # Extract usage from message_delta (final usage)
+                        elif event_type == "message_delta" and "usage" in event_data:
+                            usage = event_data["usage"]
+                            # message_delta typically has output_tokens
+                            if "output_tokens" in usage:
+                                accumulated_tokens["output"] = usage["output_tokens"]
+                            if "input_tokens" in usage:
+                                accumulated_tokens["input"] = usage["input_tokens"]
+                            # Also check for cache tokens
+                            if "cache_read_input_tokens" in usage:
+                                accumulated_tokens["cached"] = usage["cache_read_input_tokens"]
+                            if "cache_creation_input_tokens" in usage:
+                                accumulated_tokens["cache_write"] = usage["cache_creation_input_tokens"]
+                except (json.JSONDecodeError, IndexError, KeyError):
+                    # Ignore parse errors - not all events have usage data
+                    pass
 
             yield sse_event
 
@@ -489,6 +523,7 @@ async def _handle_streaming_request(
             input_tokens=accumulated_tokens["input"],
             output_tokens=accumulated_tokens["output"],
             cached_tokens=accumulated_tokens["cached"],
+            cache_write_input_tokens=accumulated_tokens["cache_write"],
             success=success,
             error_message=error_message,
         )

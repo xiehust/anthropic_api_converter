@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     dynamodb_model_mapping_table: str = Field(
         default="anthropic-proxy-model-mapping", alias="DYNAMODB_MODEL_MAPPING_TABLE"
     )
+    usage_ttl_days: int = Field(
+        default=7,
+        alias="USAGE_TTL_DAYS",
+        description="TTL in days for usage records in DynamoDB (0 to disable TTL)"
+    )
 
     # Authentication Settings
     api_key_header: str = Field(default="x-api-key", alias="API_KEY_HEADER")

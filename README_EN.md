@@ -257,6 +257,16 @@ cd anthropic_api_converter
 
 ### Option 1. AWS ECS Deployment (Recommend)
 
+#### Launch Type Selection
+
+| Feature | Fargate (Default) | EC2 |
+|---------|-------------------|-----|
+| **PTC Support** | No | Yes |
+| **Management** | Zero (Serverless) | Requires ASG management |
+| **Cost Model** | Pay per use | Per instance |
+| **Scaling Speed** | Fast (seconds) | Slower (minutes) |
+| **Docker Access** | No | Yes (socket mount) |
+| **Recommended For** | Standard API proxy | PTC-enabled deployments |
 
 #### 1. Install Dependencies
 
@@ -266,16 +276,43 @@ npm install
 ```
 
 #### 2. Deploy to Prod
-**⚠️⚠️⚠️Note that the -p parameter must be adjusted to either amd64 or arm64 based on your current compilation platform. For instance, when compiling on an x86-powered development platform, modify it to -p amd64.**
+
+**Fargate Deployment (Default, for scenarios not requiring PTC):**
+
 ```bash
+# ⚠️ -p parameter must be adjusted based on your compilation platform
+# ARM64 (AWS Graviton, Apple Silicon)
 ./scripts/deploy.sh -e prod -r us-west-2 -p arm64
+
+# AMD64 (Intel/AMD servers)
+./scripts/deploy.sh -e prod -r us-west-2 -p amd64
 ```
+
+**EC2 Deployment (Enables PTC feature):**
+
+```bash
+# Use -l ec2 parameter to enable EC2 launch type, automatically enables PTC
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64 -l ec2
+
+# Dev environment (uses Spot instances for cost savings)
+./scripts/deploy.sh -e dev -r us-west-2 -p arm64 -l ec2
+```
+
+**EC2 Launch Type Configuration:**
+
+| Environment | Instance Type | Spot Instances | Docker Socket |
+|-------------|---------------|----------------|---------------|
+| dev + ARM64 | t4g.medium | Yes | Mounted |
+| dev + AMD64 | t3.medium | Yes | Mounted |
+| prod + ARM64 | t4g.large | No | Mounted |
+| prod + AMD64 | t3.large | No | Mounted |
 
 This will deploy:
 - DynamoDB tables
 - VPC with NAT gateways
-- ECS Fargate cluster and service
+- ECS Fargate/EC2 cluster and service
 - Application Load Balancer
+- (EC2 mode) Auto Scaling Group and Capacity Provider
 
 Deployment takes approximately **15-20 minutes**.
 #### 3. You can find endpoint URL of ALB.

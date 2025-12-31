@@ -243,6 +243,7 @@ class UsageTracker:
         input_tokens: int,
         output_tokens: int,
         cached_tokens: int = 0,
+        cache_write_input_tokens: int = 0,
         success: bool = True,
         error_message: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -256,13 +257,15 @@ class UsageTracker:
             model: Model used
             input_tokens: Input token count
             output_tokens: Output token count
-            cached_tokens: Cached token count
+            cached_tokens: Cached tokens read (cache_read_input_tokens)
+            cache_write_input_tokens: Tokens written to cache (cache_creation_input_tokens)
             success: Whether request was successful
             error_message: Error message if failed
             metadata: Optional metadata
         """
         # Use string timestamp to match CDK table schema (STRING type)
-        timestamp = str(int(time.time() * 1000))  # milliseconds as string
+        current_time = int(time.time())
+        timestamp = str(current_time * 1000)  # milliseconds as string
 
         item = {
             "api_key": api_key,
@@ -272,11 +275,17 @@ class UsageTracker:
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "cached_tokens": cached_tokens,
+            "cache_write_input_tokens": cache_write_input_tokens,
             "total_tokens": input_tokens + output_tokens,
             "success": success,
             "error_message": error_message,
             "metadata": metadata or {},
         }
+
+        # Add TTL if enabled (usage_ttl_days > 0)
+        if settings.usage_ttl_days > 0:
+            ttl_seconds = settings.usage_ttl_days * 24 * 60 * 60  # Convert days to seconds
+            item["ttl"] = current_time + ttl_seconds
 
         self.table.put_item(Item=item)
 
@@ -320,6 +329,7 @@ class UsageTracker:
         total_input_tokens = sum(item.get("input_tokens", 0) for item in items)
         total_output_tokens = sum(item.get("output_tokens", 0) for item in items)
         total_cached_tokens = sum(item.get("cached_tokens", 0) for item in items)
+        total_cache_write_input_tokens = sum(item.get("cache_write_input_tokens", 0) for item in items)
         successful_requests = sum(1 for item in items if item.get("success", False))
 
         return {
@@ -329,6 +339,7 @@ class UsageTracker:
             "total_input_tokens": total_input_tokens,
             "total_output_tokens": total_output_tokens,
             "total_cached_tokens": total_cached_tokens,
+            "total_cache_write_input_tokens": total_cache_write_input_tokens,
             "total_tokens": total_input_tokens + total_output_tokens,
         }
 

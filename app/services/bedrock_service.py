@@ -844,7 +844,12 @@ class BedrockService:
         """
         current_index = 0
         seen_indices: set = set()
-        accumulated_usage = {"inputTokens": 0, "outputTokens": 0}
+        accumulated_usage = {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+        }
 
         try:
             print(f"[BEDROCK STREAM WORKER] Calling Bedrock ConverseStream API...")
@@ -1064,6 +1069,9 @@ class BedrockService:
             usage = metadata.get("usage", {})
             accumulated_usage["inputTokens"] = usage.get("inputTokens", 0)
             accumulated_usage["outputTokens"] = usage.get("outputTokens", 0)
+            # Extract cache tokens if present (Bedrock may include these in metadata)
+            accumulated_usage["cacheReadInputTokens"] = usage.get("cacheReadInputTokens", 0)
+            accumulated_usage["cacheCreationInputTokens"] = usage.get("cacheCreationInputTokens", 0)
 
             anthropic_events = self.bedrock_to_anthropic.merge_usage_into_events(
                 anthropic_events, usage

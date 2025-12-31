@@ -49,14 +49,51 @@ Choose your target architecture:
   - Use if you have specific x86 requirements
   - Slightly higher cost
 
+## Launch Type Selection
+
+Choose your ECS launch type:
+
+| Feature | Fargate (Default) | EC2 |
+|---------|-------------------|-----|
+| **PTC Support** | No | Yes |
+| **Management** | Zero (Serverless) | Requires ASG management |
+| **Cost Model** | Pay per use | Per instance |
+| **Scaling Speed** | Fast (seconds) | Slower (minutes) |
+| **Docker Access** | No | Yes (socket mount) |
+| **Recommended For** | Standard API proxy | PTC-enabled deployments |
+
+### Fargate Deployment (Default)
+
+```bash
+# Standard deployment without PTC
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64
+```
+
+### EC2 Deployment (For PTC Support)
+
+```bash
+# Enable EC2 launch type with -l ec2 parameter
+# Automatically enables PTC by mounting Docker socket
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64 -l ec2
+```
+
+**EC2 Instance Types:**
+
+| Environment | ARM64 | AMD64 | Spot Instances |
+|-------------|-------|-------|----------------|
+| dev | t4g.medium | t3.medium | Yes |
+| prod | t4g.large | t3.large | No |
+
+**Note:** Dev environments use Spot instances for cost savings. Production uses On-Demand for stability.
+
 ## Quick Deploy (Production)
 
 ```bash
-# Deploy to production with higher capacity and ARM64
+# Deploy to production with Fargate (without PTC)
 ./scripts/deploy.sh -e prod -r us-west-2 -p arm64
 
-# Or deploy with AMD64 if needed
-./scripts/deploy.sh -e prod -r us-west-2 -p amd64
+# Or deploy with EC2 for PTC support
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64 -l ec2
 ```
 
 **Differences from dev:**
@@ -65,6 +102,7 @@ Choose your target architecture:
 - WAF enabled
 - Container Insights enabled
 - 30-day log retention
+- On-Demand instances (EC2 mode)
 
 ## API Key Management
 
@@ -193,14 +231,31 @@ Expected response:
 }
 ```
 
-### 2. List Models
+### 2. PTC Health Check (EC2 Launch Type Only)
+
+```bash
+# Only available when deployed with -l ec2
+curl "${ENDPOINT}/health/ptc"
+```
+
+Expected response:
+```json
+{
+  "status": "healthy",
+  "docker": "connected",
+  "active_sessions": 0,
+  "sandbox_image": "python:3.11-slim"
+}
+```
+
+### 3. List Models
 
 ```bash
 curl -H "x-api-key: YOUR_API_KEY" \
   "${ENDPOINT}/v1/models"
 ```
 
-### 3. Send Message
+### 4. Send Message
 
 ```bash
 curl -X POST "${ENDPOINT}/v1/messages" \

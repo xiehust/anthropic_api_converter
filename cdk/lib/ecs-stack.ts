@@ -20,6 +20,11 @@ export interface ECSStackProps extends cdk.StackProps {
   apiKeysTable: dynamodb.Table;
   usageTable: dynamodb.Table;
   modelMappingTable: dynamodb.Table;
+  usageStatsTable: dynamodb.Table;
+  modelPricingTable: dynamodb.Table;
+  // Cognito (optional - for admin portal)
+  cognitoUserPoolId?: string;
+  cognitoClientId?: string;
 }
 
 export class ECSStack extends cdk.Stack {
@@ -33,7 +38,8 @@ export class ECSStack extends cdk.Stack {
     super(scope, id, props);
 
     const { config, vpc, albSecurityGroup, ecsSecurityGroup } = props;
-    const { apiKeysTable, usageTable, modelMappingTable } = props;
+    const { apiKeysTable, usageTable, modelMappingTable, usageStatsTable, modelPricingTable } = props;
+    const { cognitoUserPoolId, cognitoClientId } = props;
 
     // Create ECS Cluster
     this.cluster = new ecs.Cluster(this, 'Cluster', {
@@ -235,6 +241,23 @@ export class ECSStack extends cdk.Stack {
         config, ecsSecurityGroup, targetGroup, logGroup,
         taskExecutionRole, taskRole, masterApiKeySecret,
         cpuArchitecture, dockerPlatform, environmentVars
+      );
+    }
+
+    // Create Admin Portal Service (if enabled)
+    if (config.adminPortalEnabled) {
+      this.createAdminPortalService(
+        config, vpc, ecsSecurityGroup, logGroup,
+        taskExecutionRole, taskRole, cpuArchitecture, dockerPlatform,
+        {
+          apiKeysTable,
+          usageTable,
+          modelMappingTable,
+          usageStatsTable,
+          modelPricingTable,
+        },
+        cognitoUserPoolId,
+        cognitoClientId
       );
     }
 
@@ -618,6 +641,178 @@ export class ECSStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'EC2UseSpot', {
       value: config.ec2UseSpot.toString(),
       description: 'Using Spot Instances',
+    });
+  }
+
+  /**
+   * Create Admin Portal Fargate service
+   * Runs the admin portal with path-based routing on /admin/*
+   */
+  private createAdminPortalService(
+    config: EnvironmentConfig,
+    vpc: ec2.Vpc,
+    ecsSecurityGroup: ec2.SecurityGroup,
+    _logGroup: logs.LogGroup, // Unused - admin portal has its own log group
+    taskExecutionRole: iam.Role,
+    taskRole: iam.Role,
+    cpuArchitecture: ecs.CpuArchitecture,
+    dockerPlatform: Platform,
+    tables: {
+      apiKeysTable: dynamodb.Table;
+      usageTable: dynamodb.Table;
+      modelMappingTable: dynamodb.Table;
+      usageStatsTable: dynamodb.Table;
+      modelPricingTable: dynamodb.Table;
+    },
+    cognitoUserPoolId?: string,
+    cognitoClientId?: string
+  ): void {
+    // Create Admin Portal Log Group
+    const adminLogGroup = new logs.LogGroup(this, 'AdminPortalLogGroup', {
+      logGroupName: `/ecs/admin-portal-${config.environmentName}`,
+      retention: config.logRetentionDays as logs.RetentionDays,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    // Create Admin Portal Task Definition
+    const adminTaskDefinition = new ecs.FargateTaskDefinition(this, 'AdminPortalTaskDefinition', {
+      family: `admin-portal-${config.environmentName}`,
+      cpu: config.adminPortalCpu,
+      memoryLimitMiB: config.adminPortalMemory,
+      executionRole: taskExecutionRole,
+      taskRole: taskRole,
+      runtimePlatform: {
+        cpuArchitecture,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      },
+    });
+
+    // Admin Portal environment variables
+    const adminEnvVars: { [key: string]: string } = {
+      AWS_REGION: config.region,
+      AWS_DEFAULT_REGION: config.region,
+      ENVIRONMENT: config.environmentName === 'prod' ? 'production' : 'development',
+      LOG_LEVEL: config.environmentName === 'prod' ? 'INFO' : 'DEBUG',
+      // DynamoDB Tables
+      DYNAMODB_API_KEYS_TABLE: tables.apiKeysTable.tableName,
+      DYNAMODB_USAGE_TABLE: tables.usageTable.tableName,
+      DYNAMODB_MODEL_MAPPING_TABLE: tables.modelMappingTable.tableName,
+      DYNAMODB_USAGE_STATS_TABLE: tables.usageStatsTable.tableName,
+      DYNAMODB_MODEL_PRICING_TABLE: tables.modelPricingTable.tableName,
+      // Cognito (if configured)
+      ...(cognitoUserPoolId && { COGNITO_USER_POOL_ID: cognitoUserPoolId }),
+      ...(cognitoClientId && { COGNITO_CLIENT_ID: cognitoClientId }),
+      COGNITO_REGION: config.region,
+      // Static file serving
+      SERVE_STATIC_FILES: 'true',
+    };
+
+    // Add Admin Portal Container
+    adminTaskDefinition.addContainer('admin-portal', {
+      containerName: 'admin-portal',
+      image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../'), {
+        file: 'admin_portal/Dockerfile',
+        exclude: ['cdk/cdk.out', 'cdk/node_modules', '.git'],
+        platform: dockerPlatform,
+      }),
+      logging: ecs.LogDriver.awsLogs({
+        streamPrefix: 'admin-portal',
+        logGroup: adminLogGroup,
+      }),
+      environment: adminEnvVars,
+      portMappings: [
+        {
+          containerPort: config.adminPortalContainerPort,
+          protocol: ecs.Protocol.TCP,
+        },
+      ],
+      healthCheck: {
+        command: [
+          'CMD-SHELL',
+          `curl -f http://localhost:${config.adminPortalContainerPort}${config.adminPortalHealthCheckPath} || exit 1`,
+        ],
+        interval: cdk.Duration.seconds(30),
+        timeout: cdk.Duration.seconds(5),
+        retries: 3,
+        startPeriod: cdk.Duration.seconds(60),
+      },
+    });
+
+    // Create Admin Portal Target Group
+    const adminTargetGroup = new elbv2.ApplicationTargetGroup(this, 'AdminPortalTargetGroup', {
+      targetGroupName: `admin-portal-${config.environmentName}-tg`,
+      vpc,
+      port: config.adminPortalContainerPort,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      targetType: elbv2.TargetType.IP,
+      healthCheck: {
+        path: config.adminPortalHealthCheckPath,
+        interval: cdk.Duration.seconds(30),
+        timeout: cdk.Duration.seconds(10),
+        healthyThresholdCount: 2,
+        unhealthyThresholdCount: 5,
+        healthyHttpCodes: '200',
+      },
+      deregistrationDelay: cdk.Duration.seconds(30),
+    });
+
+    // Add path-based routing rule for /admin/*
+    this.listener.addTargetGroups('AdminPortalRouting', {
+      priority: 10, // Higher priority than default
+      conditions: [
+        elbv2.ListenerCondition.pathPatterns(['/admin', '/admin/*']),
+      ],
+      targetGroups: [adminTargetGroup],
+    });
+
+    // Create Admin Portal Fargate Service
+    const adminService = new ecs.FargateService(this, 'AdminPortalService', {
+      serviceName: `admin-portal-${config.environmentName}`,
+      cluster: this.cluster,
+      taskDefinition: adminTaskDefinition,
+      desiredCount: config.adminPortalMinCapacity,
+      assignPublicIp: false,
+      securityGroups: [ecsSecurityGroup],
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      },
+      healthCheckGracePeriod: cdk.Duration.seconds(120),
+      circuitBreaker: {
+        rollback: true,
+      },
+      enableExecuteCommand: config.environmentName !== 'prod',
+      minHealthyPercent: 100,
+      maxHealthyPercent: 200,
+    });
+
+    // Attach to Target Group
+    adminService.attachToApplicationTargetGroup(adminTargetGroup);
+
+    // Auto Scaling
+    const adminScaling = adminService.autoScaleTaskCount({
+      minCapacity: config.adminPortalMinCapacity,
+      maxCapacity: config.adminPortalMaxCapacity,
+    });
+
+    adminScaling.scaleOnCpuUtilization('AdminPortalCpuScaling', {
+      targetUtilizationPercent: 70,
+      scaleInCooldown: cdk.Duration.seconds(60),
+      scaleOutCooldown: cdk.Duration.seconds(60),
+    });
+
+    // Grant DynamoDB permissions to task role (if not already granted)
+    tables.usageStatsTable.grantReadWriteData(taskRole);
+    tables.modelPricingTable.grantReadWriteData(taskRole);
+
+    // Output Admin Portal information
+    new cdk.CfnOutput(this, 'AdminPortalServiceName', {
+      value: adminService.serviceName,
+      description: 'Admin Portal ECS Service Name',
+    });
+
+    new cdk.CfnOutput(this, 'AdminPortalURL', {
+      value: `http://${this.alb.loadBalancerDnsName}/admin/`,
+      description: 'Admin Portal URL',
     });
   }
 }

@@ -63,6 +63,15 @@ export interface EnvironmentConfig {
   bedrockThreadPoolSize: number;
   bedrockSemaphoreSize: number;
 
+  // Admin Portal Configuration
+  adminPortalEnabled: boolean;
+  adminPortalCpu: number;           // CPU units (1024 = 1 vCPU)
+  adminPortalMemory: number;        // Memory in MiB
+  adminPortalMinCapacity: number;   // Min number of tasks
+  adminPortalMaxCapacity: number;   // Max number of tasks
+  adminPortalContainerPort: number; // Container port (8005)
+  adminPortalHealthCheckPath: string; // Health check path
+
   // DynamoDB Configuration
   dynamodbBillingMode: 'PAY_PER_REQUEST' | 'PROVISIONED';
   dynamodbReadCapacity?: number;
@@ -128,6 +137,15 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     bedrockThreadPoolSize: 15,
     bedrockSemaphoreSize: 15,
 
+    // Admin Portal
+    adminPortalEnabled: true,
+    adminPortalCpu: 1024,          // 1 vCPU
+    adminPortalMemory: 1024,       // 1 GB
+    adminPortalMinCapacity: 1,
+    adminPortalMaxCapacity: 2,
+    adminPortalContainerPort: 8005,
+    adminPortalHealthCheckPath: '/health',
+
     // DynamoDB
     dynamodbBillingMode: 'PAY_PER_REQUEST',
 
@@ -190,6 +208,15 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     // Bedrock Concurrency
     bedrockThreadPoolSize: 30,
     bedrockSemaphoreSize: 30,
+
+    // Admin Portal
+    adminPortalEnabled: true,
+    adminPortalCpu: 1024,          // 1 vCPU
+    adminPortalMemory: 1024,       // 1 GB
+    adminPortalMinCapacity: 1,
+    adminPortalMaxCapacity: 4,
+    adminPortalContainerPort: 8005,
+    adminPortalHealthCheckPath: '/health',
 
     // DynamoDB
     dynamodbBillingMode: 'PAY_PER_REQUEST',

@@ -1,0 +1,67 @@
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { MainLayout } from './components/Layout';
+import { Login, Dashboard, ApiKeys, Pricing } from './pages';
+import { useAuth } from './hooks';
+
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { authenticated, authState } = useAuth();
+
+  // Show nothing while checking auth state
+  if (authState === 'idle') {
+    return null;
+  }
+
+  if (!authenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+function PublicRoute({ children }: { children: React.ReactNode }) {
+  const { authenticated, authState } = useAuth();
+
+  // Show nothing while checking auth state
+  if (authState === 'idle') {
+    return null;
+  }
+
+  if (authenticated) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+export default function App() {
+  return (
+    <Routes>
+      {/* Public routes */}
+      <Route
+        path="/login"
+        element={
+          <PublicRoute>
+            <Login />
+          </PublicRoute>
+        }
+      />
+
+      {/* Protected routes */}
+      <Route
+        element={
+          <ProtectedRoute>
+            <MainLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/api-keys" element={<ApiKeys />} />
+        <Route path="/pricing" element={<Pricing />} />
+      </Route>
+
+      {/* Default redirect */}
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
+  );
+}

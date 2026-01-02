@@ -11,6 +11,8 @@ export class DynamoDBStack extends cdk.Stack {
   public readonly apiKeysTable: dynamodb.Table;
   public readonly usageTable: dynamodb.Table;
   public readonly modelMappingTable: dynamodb.Table;
+  public readonly usageStatsTable: dynamodb.Table;
+  public readonly modelPricingTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props: DynamoDBStackProps) {
     super(scope, id, props);
@@ -98,11 +100,50 @@ export class DynamoDBStack extends cdk.Stack {
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
     });
 
+    // Usage Stats Table (aggregated usage statistics)
+    // Used by admin portal for displaying aggregated token counts and budget
+    this.usageStatsTable = new dynamodb.Table(this, 'UsageStatsTable', {
+      partitionKey: {
+        name: 'api_key',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode:
+        config.dynamodbBillingMode === 'PAY_PER_REQUEST'
+          ? dynamodb.BillingMode.PAY_PER_REQUEST
+          : dynamodb.BillingMode.PROVISIONED,
+      readCapacity: config.dynamodbReadCapacity,
+      writeCapacity: config.dynamodbWriteCapacity,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: config.environmentName === 'prod',
+      },
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+    });
+
+    // Model Pricing Table (model pricing configuration)
+    // Used by admin portal for cost calculation and pricing management
+    this.modelPricingTable = new dynamodb.Table(this, 'ModelPricingTable', {
+      partitionKey: {
+        name: 'model_id',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode:
+        config.dynamodbBillingMode === 'PAY_PER_REQUEST'
+          ? dynamodb.BillingMode.PAY_PER_REQUEST
+          : dynamodb.BillingMode.PROVISIONED,
+      readCapacity: config.dynamodbReadCapacity,
+      writeCapacity: config.dynamodbWriteCapacity,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+    });
+
     // Apply tags to all tables
     Object.entries(config.tags).forEach(([key, value]) => {
       cdk.Tags.of(this.apiKeysTable).add(key, value);
       cdk.Tags.of(this.usageTable).add(key, value);
       cdk.Tags.of(this.modelMappingTable).add(key, value);
+      cdk.Tags.of(this.usageStatsTable).add(key, value);
+      cdk.Tags.of(this.modelPricingTable).add(key, value);
     });
 
     // Outputs - exportName omitted to avoid cross-stack conflicts
@@ -119,6 +160,16 @@ export class DynamoDBStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ModelMappingTableName', {
       value: this.modelMappingTable.tableName,
       description: 'Model Mapping DynamoDB Table Name',
+    });
+
+    new cdk.CfnOutput(this, 'UsageStatsTableName', {
+      value: this.usageStatsTable.tableName,
+      description: 'Usage Stats DynamoDB Table Name',
+    });
+
+    new cdk.CfnOutput(this, 'ModelPricingTableName', {
+      value: this.modelPricingTable.tableName,
+      description: 'Model Pricing DynamoDB Table Name',
     });
   }
 }

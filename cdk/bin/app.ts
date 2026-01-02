@@ -4,6 +4,7 @@ import * as cdk from 'aws-cdk-lib';
 import { DynamoDBStack } from '../lib/dynamodb-stack';
 import { NetworkStack } from '../lib/network-stack';
 import { ECSStack } from '../lib/ecs-stack';
+import { CognitoStack } from '../lib/cognito-stack';
 import { getConfig } from '../config/config';
 
 const app = new cdk.App();
@@ -41,6 +42,17 @@ const networkStack = new NetworkStack(app, `${stackPrefix}-Network`, {
   tags: config.tags,
 });
 
+// Deploy Cognito Stack (for admin portal authentication)
+const cognitoStack = config.adminPortalEnabled
+  ? new CognitoStack(app, `${stackPrefix}-Cognito`, {
+      env,
+      config,
+      stackName: `${stackPrefix}-Cognito`,
+      description: `Cognito User Pool for Anthropic proxy admin portal ${config.environmentName}`,
+      tags: config.tags,
+    })
+  : undefined;
+
 // Deploy ECS Stack
 const ecsStack = new ECSStack(app, `${stackPrefix}-ECS`, {
   env,
@@ -51,6 +63,11 @@ const ecsStack = new ECSStack(app, `${stackPrefix}-ECS`, {
   apiKeysTable: dynamoDBStack.apiKeysTable,
   usageTable: dynamoDBStack.usageTable,
   modelMappingTable: dynamoDBStack.modelMappingTable,
+  usageStatsTable: dynamoDBStack.usageStatsTable,
+  modelPricingTable: dynamoDBStack.modelPricingTable,
+  // Cognito (for admin portal)
+  cognitoUserPoolId: cognitoStack?.userPool.userPoolId,
+  cognitoClientId: cognitoStack?.userPoolClient.userPoolClientId,
   stackName: `${stackPrefix}-ECS`,
   description: `ECS Fargate cluster and service for Anthropic proxy ${config.environmentName}`,
   tags: config.tags,
@@ -59,6 +76,9 @@ const ecsStack = new ECSStack(app, `${stackPrefix}-ECS`, {
 // Add dependencies
 ecsStack.addDependency(dynamoDBStack);
 ecsStack.addDependency(networkStack);
+if (cognitoStack) {
+  ecsStack.addDependency(cognitoStack);
+}
 
 // Add tags to all stacks
 Object.entries(config.tags).forEach(([key, value]) => {

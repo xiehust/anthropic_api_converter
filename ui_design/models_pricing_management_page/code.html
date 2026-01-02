@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Models Pricing Management - Admin Portal</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Noto+Sans:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#2b6cee",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101622",
+                        "surface-dark": "#1a202c",
+                        "border-dark": "#2d3748",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"],
+                        "body": ["Noto Sans", "sans-serif"],
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "2xl": "1rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white antialiased overflow-hidden">
+<div class="flex h-screen w-full">
+<!-- Sidebar -->
+<aside class="w-64 flex-shrink-0 flex flex-col border-r border-slate-200 dark:border-border-dark bg-white dark:bg-surface-dark transition-all duration-300">
+<div class="h-16 flex items-center px-6 border-b border-slate-200 dark:border-border-dark">
+<div class="flex items-center gap-2 text-primary">
+<span class="material-symbols-outlined text-3xl">hub</span>
+<span class="font-bold text-xl tracking-tight text-slate-900 dark:text-white">API Converter</span>
+</div>
+</div>
+<nav class="flex-1 overflow-y-auto py-4 px-3 space-y-1">
+<div class="px-3 mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Main</div>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary">dashboard</span>
+<span class="font-medium text-sm">Dashboard</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary">smart_toy</span>
+<span class="font-medium text-sm">Models</span>
+</a>
+<div class="px-3 mt-6 mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Configuration</div>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 text-primary dark:bg-primary/20 dark:text-white transition-colors" href="#">
+<span class="material-symbols-outlined fill-1">payments</span>
+<span class="font-medium text-sm">Pricing</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary">history</span>
+<span class="font-medium text-sm">Logs</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary">settings</span>
+<span class="font-medium text-sm">Settings</span>
+</a>
+</nav>
+<div class="p-4 border-t border-slate-200 dark:border-border-dark">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-cover bg-center ring-2 ring-primary/20" data-alt="User avatar profile picture" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuCcetDFeRwCNISIiAAxuyuGccmKExMQbuGB-RQD7GZCxAec1ugAuz9qH3Zzz-6sl_B0H8FfarhIDwD_nnR46qT8PnJiQAsc3dnJ1V9AlKINmbQBoJbLzdGNTh4w3qqc4zYwkgdg8-ikI7awfNjL0DuyASmyJ_anGJEg-ugAs3x1PAt_YGEy9-1zMVHN8pMoCEXAapOWaPyQSmsfqgNpAMtJ2pA9yh3ugFR7KV1Jug3fCgx7I_QvQJOMiexSvUubQL2VpMdr5lPg10g');"></div>
+<div class="flex-1 min-w-0">
+<p class="text-sm font-medium text-slate-900 dark:text-white truncate">Admin User</p>
+<p class="text-xs text-slate-500 dark:text-slate-400 truncate">admin@company.com</p>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 flex flex-col h-full relative overflow-hidden">
+<!-- Top Header -->
+<header class="h-16 flex items-center justify-between px-6 border-b border-slate-200 dark:border-border-dark bg-white/50 dark:bg-background-dark/50 backdrop-blur-sm z-10">
+<!-- Breadcrumbs -->
+<nav class="flex items-center text-sm font-medium text-slate-500 dark:text-slate-400">
+<a class="hover:text-slate-900 dark:hover:text-white transition-colors" href="#">Configuration</a>
+<span class="mx-2 material-symbols-outlined text-[16px]">chevron_right</span>
+<span class="text-slate-900 dark:text-white">Model Pricing</span>
+</nav>
+<div class="flex items-center gap-4">
+<button class="flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors">
+<span class="material-symbols-outlined">help</span>
+</button>
+</div>
+</header>
+<!-- Scrollable Content Area -->
+<div class="flex-1 overflow-y-auto p-6 lg:p-10">
+<div class="max-w-7xl mx-auto space-y-6">
+<!-- Page Heading & Actions -->
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-4">
+<div class="flex-1">
+<h1 class="text-3xl md:text-4xl font-bold tracking-tight text-slate-900 dark:text-white mb-2">Model Pricing Configuration</h1>
+<p class="text-slate-500 dark:text-slate-400 max-w-2xl text-base">
+                                Manage input, output, and cache pricing tiers for Bedrock models. Prices are denominated in USD per 1,000,000 tokens.
+                            </p>
+</div>
+<div class="flex items-center gap-3">
+<button class="btn-secondary h-10 px-4 rounded-lg bg-white dark:bg-surface-dark border border-slate-200 dark:border-border-dark text-slate-700 dark:text-slate-200 font-medium text-sm flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors shadow-sm">
+<span class="material-symbols-outlined text-[20px]">file_upload</span>
+                                Import CSV
+                            </button>
+<button class="h-10 px-4 rounded-lg bg-primary hover:bg-blue-600 text-white font-medium text-sm flex items-center gap-2 transition-all shadow-lg shadow-blue-500/20">
+<span class="material-symbols-outlined text-[20px]">add</span>
+                                Add New Model
+                            </button>
+</div>
+</div>
+<!-- Search & Filter Bar -->
+<div class="bg-white dark:bg-surface-dark p-4 rounded-xl border border-slate-200 dark:border-border-dark shadow-sm flex flex-col sm:flex-row gap-4 items-center justify-between">
+<div class="relative w-full sm:max-w-md">
+<div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+<span class="material-symbols-outlined text-slate-400">search</span>
+</div>
+<input class="block w-full pl-10 pr-3 py-2.5 border border-slate-200 dark:border-border-dark rounded-lg leading-5 bg-slate-50 dark:bg-background-dark text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary sm:text-sm transition-shadow" placeholder="Search by Model ID or Provider..." type="text"/>
+</div>
+<div class="flex items-center gap-2 w-full sm:w-auto">
+<div class="relative w-full sm:w-auto">
+<select class="appearance-none block w-full pl-3 pr-10 py-2.5 border border-slate-200 dark:border-border-dark rounded-lg leading-5 bg-slate-50 dark:bg-background-dark text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary sm:text-sm cursor-pointer">
+<option>All Providers</option>
+<option>Anthropic</option>
+<option>Cohere</option>
+<option>AI21 Labs</option>
+<option>Meta</option>
+</select>
+<div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-500">
+<span class="material-symbols-outlined text-[20px]">arrow_drop_down</span>
+</div>
+</div>
+<button class="p-2.5 rounded-lg border border-slate-200 dark:border-border-dark text-slate-500 hover:text-primary hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+<span class="material-symbols-outlined text-[20px]">filter_list</span>
+</button>
+</div>
+</div>
+<!-- Data Table -->
+<div class="bg-white dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-border-dark shadow-sm overflow-hidden">
+<div class="overflow-x-auto">
+<table class="min-w-full divide-y divide-slate-200 dark:divide-border-dark">
+<thead class="bg-slate-50 dark:bg-[#151b26]">
+<tr>
+<th class="px-6 py-4 text-left text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider" scope="col">Model ID</th>
+<th class="px-6 py-4 text-left text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider" scope="col">Provider</th>
+<th class="px-6 py-4 text-right text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider" scope="col">Input Price <span class="normal-case font-normal text-slate-400 text-[10px] block">($ / 1M Tokens)</span></th>
+<th class="px-6 py-4 text-right text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider" scope="col">Output Price <span class="normal-case font-normal text-slate-400 text-[10px] block">($ / 1M Tokens)</span></th>
+<th class="px-6 py-4 text-right text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider hidden xl:table-cell" scope="col">Cache Read <span class="normal-case font-normal text-slate-400 text-[10px] block">($ / 1M Tokens)</span></th>
+<th class="px-6 py-4 text-right text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider hidden xl:table-cell" scope="col">Cache Write <span class="normal-case font-normal text-slate-400 text-[10px] block">($ / 1M Tokens)</span></th>
+<th class="px-6 py-4 text-center text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider w-20" scope="col">Actions</th>
+</tr>
+</thead>
+<tbody class="bg-white dark:bg-surface-dark divide-y divide-slate-200 dark:divide-border-dark">
+<!-- Row 1 -->
+<tr class="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center">
+<div class="flex-shrink-0 h-8 w-8 rounded bg-indigo-900/30 flex items-center justify-center text-indigo-400 border border-indigo-500/20">
+<span class="material-symbols-outlined text-[18px]">smart_toy</span>
+</div>
+<div class="ml-4">
+<div class="text-sm font-medium text-slate-900 dark:text-white">anthropic.claude-3-opus-20240229-v1:0</div>
+<div class="flex items-center gap-1.5 mt-0.5">
+<span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+<span class="text-xs text-slate-500 dark:text-slate-400">Active</span>
+</div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700">Anthropic</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-700 dark:text-slate-300">$15.00</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-700 dark:text-slate-300">$75.00</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-500 dark:text-slate-400 hidden xl:table-cell">$1.50</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-500 dark:text-slate-400 hidden xl:table-cell">$18.75</td>
+<td class="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
+<div class="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="text-slate-400 hover:text-primary transition-colors p-1" title="Edit">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+<button class="text-slate-400 hover:text-red-500 transition-colors p-1" title="Delete">
+<span class="material-symbols-outlined text-[20px]">delete</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors bg-primary/5 dark:bg-primary/5">
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center">
+<div class="flex-shrink-0 h-8 w-8 rounded bg-indigo-900/30 flex items-center justify-center text-indigo-400 border border-indigo-500/20">
+<span class="material-symbols-outlined text-[18px]">smart_toy</span>
+</div>
+<div class="ml-4">
+<div class="text-sm font-medium text-slate-900 dark:text-white">anthropic.claude-3-sonnet-20240229-v1:0</div>
+<div class="flex items-center gap-1.5 mt-0.5">
+<span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+<span class="text-xs text-slate-500 dark:text-slate-400">Active</span>
+</div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700">Anthropic</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-700 dark:text-slate-300">$3.00</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-700 dark:text-slate-300">$15.00</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-500 dark:text-slate-400 hidden xl:table-cell">$0.30</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-500 dark:text-slate-400 hidden xl:table-cell">$3.75</td>
+<td class="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
+<div class="flex items-center justify-center gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+<button class="text-slate-400 hover:text-primary transition-colors p-1" title="Edit">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+<button class="text-slate-400 hover:text-red-500 transition-colors p-1" title="Delete">
+<span class="material-symbols-outlined text-[20px]">delete</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center">
+<div class="flex-shrink-0 h-8 w-8 rounded bg-indigo-900/30 flex items-center justify-center text-indigo-400 border border-indigo-500/20">
+<span class="material-symbols-outlined text-[18px]">bolt</span>
+</div>
+<div class="ml-4">
+<div class="text-sm font-medium text-slate-900 dark:text-white">anthropic.claude-3-haiku-20240307-v1:0</div>
+<div class="flex items-center gap-1.5 mt-0.5">
+<span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+<span class="text-xs text-slate-500 dark:text-slate-400">Active</span>
+</div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700">Anthropic</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-700 dark:text-slate-300">$0.25</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-700 dark:text-slate-300">$1.25</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-500 dark:text-slate-400 hidden xl:table-cell">$0.03</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-500 dark:text-slate-400 hidden xl:table-cell">$0.30</td>
+<td class="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
+<div class="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="text-slate-400 hover:text-primary transition-colors p-1" title="Edit">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+<button class="text-slate-400 hover:text-red-500 transition-colors p-1" title="Delete">
+<span class="material-symbols-outlined text-[20px]">delete</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center">
+<div class="flex-shrink-0 h-8 w-8 rounded bg-teal-900/30 flex items-center justify-center text-teal-400 border border-teal-500/20">
+<span class="material-symbols-outlined text-[18px]">psychology</span>
+</div>
+<div class="ml-4">
+<div class="text-sm font-medium text-slate-900 dark:text-white">cohere.command-r-plus-v1:0</div>
+<div class="flex items-center gap-1.5 mt-0.5">
+<span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+<span class="text-xs text-slate-500 dark:text-slate-400">Active</span>
+</div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700">Cohere</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-700 dark:text-slate-300">$3.00</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-700 dark:text-slate-300">$15.00</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-500 dark:text-slate-400 hidden xl:table-cell">—</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-500 dark:text-slate-400 hidden xl:table-cell">—</td>
+<td class="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
+<div class="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="text-slate-400 hover:text-primary transition-colors p-1" title="Edit">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+<button class="text-slate-400 hover:text-red-500 transition-colors p-1" title="Delete">
+<span class="material-symbols-outlined text-[20px]">delete</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 5 (Deprecated) -->
+<tr class="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors opacity-60">
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center">
+<div class="flex-shrink-0 h-8 w-8 rounded bg-gray-700/30 flex items-center justify-center text-gray-400 border border-gray-600/20">
+<span class="material-symbols-outlined text-[18px]">archive</span>
+</div>
+<div class="ml-4">
+<div class="text-sm font-medium text-slate-900 dark:text-white">anthropic.claude-v2:1</div>
+<div class="flex items-center gap-1.5 mt-0.5">
+<span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+<span class="text-xs text-slate-500 dark:text-slate-400">Deprecated</span>
+</div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700">Anthropic</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-700 dark:text-slate-300">$8.00</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-700 dark:text-slate-300">$24.00</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-500 dark:text-slate-400 hidden xl:table-cell">—</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-slate-500 dark:text-slate-400 hidden xl:table-cell">—</td>
+<td class="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
+<div class="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="text-slate-400 hover:text-primary transition-colors p-1" title="Edit">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+<button class="text-slate-400 hover:text-red-500 transition-colors p-1" title="Delete">
+<span class="material-symbols-outlined text-[20px]">delete</span>
+</button>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Pagination -->
+<div class="bg-slate-50 dark:bg-[#151b26] px-4 py-3 flex items-center justify-between border-t border-slate-200 dark:border-border-dark sm:px-6">
+<div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+<div>
+<p class="text-sm text-slate-700 dark:text-slate-400">
+                                        Showing <span class="font-medium">1</span> to <span class="font-medium">5</span> of <span class="font-medium">12</span> results
+                                    </p>
+</div>
+<div>
+<nav aria-label="Pagination" class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
+<a class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-surface-dark text-sm font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800" href="#">
+<span class="sr-only">Previous</span>
+<span class="material-symbols-outlined text-[18px]">chevron_left</span>
+</a>
+<a aria-current="page" class="z-10 bg-primary/10 border-primary text-primary relative inline-flex items-center px-4 py-2 border text-sm font-bold" href="#">1</a>
+<a class="bg-white dark:bg-surface-dark border-slate-300 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 relative inline-flex items-center px-4 py-2 border text-sm font-medium" href="#">2</a>
+<a class="bg-white dark:bg-surface-dark border-slate-300 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 relative inline-flex items-center px-4 py-2 border text-sm font-medium" href="#">3</a>
+<a class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-surface-dark text-sm font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800" href="#">
+<span class="sr-only">Next</span>
+<span class="material-symbols-outlined text-[18px]">chevron_right</span>
+</a>
+</nav>
+</div>
+</div>
+</div>
+</div>
+<!-- Footer Info -->
+<div class="mt-8 flex justify-center text-center">
+<p class="text-xs text-slate-400 dark:text-slate-600 max-w-lg">
+                            Pricing data is cached and updated every 24 hours. Last sync: 15 mins ago. 
+                            <a class="underline hover:text-slate-500 dark:hover:text-slate-500 transition-colors" href="#">Force Sync Now</a>
+</p>
+</div>
+</div>
+</div>
+</main>
+<!-- Slide-over / Modal (Positioned absolutely for demonstration) -->
+<div class="absolute inset-y-0 right-0 max-w-md w-full bg-white dark:bg-surface-dark shadow-2xl border-l border-slate-200 dark:border-border-dark transform translate-x-full transition-transform duration-300 z-50 flex flex-col" style="transform: translateX(0);">
+<!-- NOTE: In a real app, this would be conditionally rendered or toggled via JS/State. Showing here for layout demonstration -->
+<div class="px-6 py-4 border-b border-slate-200 dark:border-border-dark flex items-center justify-between">
+<h2 class="text-lg font-bold text-slate-900 dark:text-white">Edit Pricing</h2>
+<button class="text-slate-400 hover:text-slate-500 dark:hover:text-slate-300">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+<div class="flex-1 overflow-y-auto p-6 space-y-6">
+<!-- Model Info Read-only -->
+<div class="space-y-1">
+<label class="block text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">Model ID</label>
+<p class="text-sm font-mono text-slate-900 dark:text-white bg-slate-100 dark:bg-background-dark p-2 rounded border border-slate-200 dark:border-border-dark break-all">anthropic.claude-3-sonnet-20240229-v1:0</p>
+</div>
+<div class="grid grid-cols-2 gap-4">
+<div class="space-y-2">
+<label class="block text-sm font-medium text-slate-700 dark:text-slate-300">Input Price</label>
+<div class="relative rounded-md shadow-sm">
+<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+<span class="text-slate-500 sm:text-sm">$</span>
+</div>
+<input class="block w-full rounded-md border-slate-300 dark:border-border-dark bg-white dark:bg-background-dark text-slate-900 dark:text-white pl-7 pr-3 focus:border-primary focus:ring-primary sm:text-sm h-10" placeholder="0.00" step="0.0001" type="number" value="3.00"/>
+</div>
+<p class="text-xs text-slate-500">Per 1M tokens</p>
+</div>
+<div class="space-y-2">
+<label class="block text-sm font-medium text-slate-700 dark:text-slate-300">Output Price</label>
+<div class="relative rounded-md shadow-sm">
+<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+<span class="text-slate-500 sm:text-sm">$</span>
+</div>
+<input class="block w-full rounded-md border-slate-300 dark:border-border-dark bg-white dark:bg-background-dark text-slate-900 dark:text-white pl-7 pr-3 focus:border-primary focus:ring-primary sm:text-sm h-10" placeholder="0.00" step="0.0001" type="number" value="15.00"/>
+</div>
+<p class="text-xs text-slate-500">Per 1M tokens</p>
+</div>
+</div>
+<div class="border-t border-slate-200 dark:border-border-dark pt-4">
+<h3 class="text-sm font-medium text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+<span class="material-symbols-outlined text-sm">cached</span> Cache Pricing
+                    </h3>
+<div class="grid grid-cols-2 gap-4">
+<div class="space-y-2">
+<label class="block text-sm font-medium text-slate-700 dark:text-slate-300">Cache Read</label>
+<div class="relative rounded-md shadow-sm">
+<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+<span class="text-slate-500 sm:text-sm">$</span>
+</div>
+<input class="block w-full rounded-md border-slate-300 dark:border-border-dark bg-white dark:bg-background-dark text-slate-900 dark:text-white pl-7 pr-3 focus:border-primary focus:ring-primary sm:text-sm h-10" placeholder="0.00" step="0.0001" type="number" value="0.30"/>
+</div>
+</div>
+<div class="space-y-2">
+<label class="block text-sm font-medium text-slate-700 dark:text-slate-300">Cache Write</label>
+<div class="relative rounded-md shadow-sm">
+<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+<span class="text-slate-500 sm:text-sm">$</span>
+</div>
+<input class="block w-full rounded-md border-slate-300 dark:border-border-dark bg-white dark:bg-background-dark text-slate-900 dark:text-white pl-7 pr-3 focus:border-primary focus:ring-primary sm:text-sm h-10" placeholder="0.00" step="0.0001" type="number" value="3.75"/>
+</div>
+</div>
+</div>
+</div>
+<div class="border-t border-slate-200 dark:border-border-dark pt-4 space-y-3">
+<div class="flex items-center justify-between">
+<span class="text-sm font-medium text-slate-700 dark:text-slate-300">Status</span>
+<div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
+<input checked="" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer checked:right-0 right-5 border-transparent checked:border-primary" id="toggle" name="toggle" type="checkbox"/>
+<label class="toggle-label block overflow-hidden h-5 rounded-full bg-gray-300 dark:bg-gray-700 cursor-pointer" for="toggle"></label>
+</div>
+</div>
+<p class="text-xs text-slate-500">Disabled models will not be available for selection in the main converter tool.</p>
+</div>
+</div>
+<div class="px-6 py-4 border-t border-slate-200 dark:border-border-dark bg-slate-50 dark:bg-background-dark flex gap-3">
+<button class="flex-1 px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500">
+                    Cancel
+                </button>
+<button class="flex-1 px-4 py-2 bg-primary border border-transparent rounded-lg text-sm font-medium text-white hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary shadow-lg shadow-blue-500/30">
+                    Save Changes
+                </button>
+</div>
+</div>
+<!-- Backdrop for modal (hidden by default logic but visible here for visual context) -->
+<!-- <div class="absolute inset-0 bg-black/50 z-40 backdrop-blur-sm"></div> -->
+</div>
+<style>
+        /* Custom scrollbar for webkit */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1; 
+            border-radius: 4px;
+        }
+        .dark ::-webkit-scrollbar-thumb {
+            background: #334155; 
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8; 
+        }
+        .dark ::-webkit-scrollbar-thumb:hover {
+            background: #475569; 
+        }
+
+        /* Toggle Switch CSS */
+        .toggle-checkbox:checked {
+            right: 0;
+            border-color: #2b6cee;
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background-color: #2b6cee;
+        }
+    </style>
+</body></html>

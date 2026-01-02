@@ -6,22 +6,28 @@ This directory contains AWS CDK infrastructure code for deploying the Anthropic-
 
 ```
 Internet
-    ↓
+    │
+    ▼
 Application Load Balancer (Regional)
-    ↓
-ECS Fargate Service (Multi-AZ)
-    ↓
-Container Tasks (Auto-scaling)
-    ↓
-├─→ AWS Bedrock (Anthropic models)
-└─→ DynamoDB (API keys, usage, cache)
+    │
+    ├── /admin/*  ──────►  Admin Portal Service (Fargate)
+    │                       └── FastAPI + React (port 8005)
+    │                            └── Cognito Authentication
+    │
+    └── /*  ────────────►  API Proxy Service (Fargate/EC2)
+                            └── FastAPI (port 8000)
+                                 └── AWS Bedrock
+    │
+    ▼
+DynamoDB (API keys, usage, pricing, model mapping)
 ```
 
 ### Key Features
 
-- **Application Load Balancer**: HTTP endpoint with health checks and target group management
+- **Application Load Balancer**: HTTP endpoint with path-based routing
 - **ECS Fargate**: Serverless container orchestration with auto-scaling
-- **DynamoDB**: Four tables for API keys, usage tracking, caching, and model mapping
+- **Admin Portal**: Web-based management UI with Cognito authentication
+- **DynamoDB**: Five tables for API keys, usage tracking, usage stats, pricing, and model mapping
 - **VPC**: Multi-AZ deployment with public/private subnets
 - **Security**: WAF rules, security groups, IAM roles with least privilege
 - **Monitoring**: CloudWatch logs, Container Insights, metrics
@@ -213,13 +219,13 @@ Useful for quick redeployments when dependencies haven't changed.
 
 ### 1. DynamoDB Stack
 
-Creates four tables:
+Creates five tables:
 
 #### API Keys Table
 - **Table Name:** `anthropic-proxy-{env}-api-keys`
 - **Primary Key:** `api_key` (String)
 - **GSI:** `user_id-index` for querying by user
-- **Attributes:** `api_key`, `user_id`, `name`, `is_active`, `rate_limit`, `metadata`
+- **Attributes:** `api_key`, `user_id`, `name`, `is_active`, `rate_limit`, `monthly_budget`, `budget_used`
 - **Encryption:** AWS-managed
 - **Backup:** Point-in-time recovery (prod only)
 
@@ -228,12 +234,24 @@ Creates four tables:
 - **Primary Key:** `api_key` (String), `timestamp` (String)
 - **GSI:** `request_id-index` for request lookups
 - **TTL:** Automatic expiration via `ttl` attribute
-- **Purpose:** Track API usage and costs
+- **Purpose:** Track individual API requests
+
+#### Usage Stats Table
+- **Table Name:** `anthropic-proxy-{env}-usage-stats`
+- **Primary Key:** `api_key` (String)
+- **Purpose:** Aggregated usage statistics (total tokens, requests)
+- **Updated:** Every 5 minutes by admin portal background task
 
 #### Model Mapping Table
 - **Table Name:** `anthropic-proxy-{env}-model-mapping`
 - **Primary Key:** `anthropic_model_id` (String)
 - **Purpose:** Map Anthropic model IDs to Bedrock ARNs
+
+#### Model Pricing Table
+- **Table Name:** `anthropic-proxy-{env}-model-pricing`
+- **Primary Key:** `model_id` (String)
+- **Purpose:** Store model pricing for cost calculations
+- **Attributes:** `input_price`, `output_price`, `cache_read_price`, `cache_write_price`
 
 ### 2. Network Stack
 
@@ -286,6 +304,137 @@ Creates container orchestration:
 - **Health Check:** `/health` every 30s
 - **Deregistration Delay:** 30 seconds
 - **Deletion Protection:** Disabled
+- **Path-based Routing:**
+  - `/admin/*` → Admin Portal Target Group
+  - `/*` → API Proxy Target Group (default)
+
+### 4. Cognito Stack
+
+Creates authentication resources for the admin portal:
+
+**User Pool:**
+- **Name:** `anthropic-proxy-admin-{env}`
+- **Sign-in:** Email-based (no username)
+- **Self-signup:** Disabled (admin creates users)
+- **Password Policy:** 12+ chars, upper/lower/digit/symbol required
+- **MFA:** Optional in prod, disabled in dev
+
+**App Client:**
+- **Name:** `admin-portal-{env}`
+- **Client Secret:** None (SPA cannot keep secrets)
+- **Auth Flows:** USER_PASSWORD_AUTH, USER_SRP_AUTH
+- **Token Validity:** Access/ID 1 hour, Refresh 30 days
+
+### 5. Admin Portal Service
+
+Creates the admin portal as a separate Fargate service:
+
+**Task Definition:**
+- **CPU:** 1024 (1 vCPU)
+- **Memory:** 1024 MB
+- **Container Image:** Built from `admin_portal/Dockerfile`
+- **Port:** 8005
+
+**Service:**
+- **Desired Count:** 1 (min)
+- **Auto-scaling:** 1-2 tasks (dev), 1-4 tasks (prod)
+- **Health Check:** `/health`
+
+**Features:**
+- React frontend bundled with FastAPI backend
+- Cognito JWT authentication
+- API key management (CRUD)
+- Usage monitoring and dashboard
+- Model pricing configuration
+
+**Access:**
+- URL: `http://<ALB-DNS>/admin/`
+- First login: Create user in Cognito console
+
+## Admin Portal
+
+The admin portal provides a web-based management interface for the API proxy.
+
+### Accessing the Admin Portal
+
+After deployment, access the admin portal at:
+```
+http://<ALB-DNS>/admin/
+```
+
+Get the ALB DNS from deployment output:
+```bash
+aws cloudformation describe-stacks \
+  --stack-name AnthropicProxy-dev-ECS \
+  --query 'Stacks[0].Outputs[?OutputKey==`ALBDNSName`].OutputValue' \
+  --output text
+```
+
+### Creating Admin Users
+
+Admin users must be created in the Cognito User Pool:
+
+```bash
+# Get User Pool ID
+USER_POOL_ID=$(aws cloudformation describe-stacks \
+  --stack-name AnthropicProxy-dev-Cognito \
+  --query 'Stacks[0].Outputs[?OutputKey==`UserPoolId`].OutputValue' \
+  --output text)
+
+# Create admin user
+aws cognito-idp admin-create-user \
+  --user-pool-id $USER_POOL_ID \
+  --username admin@example.com \
+  --user-attributes Name=email,Value=admin@example.com Name=email_verified,Value=true \
+  --temporary-password "TempPass123!" \
+  --message-action SUPPRESS
+
+# Set permanent password (optional)
+aws cognito-idp admin-set-user-password \
+  --user-pool-id $USER_POOL_ID \
+  --username admin@example.com \
+  --password "YourSecurePassword123!" \
+  --permanent
+```
+
+### Admin Portal Features
+
+| Feature | Description |
+|---------|-------------|
+| **Dashboard** | Overview of API usage, active keys, budget status |
+| **API Keys** | Create, update, deactivate, delete API keys |
+| **Usage Stats** | View token usage, request counts per key |
+| **Pricing** | Configure model pricing for cost calculations |
+| **Budget Management** | Set monthly budgets, view MTD usage |
+
+### Admin Portal Configuration
+
+Configure admin portal settings in `config/config.ts`:
+
+```typescript
+// Admin Portal
+adminPortalEnabled: true,
+adminPortalCpu: 1024,          // 1 vCPU
+adminPortalMemory: 1024,       // 1 GB
+adminPortalMinCapacity: 1,
+adminPortalMaxCapacity: 2,
+adminPortalContainerPort: 8005,
+adminPortalHealthCheckPath: '/health',
+```
+
+### Disabling Admin Portal
+
+To deploy without the admin portal:
+
+```typescript
+// In config/config.ts
+adminPortalEnabled: false,
+```
+
+This will skip creating:
+- Admin Portal Fargate service
+- Cognito User Pool
+- ALB routing rules for `/admin/*`
 
 ## IAM Roles and Permissions
 

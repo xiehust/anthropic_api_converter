@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>User &amp; API Key Management - Anthropic Converter</title>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Configuration -->
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#2b6cee",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101622",
+                        "surface-dark": "#1a2233",
+                        "surface-border": "#2e3648",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"],
+                        "body": ["Space Grotesk", "sans-serif"],
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white font-display antialiased overflow-hidden">
+<div class="flex h-screen w-full">
+<!-- Sidebar -->
+<aside class="w-64 h-full hidden md:flex flex-col border-r border-surface-border bg-background-dark shrink-0">
+<div class="p-6 flex flex-col gap-1">
+<h1 class="text-white text-lg font-bold tracking-tight">Admin Portal</h1>
+<p class="text-slate-400 text-xs font-normal">Anthropic Converter</p>
+</div>
+<nav class="flex flex-col gap-2 px-3 mt-4">
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-white hover:bg-surface-dark rounded-lg transition-colors group" href="#">
+<span class="material-symbols-outlined text-slate-400 group-hover:text-white">dashboard</span>
+<span class="text-sm font-medium">Dashboard</span>
+</a>
+<!-- Active State -->
+<a class="flex items-center gap-3 px-3 py-2.5 bg-primary/20 text-primary rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-primary fill-1">vpn_key</span>
+<span class="text-sm font-bold">API Keys</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-white hover:bg-surface-dark rounded-lg transition-colors group" href="#">
+<span class="material-symbols-outlined text-slate-400 group-hover:text-white">group</span>
+<span class="text-sm font-medium">Users</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-white hover:bg-surface-dark rounded-lg transition-colors group" href="#">
+<span class="material-symbols-outlined text-slate-400 group-hover:text-white">settings</span>
+<span class="text-sm font-medium">Settings</span>
+</a>
+</nav>
+<div class="mt-auto p-4 border-t border-surface-border">
+<div class="flex items-center gap-3">
+<div class="size-8 rounded-full bg-gradient-to-tr from-primary to-purple-500" data-alt="User Avatar Gradient"></div>
+<div class="flex flex-col overflow-hidden">
+<span class="text-sm font-medium text-white truncate">Admin User</span>
+<span class="text-xs text-slate-400 truncate">admin@anthropic.com</span>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 flex flex-col h-full overflow-hidden bg-background-light dark:bg-background-dark relative">
+<!-- Top Navbar -->
+<header class="flex items-center justify-between px-6 py-4 border-b border-surface-border bg-background-dark z-10">
+<div class="flex items-center gap-4 text-white">
+<div class="md:hidden">
+<span class="material-symbols-outlined cursor-pointer">menu</span>
+</div>
+<div class="flex items-center gap-2 text-slate-400 text-sm">
+<span>Portal</span>
+<span class="material-symbols-outlined text-[16px]">chevron_right</span>
+<span class="text-white font-medium">API Keys</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="relative p-2 text-slate-400 hover:text-white transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+<span class="absolute top-2 right-2 size-2 bg-red-500 rounded-full border border-background-dark"></span>
+</button>
+<button class="p-2 text-slate-400 hover:text-white transition-colors">
+<span class="material-symbols-outlined">help</span>
+</button>
+</div>
+</header>
+<!-- Scrollable Content -->
+<div class="flex-1 overflow-y-auto p-6 md:p-10">
+<div class="max-w-7xl mx-auto flex flex-col gap-8">
+<!-- Page Heading -->
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-4">
+<div class="flex flex-col gap-2">
+<h1 class="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white tracking-tight">User &amp; API Key Management</h1>
+<p class="text-slate-500 dark:text-slate-400 text-base">Manage access, monitor usage, and set limits for Anthropic API conversion.</p>
+</div>
+<div class="flex gap-3">
+<button class="flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-surface-dark border border-surface-border text-white text-sm font-medium hover:bg-surface-border transition-colors">
+<span class="material-symbols-outlined text-[20px]">file_download</span>
+                                Export
+                            </button>
+<button class="flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-primary text-white text-sm font-bold shadow-lg shadow-primary/25 hover:bg-primary/90 transition-all">
+<span class="material-symbols-outlined text-[20px]">add</span>
+                                Create New Key
+                            </button>
+</div>
+</div>
+<!-- Stats Cards -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+<div class="bg-white dark:bg-surface-dark border border-slate-200 dark:border-surface-border rounded-xl p-5 flex flex-col gap-1 shadow-sm">
+<div class="flex items-center justify-between">
+<span class="text-slate-500 dark:text-slate-400 text-sm font-medium">Total Budget Spent</span>
+<span class="material-symbols-outlined text-emerald-500">trending_up</span>
+</div>
+<div class="flex items-baseline gap-2 mt-2">
+<span class="text-2xl font-bold text-slate-900 dark:text-white">$1,240.50</span>
+<span class="text-sm text-slate-500 dark:text-slate-400">/ $2,000.00</span>
+</div>
+<div class="w-full bg-surface-border h-1.5 rounded-full mt-3 overflow-hidden">
+<div class="bg-emerald-500 h-full rounded-full" style="width: 62%"></div>
+</div>
+</div>
+<div class="bg-white dark:bg-surface-dark border border-slate-200 dark:border-surface-border rounded-xl p-5 flex flex-col gap-1 shadow-sm">
+<div class="flex items-center justify-between">
+<span class="text-slate-500 dark:text-slate-400 text-sm font-medium">Active Keys</span>
+<span class="material-symbols-outlined text-primary">key</span>
+</div>
+<div class="flex items-baseline gap-2 mt-2">
+<span class="text-2xl font-bold text-slate-900 dark:text-white">14</span>
+<span class="text-sm text-emerald-500 font-medium">+2 this week</span>
+</div>
+<p class="text-xs text-slate-500 mt-2">Across 3 organizations</p>
+</div>
+<div class="bg-white dark:bg-surface-dark border border-slate-200 dark:border-surface-border rounded-xl p-5 flex flex-col gap-1 shadow-sm">
+<div class="flex items-center justify-between">
+<span class="text-slate-500 dark:text-slate-400 text-sm font-medium">System Status</span>
+<span class="material-symbols-outlined text-emerald-500">check_circle</span>
+</div>
+<div class="flex items-baseline gap-2 mt-2">
+<span class="text-2xl font-bold text-slate-900 dark:text-white">Operational</span>
+</div>
+<p class="text-xs text-slate-500 mt-2">All systems normal</p>
+</div>
+</div>
+<!-- Toolbar & Filters -->
+<div class="flex flex-col sm:flex-row gap-4 justify-between items-center bg-white dark:bg-surface-dark p-2 rounded-xl border border-slate-200 dark:border-surface-border">
+<!-- Search -->
+<div class="relative w-full sm:max-w-md">
+<div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+<span class="material-symbols-outlined text-slate-400">search</span>
+</div>
+<input class="block w-full pl-10 pr-3 py-2.5 border-none rounded-lg bg-transparent text-slate-900 dark:text-white placeholder-slate-400 focus:ring-0 sm:text-sm" placeholder="Search keys by name, prefix, or owner ID..." type="text"/>
+</div>
+<!-- Filters -->
+<div class="flex items-center gap-2 w-full sm:w-auto px-2">
+<div class="relative group">
+<button class="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-surface-border rounded-lg transition-colors">
+<span class="material-symbols-outlined text-[20px]">filter_list</span>
+                                    Status: All
+                                    <span class="material-symbols-outlined text-[16px]">expand_more</span>
+</button>
+</div>
+<div class="h-6 w-px bg-slate-200 dark:bg-surface-border"></div>
+<div class="relative group">
+<button class="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-surface-border rounded-lg transition-colors">
+<span class="material-symbols-outlined text-[20px]">admin_panel_settings</span>
+                                    Role: Any
+                                    <span class="material-symbols-outlined text-[16px]">expand_more</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Main Data Table -->
+<div class="overflow-hidden rounded-xl border border-slate-200 dark:border-surface-border bg-white dark:bg-surface-dark shadow-sm">
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead class="bg-slate-50 dark:bg-[#151b28] border-b border-slate-200 dark:border-surface-border">
+<tr>
+<th class="px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider" scope="col">Key Name / ID</th>
+<th class="px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider" scope="col">Owner &amp; Role</th>
+<th class="px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider w-1/4" scope="col">Monthly Budget</th>
+<th class="px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider" scope="col">Limits (RPM/TPM)</th>
+<th class="px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider" scope="col">Status</th>
+<th class="px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right" scope="col">Actions</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-200 dark:divide-surface-border">
+<!-- Row 1 -->
+<tr class="group hover:bg-slate-50 dark:hover:bg-[#1e2536] transition-colors">
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex flex-col">
+<span class="text-sm font-bold text-slate-900 dark:text-white">Production Main</span>
+<div class="flex items-center gap-1.5 mt-1">
+<span class="text-xs font-mono text-slate-500 bg-slate-100 dark:bg-black/30 px-1.5 py-0.5 rounded">sk-ant...89sA</span>
+<button class="text-slate-400 hover:text-primary transition-colors" title="Copy Key">
+<span class="material-symbols-outlined text-[14px]">content_copy</span>
+</button>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center gap-3">
+<div class="size-8 rounded-full bg-blue-900/50 flex items-center justify-center text-blue-200 text-xs font-bold border border-blue-500/20">ET</div>
+<div class="flex flex-col">
+<span class="text-sm font-medium text-slate-900 dark:text-white">Eng. Team</span>
+<span class="text-xs text-slate-500">Admin</span>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap align-middle">
+<div class="w-full flex flex-col gap-1.5">
+<div class="flex justify-between text-xs">
+<span class="text-slate-900 dark:text-white font-medium">$1,500</span>
+<span class="text-slate-500">of $2,000</span>
+</div>
+<div class="w-full bg-slate-200 dark:bg-surface-border h-2 rounded-full overflow-hidden">
+<div class="bg-primary h-full rounded-full" style="width: 75%"></div>
+</div>
+<span class="text-[10px] text-slate-500 text-right">75% Used</span>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex flex-col gap-1">
+<span class="text-xs text-slate-900 dark:text-white font-medium">5,000 RPM</span>
+<span class="text-xs text-slate-500">100k TPM</span>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+<span class="size-1.5 rounded-full bg-emerald-500"></span>
+                                                Active
+                                            </span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right">
+<div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-2 text-slate-400 hover:text-white hover:bg-surface-border rounded-lg transition-colors" title="Edit Limits">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+<button class="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors" title="Revoke Key">
+<span class="material-symbols-outlined text-[20px]">block</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="group hover:bg-slate-50 dark:hover:bg-[#1e2536] transition-colors">
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex flex-col">
+<span class="text-sm font-bold text-slate-900 dark:text-white">Marketing Bot</span>
+<div class="flex items-center gap-1.5 mt-1">
+<span class="text-xs font-mono text-slate-500 bg-slate-100 dark:bg-black/30 px-1.5 py-0.5 rounded">sk-ant...j2K9</span>
+<button class="text-slate-400 hover:text-primary transition-colors" title="Copy Key">
+<span class="material-symbols-outlined text-[14px]">content_copy</span>
+</button>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center gap-3">
+<div class="size-8 rounded-full bg-purple-900/50 flex items-center justify-center text-purple-200 text-xs font-bold border border-purple-500/20">MB</div>
+<div class="flex flex-col">
+<span class="text-sm font-medium text-slate-900 dark:text-white">Mark. Team</span>
+<span class="text-xs text-slate-500">Write Only</span>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap align-middle">
+<div class="w-full flex flex-col gap-1.5">
+<div class="flex justify-between text-xs">
+<span class="text-slate-900 dark:text-white font-medium">$24.00</span>
+<span class="text-slate-500">of $200.00</span>
+</div>
+<div class="w-full bg-slate-200 dark:bg-surface-border h-2 rounded-full overflow-hidden">
+<div class="bg-emerald-500 h-full rounded-full" style="width: 12%"></div>
+</div>
+<span class="text-[10px] text-slate-500 text-right">12% Used</span>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex flex-col gap-1">
+<span class="text-xs text-slate-900 dark:text-white font-medium">500 RPM</span>
+<span class="text-xs text-slate-500">10k TPM</span>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+<span class="size-1.5 rounded-full bg-emerald-500"></span>
+                                                Active
+                                            </span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right">
+<div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-2 text-slate-400 hover:text-white hover:bg-surface-border rounded-lg transition-colors" title="Edit Limits">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+<button class="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors" title="Revoke Key">
+<span class="material-symbols-outlined text-[20px]">block</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="group hover:bg-slate-50 dark:hover:bg-[#1e2536] transition-colors bg-slate-50/50 dark:bg-white/[0.02]">
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex flex-col">
+<span class="text-sm font-bold text-slate-500 dark:text-slate-400 line-through">Legacy App V1</span>
+<div class="flex items-center gap-1.5 mt-1">
+<span class="text-xs font-mono text-slate-500 bg-transparent px-1.5 py-0.5 rounded">sk-ant...99Lx</span>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center gap-3 opacity-50">
+<div class="size-8 rounded-full bg-slate-800 flex items-center justify-center text-slate-400 text-xs font-bold border border-slate-700">LA</div>
+<div class="flex flex-col">
+<span class="text-sm font-medium text-slate-400">System</span>
+<span class="text-xs text-slate-600">Read Only</span>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap align-middle opacity-50">
+<div class="w-full flex flex-col gap-1.5">
+<div class="flex justify-between text-xs">
+<span class="text-slate-400 font-medium">$0.00</span>
+<span class="text-slate-600">of $0.00</span>
+</div>
+<div class="w-full bg-slate-200 dark:bg-surface-border h-2 rounded-full overflow-hidden">
+<div class="bg-slate-500 h-full rounded-full" style="width: 0%"></div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap opacity-50">
+<div class="flex flex-col gap-1">
+<span class="text-xs text-slate-400 font-medium">0 RPM</span>
+<span class="text-xs text-slate-600">0 TPM</span>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 dark:bg-surface-border text-slate-500 border border-slate-200 dark:border-slate-700">
+<span class="size-1.5 rounded-full bg-slate-500"></span>
+                                                Revoked
+                                            </span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right">
+<div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-2 text-slate-400 hover:text-white hover:bg-surface-border rounded-lg transition-colors" title="Reactivate">
+<span class="material-symbols-outlined text-[20px]">refresh</span>
+</button>
+<button class="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors" title="Delete Permanently">
+<span class="material-symbols-outlined text-[20px]">delete</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="group hover:bg-slate-50 dark:hover:bg-[#1e2536] transition-colors">
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex flex-col">
+<span class="text-sm font-bold text-slate-900 dark:text-white">Research Beta</span>
+<div class="flex items-center gap-1.5 mt-1">
+<span class="text-xs font-mono text-slate-500 bg-slate-100 dark:bg-black/30 px-1.5 py-0.5 rounded">sk-ant...pP21</span>
+<button class="text-slate-400 hover:text-primary transition-colors" title="Copy Key">
+<span class="material-symbols-outlined text-[14px]">content_copy</span>
+</button>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center gap-3">
+<div class="size-8 rounded-full bg-orange-900/50 flex items-center justify-center text-orange-200 text-xs font-bold border border-orange-500/20">RS</div>
+<div class="flex flex-col">
+<span class="text-sm font-medium text-slate-900 dark:text-white">Research</span>
+<span class="text-xs text-slate-500">Full Access</span>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap align-middle">
+<div class="w-full flex flex-col gap-1.5">
+<div class="flex justify-between text-xs">
+<span class="text-slate-900 dark:text-white font-medium">$450.20</span>
+<span class="text-slate-500">of $500.00</span>
+</div>
+<div class="w-full bg-slate-200 dark:bg-surface-border h-2 rounded-full overflow-hidden">
+<div class="bg-orange-500 h-full rounded-full" style="width: 90%"></div>
+</div>
+<span class="text-[10px] text-orange-500 font-medium text-right">90% Warning</span>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex flex-col gap-1">
+<span class="text-xs text-slate-900 dark:text-white font-medium">1,000 RPM</span>
+<span class="text-xs text-slate-500">20k TPM</span>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+<span class="size-1.5 rounded-full bg-emerald-500"></span>
+                                                Active
+                                            </span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right">
+<div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-2 text-slate-400 hover:text-white hover:bg-surface-border rounded-lg transition-colors" title="Edit Limits">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+<button class="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors" title="Revoke Key">
+<span class="material-symbols-outlined text-[20px]">block</span>
+</button>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Pagination -->
+<div class="flex items-center justify-between px-6 py-4 border-t border-slate-200 dark:border-surface-border bg-slate-50 dark:bg-[#151b28]">
+<span class="text-sm text-slate-500 dark:text-slate-400">Showing 1 to 4 of 14 entries</span>
+<div class="flex items-center gap-2">
+<button class="px-3 py-1 text-sm text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white disabled:opacity-50" disabled="">Previous</button>
+<button class="px-3 py-1 text-sm text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white">Next</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

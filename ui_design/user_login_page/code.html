@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>User Login Page - Anthropic API Converter</title>
+<!-- Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Theme Configuration -->
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#2b6cee",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101622",
+                        "card-dark": "#1a202c", 
+                        "input-border": "#282e39",
+                        "input-bg": "#161b26",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"],
+                        "sans": ["Space Grotesk", "sans-serif"],
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem", 
+                        "lg": "0.5rem", 
+                        "xl": "0.75rem", 
+                        "2xl": "1rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+</head>
+<body class="relative flex h-full min-h-screen w-full flex-col bg-background-light dark:bg-background-dark overflow-x-hidden font-display antialiased selection:bg-primary/30 selection:text-white">
+<!-- Navbar / Header -->
+<header class="absolute top-0 left-0 w-full z-20 px-6 py-6 flex justify-between items-center">
+<!-- Logo -->
+<div class="flex items-center gap-3 text-white">
+<div class="size-10 bg-primary/10 rounded-xl flex items-center justify-center border border-primary/20 text-primary shadow-[0_0_15px_rgba(43,108,238,0.15)]">
+<span class="material-symbols-outlined" style="font-size: 24px;">transform</span>
+</div>
+<h2 class="text-white text-lg font-bold leading-tight tracking-[-0.015em] hidden sm:block">anthropic_api_converter</h2>
+</div>
+<!-- Language Switcher -->
+<button class="group flex items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-card-dark border border-input-border text-white text-sm font-medium hover:border-primary/50 hover:text-primary transition-all duration-200 shadow-sm">
+<span class="material-symbols-outlined mr-2 text-[18px] text-gray-400 group-hover:text-primary">language</span>
+<span class="truncate">English / 中文</span>
+</button>
+</header>
+<!-- Main Content Area -->
+<div class="layout-container flex h-full grow flex-col items-center justify-center p-4 relative">
+<!-- Background Ambient Glow -->
+<div class="absolute pointer-events-none inset-0 flex items-center justify-center overflow-hidden">
+<div class="w-[600px] h-[600px] bg-primary/5 rounded-full blur-[100px] absolute -translate-y-1/4"></div>
+</div>
+<!-- Login Card -->
+<div class="relative w-full max-w-[440px] flex flex-col bg-card-dark border border-input-border rounded-2xl shadow-2xl z-10 overflow-hidden">
+<!-- Decorative Top Bar -->
+<div class="h-1 w-full bg-gradient-to-r from-primary via-blue-400 to-primary"></div>
+<div class="p-8 pb-6">
+<!-- Header Section -->
+<div class="flex flex-col gap-2 mb-8">
+<div class="flex items-center gap-2 text-primary mb-2">
+<span class="material-symbols-outlined">admin_panel_settings</span>
+<span class="text-xs font-bold uppercase tracking-wider text-primary/80">Secure Access</span>
+</div>
+<h1 class="text-white tracking-tight text-3xl font-bold leading-tight">Admin Portal</h1>
+<p class="text-gray-400 text-base font-normal leading-normal">Enter your Master Key to manage the converter API.</p>
+</div>
+<!-- Form Section -->
+<div class="flex flex-col gap-6">
+<!-- Master Key Input -->
+<label class="flex flex-col w-full group">
+<div class="flex justify-between items-baseline">
+<p class="text-gray-300 text-sm font-medium leading-normal pb-2 ml-1">Master Key</p>
+</div>
+<div class="flex w-full items-stretch rounded-lg relative">
+<!-- Input Icon -->
+<div class="absolute left-0 top-0 h-12 w-12 flex items-center justify-center text-gray-500 z-10 pointer-events-none">
+<span class="material-symbols-outlined text-[20px]">vpn_key</span>
+</div>
+<input class="flex w-full min-w-0 flex-1 resize-none overflow-hidden rounded-lg text-white placeholder:text-gray-600 focus:outline-0 focus:ring-2 focus:ring-primary/50 border border-input-border bg-input-bg focus:border-primary h-12 pl-11 pr-12 text-base font-normal leading-normal transition-all duration-200" placeholder="sk-ant-..." type="password" value=""/>
+<!-- Toggle Visibility Button -->
+<button aria-label="Toggle password visibility" class="absolute right-0 top-0 h-12 w-12 flex items-center justify-center text-gray-500 hover:text-white cursor-pointer transition-colors rounded-r-lg focus:outline-none">
+<span class="material-symbols-outlined text-[20px]">visibility</span>
+</button>
+</div>
+</label>
+<!-- Status/Error Message Placeholder (Hidden by default, shown for design context) -->
+<!-- <div class="flex items-center gap-2 text-red-400 text-sm bg-red-500/10 p-3 rounded-lg border border-red-500/20">
+                        <span class="material-symbols-outlined text-[18px]">error</span>
+                        <span>Invalid Master Key provided.</span>
+                    </div> -->
+<!-- Login Button -->
+<button class="flex w-full cursor-pointer items-center justify-center overflow-hidden rounded-lg h-12 px-5 bg-primary hover:bg-blue-600 active:bg-blue-700 text-white text-base font-bold leading-normal tracking-[0.015em] transition-all duration-200 shadow-[0_4px_14px_0_rgba(43,108,238,0.39)] hover:shadow-[0_6px_20px_rgba(43,108,238,0.23)]">
+<span class="mr-2">Login</span>
+<span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+</button>
+</div>
+</div>
+<!-- Footer Section -->
+<div class="bg-[#161b26]/50 p-4 border-t border-input-border flex justify-center">
+<p class="text-gray-500 text-xs font-normal leading-normal text-center">
+                    © 2024 anthropic_api_converter. v1.0.0
+                </p>
+</div>
+</div>
+<!-- Help Link -->
+<div class="mt-8 flex gap-4 text-sm text-gray-500">
+<a class="hover:text-primary transition-colors flex items-center gap-1" href="#">
+<span class="material-symbols-outlined text-[16px]">help</span>
+                Need help?
+            </a>
+<span class="text-gray-700">|</span>
+<a class="hover:text-primary transition-colors" href="#">Privacy Policy</a>
+</div>
+</div>
+</body></html>

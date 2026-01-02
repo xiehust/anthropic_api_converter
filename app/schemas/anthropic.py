@@ -101,6 +101,7 @@ class ToolResultContent(BaseModel):
     tool_use_id: str
     content: Union[str, List[Union[TextContent, ImageContent]]]
     is_error: Optional[bool] = None
+    cache_control: Optional["CacheControl"] = None
 
 
 # Union of all content types

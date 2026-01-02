@@ -37,6 +37,8 @@ dependencies = [
     "pytest>=8.4.2",
     # Docker SDK (for Programmatic Tool Calling)
     "docker>=7.0.0",
+    # JWT validation (for Admin Portal Cognito auth)
+    "python-jose[cryptography]>=3.3.0",
 ]
 
 [project.optional-dependencies]

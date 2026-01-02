@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     dynamodb_model_mapping_table: str = Field(
         default="anthropic-proxy-model-mapping", alias="DYNAMODB_MODEL_MAPPING_TABLE"
     )
+    dynamodb_model_pricing_table: str = Field(
+        default="anthropic-proxy-model-pricing", alias="DYNAMODB_MODEL_PRICING_TABLE"
+    )
+    dynamodb_usage_stats_table: str = Field(
+        default="anthropic-proxy-usage-stats", alias="DYNAMODB_USAGE_STATS_TABLE"
+    )
     usage_ttl_days: int = Field(
         default=7,
         alias="USAGE_TTL_DAYS",

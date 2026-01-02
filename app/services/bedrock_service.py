@@ -198,13 +198,24 @@ class BedrockService:
             if isinstance(request.system, str):
                 native_request["system"] = request.system
             else:
-                # Convert list of SystemMessage to string or list format
+                # Convert list of SystemMessage to native format, preserving cache_control
                 system_parts = []
                 for sys_msg in request.system:
-                    if hasattr(sys_msg, "text"):
-                        system_parts.append({"type": "text", "text": sys_msg.text})
+                    if hasattr(sys_msg, "model_dump"):
+                        # Use model_dump to preserve all fields including cache_control
+                        system_parts.append(sys_msg.model_dump(exclude_none=True))
                     elif isinstance(sys_msg, dict):
                         system_parts.append(sys_msg)
+                    elif hasattr(sys_msg, "text"):
+                        # Fallback for objects without model_dump
+                        sys_dict: Dict[str, Any] = {"type": "text", "text": sys_msg.text}
+                        if hasattr(sys_msg, "cache_control") and sys_msg.cache_control:
+                            cc = sys_msg.cache_control
+                            if hasattr(cc, "model_dump"):
+                                sys_dict["cache_control"] = cc.model_dump(exclude_none=True)
+                            else:
+                                sys_dict["cache_control"] = cc
+                        system_parts.append(sys_dict)
                 native_request["system"] = system_parts
 
         # Add optional parameters
@@ -255,7 +266,7 @@ class BedrockService:
                         tools_list.append(tool_copy)
                         continue
                     # Regular tool conversion
-                    tool_dict = {
+                    tool_dict: Dict[str, Any] = {
                         "name": tool.get("name"),
                         "description": tool.get("description", ""),
                         "input_schema": tool.get("input_schema", {}),
@@ -266,6 +277,9 @@ class BedrockService:
                     # Include defer_loading if present (for tool search beta)
                     if tool.get("defer_loading") is not None:
                         tool_dict["defer_loading"] = tool["defer_loading"]
+                    # Include cache_control if present (for prompt caching)
+                    if tool.get("cache_control"):
+                        tool_dict["cache_control"] = tool["cache_control"]
                     tools_list.append(tool_dict)
                 elif hasattr(tool, "name"):
                     tool_type = getattr(tool, "type", None)
@@ -285,18 +299,25 @@ class BedrockService:
                         tools_list.append(tool_data)
                         continue
                     # Regular tool conversion
-                    tool_dict = {
+                    tool_dict_obj: Dict[str, Any] = {
                         "name": tool.name,
                         "description": tool.description,
                         "input_schema": tool.input_schema.model_dump() if hasattr(tool.input_schema, "model_dump") else tool.input_schema,
                     }
                     # Include input_examples if present
                     if hasattr(tool, "input_examples") and tool.input_examples:
-                        tool_dict["input_examples"] = tool.input_examples
+                        tool_dict_obj["input_examples"] = tool.input_examples
                     # Include defer_loading if present
                     if hasattr(tool, "defer_loading") and tool.defer_loading is not None:
-                        tool_dict["defer_loading"] = tool.defer_loading
-                    tools_list.append(tool_dict)
+                        tool_dict_obj["defer_loading"] = tool.defer_loading
+                    # Include cache_control if present (for prompt caching)
+                    if hasattr(tool, "cache_control") and tool.cache_control:
+                        cc = tool.cache_control
+                        if hasattr(cc, "model_dump"):
+                            tool_dict_obj["cache_control"] = cc.model_dump(exclude_none=True)
+                        else:
+                            tool_dict_obj["cache_control"] = cc
+                    tools_list.append(tool_dict_obj)
 
             if tools_list:
                 native_request["tools"] = tools_list
@@ -986,11 +1007,21 @@ class BedrockService:
                         sse_event = f"event: {event_type}\ndata: {json.dumps(event_data)}\n\n"
                         event_queue.put(("event", sse_event))
 
-                        # Log message_start for debugging
+                        # Log message_start and usage info for debugging
                         if event_type == "message_start":
+                            message = event_data.get("message", {})
+                            usage = message.get("usage", {})
                             print(f"[BEDROCK STREAM NATIVE] message_start received")
+                            print(f"  - input_tokens: {usage.get('input_tokens', 0)}")
+                            if usage.get("cache_read_input_tokens"):
+                                print(f"  - cache_read_input_tokens: {usage.get('cache_read_input_tokens')}")
+                            if usage.get("cache_creation_input_tokens"):
+                                print(f"  - cache_creation_input_tokens: {usage.get('cache_creation_input_tokens')}")
                         elif event_type == "message_delta":
-                            print(f"[BEDROCK STREAM NATIVE] message_delta: stop_reason={event_data.get('delta', {}).get('stop_reason')}")
+                            delta = event_data.get("delta", {})
+                            usage = event_data.get("usage", {})
+                            print(f"[BEDROCK STREAM NATIVE] message_delta: stop_reason={delta.get('stop_reason')}")
+                            print(f"  - output_tokens: {usage.get('output_tokens', 0)}")
 
             print(f"[BEDROCK STREAM NATIVE] Stream completed")
             event_queue.put(("done", None))

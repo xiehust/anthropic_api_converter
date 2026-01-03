@@ -345,6 +345,19 @@ Next Steps:
   3. Create admin user: ./scripts/create-admin-user.sh -e prod -r us-west-2 --email <admin@example.com>
 ```
 
+#### 4. Create an Admin Portal login account and temporary password
+- In the `cdk/` directory:
+```shell
+./scripts/create-admin-user.sh -e prod -r us-west-2 --email <admin@example.com>
+```
+
+#### 5. Access the Admin Portal using the username and temporary password above
+Upon first login, you will be prompted to change your password.
+Admin Portal: http://anthropic-proxy-prod-alb-xxxx.us-west-2.elb.amazonaws.com/admin/
+
+#### 6. Create API keys, set pricing, budget, and other settings via the interface
+![alt text](./admin_portal/image_admin1.png)
+
 **Create API Key Examples:**
 
 ```bash

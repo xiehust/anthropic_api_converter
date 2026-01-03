@@ -164,7 +164,7 @@ if [[ "$LAUNCH_TYPE" == "ec2" ]]; then
         if [[ "$PLATFORM" == "arm64" ]]; then
             echo -e "  Instance Type: ${YELLOW}t4g.large (ARM64 Graviton)${NC}"
         else
-            echo -e "  Instance Type: ${YELLOW}t3.xwlarge (x86_64)${NC}"
+            echo -e "  Instance Type: ${YELLOW}t3.large (x86_64)${NC}"
         fi
         echo -e "  Spot Instances: ${YELLOW}No (production stability)${NC}"
     fi
@@ -298,9 +298,31 @@ else
         --query 'Stacks[0].Outputs[?OutputKey==`MasterAPIKeySecretName`].OutputValue' \
         --output text 2>/dev/null || echo "N/A")
 
+    ADMIN_PORTAL_URL=$(aws cloudformation describe-stacks \
+        --stack-name "AnthropicProxy-${ENVIRONMENT}-ECS" \
+        --region "$REGION" \
+        --query 'Stacks[0].Outputs[?OutputKey==`AdminPortalURL`].OutputValue' \
+        --output text 2>/dev/null || echo "N/A")
+
+    # Get Cognito outputs (if Cognito stack exists)
+    COGNITO_USER_POOL_ID=$(aws cloudformation describe-stacks \
+        --stack-name "AnthropicProxy-${ENVIRONMENT}-Cognito" \
+        --region "$REGION" \
+        --query 'Stacks[0].Outputs[?OutputKey==`UserPoolId`].OutputValue' \
+        --output text 2>/dev/null || echo "N/A")
+
+    COGNITO_CLIENT_ID=$(aws cloudformation describe-stacks \
+        --stack-name "AnthropicProxy-${ENVIRONMENT}-Cognito" \
+        --region "$REGION" \
+        --query 'Stacks[0].Outputs[?OutputKey==`UserPoolClientId`].OutputValue' \
+        --output text 2>/dev/null || echo "N/A")
+
     echo
     echo -e "${GREEN}Access URLs:${NC}"
-    echo -e "  ALB: http://${ALB_DNS}"
+    echo -e "  API Proxy: http://${ALB_DNS}"
+    if [[ "$ADMIN_PORTAL_URL" != "N/A" ]]; then
+        echo -e "  Admin Portal: ${ADMIN_PORTAL_URL}"
+    fi
     echo
     echo -e "${GREEN}Deployment Configuration:${NC}"
     echo -e "  Launch Type: ${LAUNCH_TYPE_OUTPUT}"
@@ -309,6 +331,16 @@ else
     echo -e "${GREEN}Master API Key Secret:${NC}"
     echo -e "  Secret Name: ${SECRET_NAME}"
     echo -e "  Retrieve with: aws secretsmanager get-secret-value --secret-id ${SECRET_NAME} --region ${REGION}"
+
+    # Display Cognito info if available
+    if [[ "$COGNITO_USER_POOL_ID" != "N/A" ]]; then
+        echo
+        echo -e "${GREEN}Cognito (Admin Portal Authentication):${NC}"
+        echo -e "  User Pool ID: ${COGNITO_USER_POOL_ID}"
+        echo -e "  Client ID: ${COGNITO_CLIENT_ID}"
+        echo -e "  Region: ${REGION}"
+    fi
+
     echo
     echo -e "${YELLOW}Next Steps:${NC}"
     echo -e "  1. Create API keys using: ./scripts/create-api-key.sh"
@@ -316,7 +348,10 @@ else
     if [[ "$PTC_ENABLED" == "true" ]]; then
         echo -e "  3. Test PTC health: curl http://${ALB_DNS}/health/ptc"
     fi
-    echo -e "  4. Review CloudWatch logs in the AWS Console"
+    if [[ "$COGNITO_USER_POOL_ID" != "N/A" ]]; then
+        echo -e "  4. Create admin user: ./scripts/create-admin-user.sh -e ${ENVIRONMENT} -r ${REGION} --email <admin@example.com>"
+    fi
+    echo -e "  5. Review CloudWatch logs in the AWS Console"
 fi
 
 echo -e "${GREEN}========================================${NC}"

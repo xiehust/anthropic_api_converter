@@ -72,6 +72,9 @@ export class CognitoStack extends cdk.Stack {
     });
 
     // Create App Client (for SPA - no client secret)
+    // Note: This app uses USER_PASSWORD_AUTH and USER_SRP_AUTH flows (direct SDK auth),
+    // NOT OAuth redirects. The callback/logout URLs below are only needed if using
+    // the Cognito hosted UI. Since we use direct auth, these are for development only.
     this.userPoolClient = this.userPool.addClient('AdminPortalClient', {
       userPoolClientName: `admin-portal-${config.environmentName}`,
       generateSecret: false, // SPA cannot keep secrets
@@ -89,15 +92,16 @@ export class CognitoStack extends cdk.Stack {
           cognito.OAuthScope.OPENID,
           cognito.OAuthScope.PROFILE,
         ],
+        // Note: Cognito does NOT support wildcard callback URLs.
+        // These localhost URLs are for development. For production with custom domains,
+        // add the specific domain URL via AWS Console or update this after deployment.
         callbackUrls: [
-          'http://localhost:5173/admin/', // Local development
-          'http://localhost:8005/admin/', // Local backend
-          `https://*.${config.region}.elb.amazonaws.com/admin/`, // ALB (wildcard)
+          'http://localhost:5173/admin/', // Local Vite dev server
+          'http://localhost:8005/admin/', // Local backend dev server
         ],
         logoutUrls: [
           'http://localhost:5173/admin/',
           'http://localhost:8005/admin/',
-          `https://*.${config.region}.elb.amazonaws.com/admin/`,
         ],
       },
       accessTokenValidity: cdk.Duration.hours(1),

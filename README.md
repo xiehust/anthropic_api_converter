@@ -63,6 +63,11 @@
 - **速率限制**：每个 API 密钥的令牌桶算法
 - **使用跟踪**：全面的分析和令牌使用跟踪
 - **服务层级**：支持 Bedrock Service Tier 配置，平衡成本和延迟
+- **Admin Portal**：Web 管理界面，支持 API 密钥管理、用量监控、预算控制
+  - Cognito 认证保护，支持用户密码和 SRP 认证
+  - 实时查看 API 密钥使用统计（输入/输出/缓存 Token）
+  - 模型定价配置和成本追踪
+  - 预算限制与自动停用功能
 
 ### 支持的模型
 - Claude 4.5/5 Sonnet
@@ -389,16 +394,28 @@ npm install
 
 部署大约需要 **15-20 分钟**。
 
-#### 3. 您可以找到 ALB 的端点 URL。
-![alt text](assets/image.png)
+#### 3. 部署输出
+
+部署完成后，您将看到以下输出信息：
 
 ```text
-主 API 密钥密钥：
-  密钥名称：anthropic-proxy-prod-master-api-key
-  检索命令：aws secretsmanager get-secret-value --secret-id anthropic-proxy-prod-master-api-key --region us-west-2
+Access URLs:
+  API Proxy: http://anthropic-proxy-prod-alb-xxxx.us-west-2.elb.amazonaws.com
+  Admin Portal: http://anthropic-proxy-prod-alb-xxxx.us-west-2.elb.amazonaws.com/admin/
 
-后续步骤：
-  1. 使用以下命令创建 API 密钥：./scripts/create-api-key.sh
+Cognito (Admin Portal Authentication):
+  User Pool ID: us-west-2_xxxxxxxxx
+  Client ID: xxxxxxxxxxxxxxxxxxxxxxxxxx
+  Region: us-west-2
+
+Master API Key Secret:
+  Secret Name: anthropic-proxy-prod-master-api-key
+  Retrieve with: aws secretsmanager get-secret-value --secret-id anthropic-proxy-prod-master-api-key --region us-west-2
+
+Next Steps:
+  1. Create API keys using: ./scripts/create-api-key.sh
+  2. Test the health endpoint: curl http://<alb-dns>/health
+  3. Create admin user: ./scripts/create-admin-user.sh -e prod -r us-west-2 --email <admin@example.com>
 ```
 
 **创建 API 密钥示例：**

@@ -2,6 +2,7 @@
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta
+from typing import Union
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
@@ -12,6 +13,30 @@ from app.core.config import settings
 from admin_portal.backend.schemas.dashboard import DashboardStats
 
 router = APIRouter()
+
+
+def _parse_timestamp(value: Union[int, str, None]) -> int:
+    """
+    Parse a timestamp value that can be either an integer (Unix timestamp)
+    or an ISO format string.
+
+    Args:
+        value: Unix timestamp (int) or ISO string (e.g., '2026-01-03T13:02:42Z')
+
+    Returns:
+        Unix timestamp as integer, or 0 if parsing fails
+    """
+    if value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            return int(dt.timestamp())
+        except (ValueError, AttributeError):
+            return 0
+    return 0
 
 
 def _resolve_model_id(
@@ -73,7 +98,7 @@ async def get_dashboard_stats():
 
     # Count new keys this week
     week_ago = int((datetime.now() - timedelta(days=7)).timestamp())
-    new_keys_this_week = sum(1 for k in all_keys if k.get("created_at", 0) > week_ago)
+    new_keys_this_week = sum(1 for k in all_keys if _parse_timestamp(k.get("created_at")) > week_ago)
 
     # Get model pricing stats
     pricing_result = pricing_manager.list_all_pricing(limit=1000)

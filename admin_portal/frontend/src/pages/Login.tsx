@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../hooks';
 
 export default function Login() {
   const { t, i18n } = useTranslation();
-  const { login, completeNewPassword, loading, error, isNewPasswordRequired } = useAuth();
+  const { login, completeNewPassword, loading, error, isNewPasswordRequired, sessionExpired, clearSessionExpired } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -13,9 +13,20 @@ export default function Login() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
 
+  // Auto-clear session expired message after 5 seconds
+  useEffect(() => {
+    if (sessionExpired) {
+      const timer = setTimeout(() => {
+        clearSessionExpired();
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [sessionExpired, clearSessionExpired]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setPasswordError(null);
+    clearSessionExpired(); // Clear any session expired message on login attempt
     await login(username, password);
   };
 
@@ -85,6 +96,23 @@ export default function Login() {
           <div className="h-1 w-full bg-gradient-to-r from-primary via-blue-400 to-primary"></div>
 
           <div className="p-8 pb-6">
+            {/* Session Expired Banner */}
+            {sessionExpired && (
+              <div className="flex items-center gap-3 text-amber-400 text-sm bg-amber-500/10 p-4 rounded-lg border border-amber-500/20 mb-6 animate-pulse">
+                <span className="material-symbols-outlined text-[20px]">schedule</span>
+                <div className="flex-1">
+                  <p className="font-medium">{t('auth.sessionExpired', 'Session Expired')}</p>
+                  <p className="text-amber-400/70 text-xs mt-0.5">{t('auth.sessionExpiredMessage', 'Your session has expired. Please login again.')}</p>
+                </div>
+                <button
+                  onClick={clearSessionExpired}
+                  className="text-amber-400/70 hover:text-amber-400 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[18px]">close</span>
+                </button>
+              </div>
+            )}
+
             {/* Header Section */}
             <div className="flex flex-col gap-2 mb-8">
               <div className="flex items-center gap-2 text-primary mb-2">

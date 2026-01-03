@@ -1,7 +1,63 @@
 import * as cdk from 'aws-cdk-lib';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as cr from 'aws-cdk-lib/custom-resources';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
 import { EnvironmentConfig } from '../config/config';
+
+// Default model pricing data to seed on table creation
+const DEFAULT_PRICING = [
+  {
+    model_id: 'anthropic.claude-3-5-haiku-20241022-v1:0',
+    provider: 'Anthropic',
+    display_name: 'Claude 3.5 Haiku',
+    input_price: '0.80',
+    output_price: '4.00',
+    cache_read_price: '0.08',
+    cache_write_price: '1.00',
+    status: 'active',
+  },
+  {
+    model_id: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+    provider: 'Anthropic',
+    display_name: 'Claude Haiku 4.5',
+    input_price: '1.00',
+    output_price: '5.00',
+    cache_read_price: '0.10',
+    cache_write_price: '1.25',
+    status: 'active',
+  },
+  {
+    model_id: 'global.anthropic.claude-opus-4-5-20251101-v1:0',
+    provider: 'Anthropic',
+    display_name: 'Claude Opus 4.5',
+    input_price: '5.00',
+    output_price: '25.00',
+    cache_read_price: '0.50',
+    cache_write_price: '6.25',
+    status: 'active',
+  },
+  {
+    model_id: 'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    provider: 'Anthropic',
+    display_name: 'Claude Sonnet 4.5',
+    input_price: '3.00',
+    output_price: '15.00',
+    cache_read_price: '0.30',
+    cache_write_price: '3.75',
+    status: 'active',
+  },
+  {
+    model_id: 'minimax.minimax-m2',
+    provider: 'MiniMax',
+    display_name: 'minimax.minimax-m2',
+    input_price: '0.15',
+    output_price: '0.60',
+    cache_read_price: '0.00',
+    cache_write_price: '0.00',
+    status: 'active',
+  },
+];
 
 export interface DynamoDBStackProps extends cdk.StackProps {
   config: EnvironmentConfig;
@@ -137,6 +193,10 @@ export class DynamoDBStack extends cdk.Stack {
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
     });
 
+    // Seed default pricing data using custom resource
+    // This runs on CREATE only, won't overwrite existing data on UPDATE
+    this.seedDefaultPricing(config);
+
     // Apply tags to all tables
     Object.entries(config.tags).forEach(([key, value]) => {
       cdk.Tags.of(this.apiKeysTable).add(key, value);
@@ -170,6 +230,52 @@ export class DynamoDBStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ModelPricingTableName', {
       value: this.modelPricingTable.tableName,
       description: 'Model Pricing DynamoDB Table Name',
+    });
+  }
+
+  /**
+   * Seeds default pricing data using AWS Custom Resource.
+   * This runs on CREATE only, won't overwrite existing data on UPDATE.
+   */
+  private seedDefaultPricing(config: EnvironmentConfig): void {
+    // Create individual PutItem calls for each pricing entry
+    // Using separate custom resources to handle each item
+    DEFAULT_PRICING.forEach((pricing, index) => {
+      const putItemParams = {
+        TableName: this.modelPricingTable.tableName,
+        Item: {
+          model_id: { S: pricing.model_id },
+          provider: { S: pricing.provider },
+          display_name: { S: pricing.display_name },
+          input_price: { S: pricing.input_price },
+          output_price: { S: pricing.output_price },
+          cache_read_price: { S: pricing.cache_read_price },
+          cache_write_price: { S: pricing.cache_write_price },
+          status: { S: pricing.status },
+        },
+        // Only put if item doesn't exist (avoid overwriting)
+        ConditionExpression: 'attribute_not_exists(model_id)',
+      };
+
+      new cr.AwsCustomResource(this, `SeedPricing${index}`, {
+        onCreate: {
+          service: 'DynamoDB',
+          action: 'putItem',
+          parameters: putItemParams,
+          physicalResourceId: cr.PhysicalResourceId.of(
+            `seed-pricing-${pricing.model_id}`
+          ),
+          // Ignore ConditionalCheckFailedException (item already exists)
+          ignoreErrorCodesMatching: 'ConditionalCheckFailedException',
+        },
+        policy: cr.AwsCustomResourcePolicy.fromStatements([
+          new iam.PolicyStatement({
+            actions: ['dynamodb:PutItem'],
+            resources: [this.modelPricingTable.tableArn],
+          }),
+        ]),
+        installLatestAwsSdk: false,
+      });
     });
   }
 }

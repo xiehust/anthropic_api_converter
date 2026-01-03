@@ -55,6 +55,16 @@ DEFAULT_PRICING = [
         "cache_read_price": Decimal("0.30"),
         "cache_write_price": Decimal("3.75"),
         "status": "active",
+    },
+    {
+        "model_id": "minimax.minimax-m2",
+        "provider": "MiniMax",
+        "display_name": "minimax.minimax-m2",
+        "input_price": Decimal("0.15"),
+        "output_price": Decimal("0.6"),
+        "cache_read_price": Decimal("0.00"),
+        "cache_write_price": Decimal("0.00"),
+        "status": "active",
     }
 ]
 

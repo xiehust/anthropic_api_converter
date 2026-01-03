@@ -14,7 +14,7 @@ ENVIRONMENT="prod"
 REGION="${AWS_REGION:-us-west-2}"
 USER_ID=""
 KEY_NAME=""
-RATE_LIMIT=""
+RATE_LIMIT="1000"
 SERVICE_TIER="default"
 
 # Usage

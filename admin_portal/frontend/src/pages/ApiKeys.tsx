@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   useApiKeys,
@@ -64,9 +64,9 @@ function ApiKeyForm({
   const [formData, setFormData] = useState({
     user_id: initialData?.user_id || '',
     name: initialData?.name || '',
-    owner_name: initialData?.owner_name || '',
+    // Use owner_name if set, otherwise fall back to user_id (same as list display)
+    owner_name: initialData?.owner_name || initialData?.user_id || '',
     monthly_budget: initialData?.monthly_budget || 0,
-    tpm_limit: initialData?.tpm_limit || 100000,
     rate_limit: initialData?.rate_limit || 1000,
     service_tier: initialData?.service_tier || 'default',
   });
@@ -136,20 +136,6 @@ function ApiKeyForm({
 
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-1">
-            {t('apiKeys.form.tpmLimit')}
-          </label>
-          <input
-            type="number"
-            value={formData.tpm_limit}
-            onChange={(e) =>
-              setFormData({ ...formData, tpm_limit: parseInt(e.target.value) || 0 })
-            }
-            className="w-full px-3 py-2 bg-input-bg border border-border-dark rounded-lg text-white focus:border-primary focus:ring-1 focus:ring-primary"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-1">
             {t('apiKeys.form.rateLimit')}
           </label>
           <input
@@ -211,6 +197,7 @@ export default function ApiKeys() {
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingKey, setEditingKey] = useState<ApiKey | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const { data, isLoading, error } = useApiKeys({
     status: statusFilter || undefined,
@@ -252,9 +239,31 @@ export default function ApiKeys() {
     }
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-  };
+  const copyToClipboard = useCallback(async (text: string) => {
+    try {
+      // Try modern Clipboard API first (requires HTTPS)
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // Fallback for HTTP: use textarea + execCommand
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      // Show success feedback
+      setCopiedKey(text);
+      setTimeout(() => setCopiedKey(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  }, []);
 
   const getInitials = (name: string) => {
     return name
@@ -531,11 +540,15 @@ export default function ApiKeys() {
                             </span>
                             <button
                               onClick={() => copyToClipboard(key.api_key)}
-                              className="text-slate-400 hover:text-primary transition-colors"
-                              title={t('apiKeys.copyKey')}
+                              className={`transition-colors ${
+                                copiedKey === key.api_key
+                                  ? 'text-green-400'
+                                  : 'text-slate-400 hover:text-primary'
+                              }`}
+                              title={copiedKey === key.api_key ? t('apiKeys.copied') : t('apiKeys.copyKey')}
                             >
                               <span className="material-symbols-outlined text-[14px]">
-                                content_copy
+                                {copiedKey === key.api_key ? 'check' : 'content_copy'}
                               </span>
                             </button>
                           </div>
@@ -570,6 +583,24 @@ export default function ApiKeys() {
                               {((key.total_output_tokens || 0) / 1000).toFixed(1)}k
                             </span>
                             <span className="text-xs text-slate-500">{t('apiKeys.outputTokens')}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="material-symbols-outlined text-[14px] text-purple-400">
+                              cached
+                            </span>
+                            <span className="text-xs text-white font-medium">
+                              {((key.total_cached_tokens || 0) / 1000).toFixed(1)}k
+                            </span>
+                            <span className="text-xs text-slate-500">{t('apiKeys.cacheRead')}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="material-symbols-outlined text-[14px] text-amber-400">
+                              edit_note
+                            </span>
+                            <span className="text-xs text-white font-medium">
+                              {((key.total_cache_write_tokens || 0) / 1000).toFixed(1)}k
+                            </span>
+                            <span className="text-xs text-slate-500">{t('apiKeys.cacheWrite')}</span>
                           </div>
                           <span className="text-[10px] text-slate-500">
                             {(key.total_requests || 0).toLocaleString()} {t('apiKeys.requests')}
@@ -630,14 +661,9 @@ export default function ApiKeys() {
                         })()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex flex-col gap-1">
-                          <span className="text-xs text-white font-medium">
-                            {(key.rate_limit || 0).toLocaleString()} req/min
-                          </span>
-                          <span className="text-xs text-slate-500">
-                            {((key.tpm_limit || 0) / 1000).toFixed(0)}k TPM
-                          </span>
-                        </div>
+                        <span className="text-xs text-white font-medium">
+                          {(key.rate_limit || 0).toLocaleString()} req/min
+                        </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap hidden lg:table-cell">
                         <span className={`px-2 py-0.5 rounded text-xs font-medium ${

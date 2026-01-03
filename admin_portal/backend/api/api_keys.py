@@ -64,10 +64,14 @@ async def list_api_keys(
         if stats:
             item["total_input_tokens"] = int(stats.get("total_input_tokens", 0))
             item["total_output_tokens"] = int(stats.get("total_output_tokens", 0))
+            item["total_cached_tokens"] = int(stats.get("total_cached_tokens", 0))
+            item["total_cache_write_tokens"] = int(stats.get("total_cache_write_tokens", 0))
             item["total_requests"] = int(stats.get("total_requests", 0))
         else:
             item["total_input_tokens"] = 0
             item["total_output_tokens"] = 0
+            item["total_cached_tokens"] = 0
+            item["total_cache_write_tokens"] = 0
             item["total_requests"] = 0
 
     return ApiKeyListResponse(
@@ -113,7 +117,6 @@ async def create_api_key(request: ApiKeyCreate):
         owner_name=request.owner_name,
         role=request.role,
         monthly_budget=request.monthly_budget,
-        tpm_limit=request.tpm_limit,
         rate_limit=request.rate_limit,
         service_tier=request.service_tier,
     )
@@ -152,8 +155,31 @@ async def update_api_key(api_key: str, request: ApiKeyUpdate):
                 detail="Failed to update API key",
             )
 
-    # Return updated key
+    # Get updated key
     item = api_key_manager.get_api_key(api_key)
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve updated API key",
+        )
+
+    # Check if budget was lowered and MTD now exceeds it
+    # This handles the case where admin lowers the budget below current MTD usage
+    if request.monthly_budget is not None and item.get("is_active", False):
+        new_budget = float(request.monthly_budget)
+        current_mtd = float(item.get("budget_used_mtd", 0) or 0)
+
+        if new_budget > 0 and current_mtd >= new_budget:
+            # Deactivate the key for budget exceeded
+            api_key_manager.deactivate_for_budget_exceeded(api_key)
+            # Refresh the item to get updated status
+            item = api_key_manager.get_api_key(api_key)
+            if not item:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to retrieve API key after deactivation",
+                )
+
     return ApiKeyResponse(**item)
 
 

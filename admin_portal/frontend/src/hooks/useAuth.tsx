@@ -5,6 +5,7 @@
  * password change, and session management.
  *
  * Uses React Context to share auth state across all components.
+ * Listens for auth error events from API service to handle session expiration.
  */
 import { useState, useEffect, useCallback, createContext, useContext, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -17,6 +18,7 @@ import {
   AuthUser,
 } from 'aws-amplify/auth';
 import { isAmplifyConfigured } from '../config/amplify';
+import { AUTH_ERROR_EVENT } from '../services/api';
 
 export type AuthState = 'idle' | 'loading' | 'authenticated' | 'unauthenticated' | 'newPasswordRequired';
 
@@ -34,11 +36,13 @@ interface AuthContextValue {
   loading: boolean;
   error: string | null;
   isNewPasswordRequired: boolean;
+  sessionExpired: boolean;
   login: (username: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<boolean>;
   completeNewPassword: (newPassword: string) => Promise<boolean>;
   getAccessToken: () => Promise<string | null>;
+  clearSessionExpired: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -48,6 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUserInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const navigate = useNavigate();
 
   // Check current authentication status
@@ -88,6 +93,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
+
+  // Listen for auth error events from API service
+  useEffect(() => {
+    const handleAuthError = (event: Event) => {
+      const customEvent = event as CustomEvent<{ reason: string }>;
+      const reason = customEvent.detail?.reason;
+
+      console.warn('Auth error received:', reason);
+
+      // Clear user state
+      setUser(null);
+      setAuthState('unauthenticated');
+      setSessionExpired(true);
+
+      // Set appropriate error message
+      const messages: Record<string, string> = {
+        token_refresh_failed: 'Your session has expired. Please login again.',
+        unauthorized: 'Your session is no longer valid. Please login again.',
+        no_token: 'Authentication required. Please login.',
+      };
+      setError(messages[reason] || 'Session expired. Please login again.');
+
+      // Sign out from Amplify (cleanup) and navigate to login
+      if (isAmplifyConfigured()) {
+        signOut().catch(() => {});
+      }
+      navigate('/login');
+    };
+
+    window.addEventListener(AUTH_ERROR_EVENT, handleAuthError);
+    return () => {
+      window.removeEventListener(AUTH_ERROR_EVENT, handleAuthError);
+    };
+  }, [navigate]);
 
   // Login with username and password
   const login = useCallback(
@@ -217,6 +256,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Clear session expired flag (call after showing message to user)
+  const clearSessionExpired = useCallback(() => {
+    setSessionExpired(false);
+    setError(null);
+  }, []);
+
   const value: AuthContextValue = {
     authState,
     authenticated: authState === 'authenticated',
@@ -224,11 +269,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading,
     error,
     isNewPasswordRequired: authState === 'newPasswordRequired',
+    sessionExpired,
     login,
     logout,
     checkAuth,
     completeNewPassword,
     getAccessToken,
+    clearSessionExpired,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

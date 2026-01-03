@@ -99,8 +99,8 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
 
     // ECS
     ecsDesiredCount: 1,
-    ecsCpu: 512,
-    ecsMemory: 1024,
+    ecsCpu: 1024,          // 1 vCPU
+    ecsMemory: 4096,       // 4 GB
     ecsMinCapacity: 1,
     ecsMaxCapacity: 2,
     ecsTargetCpuUtilization: 70,
@@ -139,8 +139,8 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
 
     // Admin Portal
     adminPortalEnabled: true,
-    adminPortalCpu: 1024,          // 1 vCPU
-    adminPortalMemory: 1024,       // 1 GB
+    adminPortalCpu: 1024,          // 1 vCPU (Fargate: 1024 CPU requires 2048-8192 MB memory)
+    adminPortalMemory: 2048,       // 2 GB
     adminPortalMinCapacity: 1,
     adminPortalMaxCapacity: 2,
     adminPortalContainerPort: 8005,
@@ -171,8 +171,8 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
 
     // ECS
     ecsDesiredCount: 2,
-    ecsCpu: 1536,
-    ecsMemory: 3072*2,
+    ecsCpu: 1024,          // 1 vCPU
+    ecsMemory: 2048,       // 2 GB
     ecsMinCapacity: 2,
     ecsMaxCapacity: 10,
     ecsTargetCpuUtilization: 70,
@@ -211,8 +211,8 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
 
     // Admin Portal
     adminPortalEnabled: true,
-    adminPortalCpu: 1024,          // 1 vCPU
-    adminPortalMemory: 1024,       // 1 GB
+    adminPortalCpu: 1024,          // 1 vCPU (Fargate: 1024 CPU requires 2048-8192 MB memory)
+    adminPortalMemory: 2048,       // 2 GB
     adminPortalMinCapacity: 1,
     adminPortalMaxCapacity: 4,
     adminPortalContainerPort: 8005,

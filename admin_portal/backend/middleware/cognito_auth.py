@@ -29,6 +29,11 @@ SKIP_AUTH_PATHS: Set[str] = {
     "/api/auth/config",  # Config endpoint must be accessible without auth
 }
 
+# Path prefixes that don't require authentication (for static files and SPA routes)
+SKIP_AUTH_PATH_PREFIXES: tuple = (
+    "/admin",  # SPA routes and static files - frontend handles its own auth
+)
+
 
 class CognitoAuthMiddleware(BaseHTTPMiddleware):
     """Middleware to authenticate admin requests using Cognito JWT tokens."""
@@ -77,6 +82,10 @@ class CognitoAuthMiddleware(BaseHTTPMiddleware):
         """Process the request and validate JWT token."""
         # Skip auth for certain paths
         if request.url.path in SKIP_AUTH_PATHS:
+            return await call_next(request)
+
+        # Skip auth for path prefixes (static files, SPA routes)
+        if request.url.path.startswith(SKIP_AUTH_PATH_PREFIXES):
             return await call_next(request)
 
         # Skip auth for OPTIONS requests (CORS preflight)

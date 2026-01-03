@@ -765,6 +765,16 @@ export class ECSStack extends cdk.Stack {
       targetGroups: [adminTargetGroup],
     });
 
+    // Add path-based routing rule for /api/* (admin portal API endpoints)
+    // This routes authentication, dashboard, API keys, and pricing endpoints to admin portal
+    this.listener.addTargetGroups('AdminPortalApiRouting', {
+      priority: 20, // Higher priority than default, lower than /admin
+      conditions: [
+        elbv2.ListenerCondition.pathPatterns(['/api/*']),
+      ],
+      targetGroups: [adminTargetGroup],
+    });
+
     // Create Admin Portal Fargate Service
     const adminService = new ecs.FargateService(this, 'AdminPortalService', {
       serviceName: `admin-portal-${config.environmentName}`,

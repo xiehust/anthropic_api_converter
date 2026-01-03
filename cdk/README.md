@@ -14,9 +14,13 @@ Application Load Balancer (Regional)
     │                       └── FastAPI + React (port 8005)
     │                            └── Cognito Authentication
     │
+    ├── /api/*  ───────►  Admin Portal Service (Fargate)
+    │                       └── API endpoints for admin portal
+    │                            (auth, dashboard, API keys, pricing)
+    │
     └── /*  ────────────►  API Proxy Service (Fargate/EC2)
                             └── FastAPI (port 8000)
-                                 └── AWS Bedrock
+                                 └── AWS Bedrock (/v1/messages, /health)
     │
     ▼
 DynamoDB (API keys, usage, pricing, model mapping)
@@ -91,54 +95,6 @@ cd cdk
 npm install
 ```
 
-### 2. Deploy to Development
-
-```bash
-./scripts/deploy.sh -e dev -r us-west-2 -p arm64
-```
-
-This will deploy:
-- DynamoDB tables
-- VPC with NAT gateways
-- ECS Fargate cluster and service
-- Application Load Balancer
-
-Deployment takes approximately **15-20 minutes**.
-
-### 3. Create an API Key
-
-```bash
-./scripts/create-api-key.sh \
-  -e dev \
-  -u user@example.com \
-  -n "My API Key" \
-  -l 1000
-```
-
-Save the generated API key securely - it won't be shown again.
-
-### 4. Test the Deployment
-
-```bash
-# Get the ALB URL from deployment output
-ALB_URL="http://anthropic-proxy-dev-alb-123456789.us-west-2.elb.amazonaws.com"
-
-# Test health endpoint
-curl "${ALB_URL}/health"
-
-# Test with API key
-curl -X POST "${ALB_URL}/v1/messages" \
-  -H "x-api-key: sk-your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-    "max_tokens": 100,
-    "messages": [
-      {"role": "user", "content": "Hello!"}
-    ]
-  }'
-```
-
 **Note:** For production, you should add HTTPS by configuring an SSL certificate on the ALB.
 
 ## Configuration
@@ -193,24 +149,14 @@ export const environments = {
 - 30-day log retention
 - VPC endpoints for cost optimization
 
-### Deploy to Specific Region
 
-```bash
-./scripts/deploy.sh -e prod -r us-east-1 -p arm64
-```
-
-### Skip Build Step
-
-```bash
-./scripts/deploy.sh -e dev -s
-```
 
 Useful for quick redeployments when dependencies haven't changed.
 
 ### Destroy Infrastructure
 
 ```bash
-./scripts/deploy.sh -e dev -d
+./scripts/deploy.sh -d
 ```
 
 **Warning:** This deletes all resources. DynamoDB tables with `RETAIN` policy must be deleted manually.
@@ -305,7 +251,8 @@ Creates container orchestration:
 - **Deregistration Delay:** 30 seconds
 - **Deletion Protection:** Disabled
 - **Path-based Routing:**
-  - `/admin/*` → Admin Portal Target Group
+  - `/admin/*` → Admin Portal Target Group (priority 10)
+  - `/api/*` → Admin Portal Target Group (priority 20)
   - `/*` → API Proxy Target Group (default)
 
 ### 4. Cognito Stack
@@ -414,8 +361,8 @@ Configure admin portal settings in `config/config.ts`:
 ```typescript
 // Admin Portal
 adminPortalEnabled: true,
-adminPortalCpu: 1024,          // 1 vCPU
-adminPortalMemory: 1024,       // 1 GB
+adminPortalCpu: 1024,          // 1 vCPU (Fargate: 1024 CPU requires 2048-8192 MB memory)
+adminPortalMemory: 2048,       // 2 GB
 adminPortalMinCapacity: 1,
 adminPortalMaxCapacity: 2,
 adminPortalContainerPort: 8005,

@@ -21,9 +21,32 @@ import type {
 
 const API_BASE_URL = '/api';
 
+// Flag to prevent multiple auth error redirects
+let isHandlingAuthError = false;
+
+// Custom event for auth errors - listened by useAuth hook
+export const AUTH_ERROR_EVENT = 'auth:session-expired';
+
+/**
+ * Emit auth error event for the auth context to handle.
+ * Prevents multiple simultaneous redirects.
+ */
+function emitAuthError(reason: string): void {
+  if (isHandlingAuthError) return;
+  isHandlingAuthError = true;
+
+  // Reset flag after a delay to allow future auth errors
+  setTimeout(() => {
+    isHandlingAuthError = false;
+  }, 3000);
+
+  window.dispatchEvent(new CustomEvent(AUTH_ERROR_EVENT, { detail: { reason } }));
+}
+
 /**
  * Get the current authentication token from Amplify session.
  * Returns null in development mode when Cognito is not configured.
+ * Amplify automatically refreshes expired tokens if refresh token is valid.
  */
 async function getAuthToken(): Promise<string | null> {
   if (!isAmplifyConfigured()) {
@@ -33,7 +56,10 @@ async function getAuthToken(): Promise<string | null> {
   try {
     const session = await fetchAuthSession();
     return session.tokens?.idToken?.toString() || null;
-  } catch {
+  } catch (error) {
+    // Token refresh failed - likely refresh token expired
+    console.error('Failed to get auth token:', error);
+    emitAuthError('token_refresh_failed');
     return null;
   }
 }
@@ -68,9 +94,8 @@ async function apiFetch<T>(
   if (token) {
     (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
   } else if (isAmplifyConfigured()) {
-    // Cognito is configured but no token - user needs to login
-    // Redirect to login page
-    window.location.href = '/login';
+    // Cognito is configured but no token - emit auth error event
+    emitAuthError('no_token');
     throw new Error('Authentication required');
   }
 
@@ -80,9 +105,9 @@ async function apiFetch<T>(
   });
 
   if (!response.ok) {
-    // Handle 401 Unauthorized - redirect to login
+    // Handle 401 Unauthorized - emit auth error event
     if (response.status === 401) {
-      window.location.href = '/login';
+      emitAuthError('unauthorized');
       throw new Error('Session expired. Please login again.');
     }
 

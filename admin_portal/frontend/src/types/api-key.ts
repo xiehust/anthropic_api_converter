@@ -19,6 +19,8 @@ export interface ApiKey {
   // Usage stats (aggregated from usage_stats table)
   total_input_tokens?: number;
   total_output_tokens?: number;
+  total_cached_tokens?: number;      // Cache read tokens
+  total_cache_write_tokens?: number; // Cache write tokens
   total_requests?: number;
 }
 
@@ -28,7 +30,6 @@ export interface ApiKeyCreate {
   owner_name?: string;
   role?: string;
   monthly_budget?: number;
-  tpm_limit?: number;
   rate_limit?: number;
   service_tier?: string;
 }
@@ -38,7 +39,6 @@ export interface ApiKeyUpdate {
   owner_name?: string;
   role?: string;
   monthly_budget?: number;
-  tpm_limit?: number;
   rate_limit?: number;
   service_tier?: string;
   is_active?: boolean;

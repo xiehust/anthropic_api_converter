@@ -63,6 +63,11 @@ This lightweight API convertion service enables you to use various large languag
 - **Rate Limiting**: Token bucket algorithm per API key
 - **Usage Tracking**: Comprehensive analytics and token usage tracking
 - **Service Tiers**: Bedrock Service Tier configuration for cost/latency optimization
+- **Admin Portal**: Web-based management interface for API key management, usage monitoring, and budget control
+  - Cognito authentication with USER_PASSWORD_AUTH and SRP flows
+  - Real-time API key usage statistics (input/output/cache tokens)
+  - Model pricing configuration and cost tracking
+  - Budget limits with automatic key deactivation
 
 ### Supported Models
 - Claude 4.5/5 Sonnet
@@ -315,17 +320,43 @@ This will deploy:
 - (EC2 mode) Auto Scaling Group and Capacity Provider
 
 Deployment takes approximately **15-20 minutes**.
-#### 3. You can find endpoint URL of ALB.
-![alt text](assets/image.png)
+
+#### 3. Deployment Output
+
+After deployment completes, you will see the following output:
 
 ```text
+Access URLs:
+  API Proxy: http://anthropic-proxy-prod-alb-xxxx.us-west-2.elb.amazonaws.com
+  Admin Portal: http://anthropic-proxy-prod-alb-xxxx.us-west-2.elb.amazonaws.com/admin/
+
+Cognito (Admin Portal Authentication):
+  User Pool ID: us-west-2_xxxxxxxxx
+  Client ID: xxxxxxxxxxxxxxxxxxxxxxxxxx
+  Region: us-west-2
+
 Master API Key Secret:
   Secret Name: anthropic-proxy-prod-master-api-key
   Retrieve with: aws secretsmanager get-secret-value --secret-id anthropic-proxy-prod-master-api-key --region us-west-2
 
 Next Steps:
   1. Create API keys using: ./scripts/create-api-key.sh
+  2. Test the health endpoint: curl http://<alb-dns>/health
+  3. Create admin user: ./scripts/create-admin-user.sh -e prod -r us-west-2 --email <admin@example.com>
 ```
+
+#### 4. Create an Admin Portal login account and temporary password
+- In the `cdk/` directory:
+```shell
+./scripts/create-admin-user.sh -e prod -r us-west-2 --email <admin@example.com>
+```
+
+#### 5. Access the Admin Portal using the username and temporary password above
+Upon first login, you will be prompted to change your password.
+Admin Portal: http://anthropic-proxy-prod-alb-xxxx.us-west-2.elb.amazonaws.com/admin/
+
+#### 6. Create API keys, set pricing, budget, and other settings via the interface
+![alt text](./admin_portal/image_admin1.png)
 
 **Create API Key Examples:**
 

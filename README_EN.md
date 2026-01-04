@@ -12,7 +12,7 @@
 <p>
   <a href="./README.md"><img src="https://img.shields.io/badge/文档-中文-red.svg" alt="中文文档"></a>
   <a href="./README_EN.md"><img src="https://img.shields.io/badge/Docs-English-blue.svg" alt="English Docs"></a>
-  <a href="./blog_article.md"><img src="https://img.shields.io/badge/📚-Tech_Blog-purple.svg" alt="Tech Blog"></a>
+  <a href="https://mp.weixin.qq.com/s/mW1RNem5zbAlyvLixSFWOw“><img src="https://img.shields.io/badge/📚-Tech_Blog-purple.svg" alt="Tech Blog"></a>
   <a href="./cdk/DEPLOYMENT.md"><img src="https://img.shields.io/badge/🚀-Deployment-orange.svg" alt="Deployment Guide"></a>
 </p>
 

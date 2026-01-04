@@ -66,6 +66,7 @@ export class ECSStack extends cdk.Stack {
         subnetType: ec2.SubnetType.PUBLIC,
       },
       deletionProtection: false,
+      idleTimeout: cdk.Duration.seconds(600),
     });
 
     // Create Target Group - target type depends on launch type

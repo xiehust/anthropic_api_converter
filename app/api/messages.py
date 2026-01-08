@@ -338,12 +338,28 @@ async def create_message(
             print(f"[STANDALONE] Detected standalone code execution request")
 
             if request_data.stream:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "type": "invalid_request_error",
-                        "message": "Standalone code execution does not support streaming. "
-                                   "Please set stream=false in your request.",
+                # Streaming standalone code execution
+                logger.info(f"Request {request_id}: Streaming standalone code execution")
+
+                # Create session first to get container ID for headers
+                session = await standalone_service._get_or_create_session(container_id)
+
+                return StreamingResponse(
+                    standalone_service.handle_request_streaming(
+                        request=request_data,
+                        bedrock_service=bedrock_service,
+                        request_id=request_id,
+                        service_tier=service_tier,
+                        container_id=session.session_id,
+                        anthropic_beta=anthropic_beta,
+                    ),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Request-ID": request_id,
+                        "X-Container-ID": session.session_id,
+                        "X-Container-Expires-At": session.expires_at.isoformat(),
                     },
                 )
 

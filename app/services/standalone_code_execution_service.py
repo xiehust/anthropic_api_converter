@@ -12,10 +12,16 @@ Flow:
 4. Build server_tool_result and call Claude again
 5. Repeat until stop_reason != "tool_use" or max iterations
 6. Return full trace (all content blocks) to client
+
+Streaming support:
+- Uses hybrid approach: non-streaming Bedrock calls, but emit SSE events per-iteration
+- Yields events in real-time as each iteration completes
+- Maintains proper content block indexing across iterations
 """
 
+import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from app.core.config import settings
@@ -363,6 +369,555 @@ class StandaloneCodeExecutionService:
         )
 
         return final_message, container_info
+
+    # ========== Streaming Support ==========
+
+    def _format_sse_event(self, event: Dict[str, Any]) -> str:
+        """
+        Format an event dict as an SSE string.
+
+        Args:
+            event: Event dict with 'type' field
+
+        Returns:
+            SSE-formatted string: "event: {type}\ndata: {json}\n\n"
+        """
+        event_type = event.get("type", "unknown")
+        return f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
+
+    def _emit_message_start(
+        self, message_id: str, model: str, input_tokens: int
+    ) -> str:
+        """
+        Generate message_start SSE event.
+
+        Args:
+            message_id: Unique message ID
+            model: Model name
+            input_tokens: Initial input token count
+
+        Returns:
+            SSE-formatted message_start event
+        """
+        return self._format_sse_event({
+            "type": "message_start",
+            "message": {
+                "id": message_id,
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": model,
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {
+                    "input_tokens": input_tokens,
+                    "output_tokens": 0,
+                },
+            }
+        })
+
+    def _emit_content_block_events(
+        self, content: List[Any], start_index: int
+    ) -> Tuple[List[str], int]:
+        """
+        Generate SSE events for content blocks.
+
+        Emits content_block_start, content_block_delta, and content_block_stop
+        for each content block.
+
+        Args:
+            content: List of content blocks
+            start_index: Starting index for content blocks
+
+        Returns:
+            Tuple of (list of SSE strings, next index)
+        """
+        events = []
+        current_index = start_index
+
+        for block in content:
+            block_dict = block if isinstance(block, dict) else (
+                block.model_dump() if hasattr(block, 'model_dump') else {}
+            )
+
+            block_type = block_dict.get("type", "")
+
+            # Emit content_block_start
+            if block_type == "text":
+                events.append(self._format_sse_event({
+                    "type": "content_block_start",
+                    "index": current_index,
+                    "content_block": {"type": "text", "text": ""},
+                }))
+                # Emit delta with full text
+                text = block_dict.get("text", "")
+                if text:
+                    events.append(self._format_sse_event({
+                        "type": "content_block_delta",
+                        "index": current_index,
+                        "delta": {"type": "text_delta", "text": text},
+                    }))
+
+            elif block_type == "server_tool_use":
+                events.append(self._format_sse_event({
+                    "type": "content_block_start",
+                    "index": current_index,
+                    "content_block": {
+                        "type": "server_tool_use",
+                        "id": block_dict.get("id", ""),
+                        "name": block_dict.get("name", ""),
+                    },
+                }))
+                # Emit delta with input JSON
+                tool_input = block_dict.get("input", {})
+                if tool_input:
+                    events.append(self._format_sse_event({
+                        "type": "content_block_delta",
+                        "index": current_index,
+                        "delta": {
+                            "type": "input_json_delta",
+                            "partial_json": json.dumps(tool_input),
+                        },
+                    }))
+
+            elif block_type == "thinking":
+                events.append(self._format_sse_event({
+                    "type": "content_block_start",
+                    "index": current_index,
+                    "content_block": {"type": "thinking", "thinking": ""},
+                }))
+                thinking_text = block_dict.get("thinking", "")
+                if thinking_text:
+                    events.append(self._format_sse_event({
+                        "type": "content_block_delta",
+                        "index": current_index,
+                        "delta": {"type": "thinking_delta", "thinking": thinking_text},
+                    }))
+
+            else:
+                # Handle other block types generically
+                events.append(self._format_sse_event({
+                    "type": "content_block_start",
+                    "index": current_index,
+                    "content_block": block_dict,
+                }))
+
+            # Emit content_block_stop
+            events.append(self._format_sse_event({
+                "type": "content_block_stop",
+                "index": current_index,
+            }))
+
+            current_index += 1
+
+        return events, current_index
+
+    def _emit_tool_result_events(
+        self, result: Dict[str, Any], index: int
+    ) -> List[str]:
+        """
+        Generate SSE events for tool execution result.
+
+        Args:
+            result: Tool result dict
+            index: Content block index
+
+        Returns:
+            List of SSE strings
+        """
+        events = []
+        result_type = result.get("type", "")
+        tool_use_id = result.get("tool_use_id", "")
+        content = result.get("content", {})
+
+        # Emit content_block_start
+        events.append(self._format_sse_event({
+            "type": "content_block_start",
+            "index": index,
+            "content_block": {
+                "type": result_type,
+                "tool_use_id": tool_use_id,
+            },
+        }))
+
+        # Emit content_block_delta with result content
+        if result_type == "bash_code_execution_tool_result":
+            events.append(self._format_sse_event({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {
+                    "type": "bash_result_delta",
+                    "content": content,
+                },
+            }))
+        elif result_type == "text_editor_code_execution_tool_result":
+            events.append(self._format_sse_event({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {
+                    "type": "text_editor_result_delta",
+                    "content": content,
+                },
+            }))
+        else:
+            # Generic result
+            events.append(self._format_sse_event({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {
+                    "type": "tool_result_delta",
+                    "content": content,
+                },
+            }))
+
+        # Emit content_block_stop
+        events.append(self._format_sse_event({
+            "type": "content_block_stop",
+            "index": index,
+        }))
+
+        return events
+
+    def _emit_message_end(
+        self, stop_reason: str, output_tokens: int
+    ) -> List[str]:
+        """
+        Generate message_delta and message_stop events.
+
+        Args:
+            stop_reason: The stop reason
+            output_tokens: Total output tokens
+
+        Returns:
+            List of SSE strings
+        """
+        return [
+            self._format_sse_event({
+                "type": "message_delta",
+                "delta": {
+                    "stop_reason": stop_reason,
+                    "stop_sequence": None,
+                },
+                "usage": {
+                    "output_tokens": output_tokens,
+                },
+            }),
+            self._format_sse_event({
+                "type": "message_stop",
+            }),
+        ]
+
+    async def handle_request_streaming(
+        self,
+        request: MessageRequest,
+        bedrock_service: Any,
+        request_id: str,
+        service_tier: str,
+        container_id: Optional[str] = None,
+        anthropic_beta: Optional[str] = None,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Handle standalone code execution request with true streaming.
+
+        Uses actual Bedrock streaming and forwards events in real-time:
+        - Text content is streamed token-by-token
+        - Tool use blocks are buffered until complete, then executed
+        - Tool results are emitted after execution
+
+        Args:
+            request: The message request
+            bedrock_service: Service for calling Bedrock
+            request_id: Unique request ID
+            service_tier: User's service tier
+            container_id: Optional container ID for session reuse
+            anthropic_beta: Beta header value
+
+        Yields:
+            SSE-formatted event strings
+        """
+        logger.info(f"[Standalone Streaming] Handling request {request_id}")
+
+        # Filter out the standalone beta header
+        filtered_beta = self._filter_beta_header(anthropic_beta)
+
+        # Initialize
+        message_id = f"msg_{uuid4().hex[:24]}"
+        global_index = 0  # Global content block index across all iterations
+        accumulated_output_tokens = 0
+        final_stop_reason = "end_turn"
+        emitted_message_start = False
+
+        # Get or create session
+        try:
+            session = await self._get_or_create_session(container_id)
+            logger.info(f"[Standalone Streaming] Using session {session.session_id}")
+        except Exception as e:
+            logger.error(f"[Standalone Streaming] Session creation failed: {e}")
+            yield self._format_sse_event({
+                "type": "error",
+                "error": {
+                    "type": "api_error",
+                    "message": f"Failed to create sandbox session: {e}",
+                }
+            })
+            return
+
+        # Track messages for continuation
+        messages: List[Any] = list(request.messages)
+        _ = service_tier  # Reserved for future tier-based limits
+
+        try:
+            for iteration in range(MAX_ITERATIONS):
+                logger.info(f"[Standalone Streaming] Iteration {iteration + 1}/{MAX_ITERATIONS}")
+
+                # Build request for this iteration (with streaming enabled)
+                standalone_tools = self._build_tools_for_request(request.tools)
+
+                iter_request = MessageRequest(
+                    model=request.model,
+                    messages=messages,  # type: ignore[arg-type]
+                    max_tokens=request.max_tokens,
+                    system=request.system,
+                    temperature=request.temperature,
+                    top_p=request.top_p,
+                    top_k=request.top_k,
+                    stop_sequences=request.stop_sequences,
+                    stream=True,  # Enable streaming for Bedrock
+                    tools=standalone_tools,
+                    tool_choice=request.tool_choice,
+                    thinking=request.thinking,
+                    metadata=request.metadata,
+                )
+
+                # Track content blocks for this iteration
+                content_blocks: List[Dict[str, Any]] = []
+                current_block: Optional[Dict[str, Any]] = None
+                current_block_index: Optional[int] = None
+                iteration_stop_reason = None
+
+                # Index mapping: Bedrock index -> our global index
+                index_map: Dict[int, int] = {}
+
+                try:
+                    # Stream from Bedrock
+                    async for sse_event in bedrock_service.invoke_model_stream(
+                        iter_request,
+                        anthropic_beta=filtered_beta,
+                    ):
+                        # Parse the SSE event
+                        event_data = self._parse_sse_event(sse_event)
+                        if not event_data:
+                            continue
+
+                        event_type = event_data.get("type", "")
+
+                        # Handle message_start (only emit once)
+                        if event_type == "message_start":
+                            if not emitted_message_start:
+                                # Modify the message to use our ID
+                                msg = event_data.get("message", {})
+                                msg["id"] = message_id
+                                yield self._format_sse_event(event_data)
+                                emitted_message_start = True
+                            continue
+
+                        # Handle content_block_start
+                        if event_type == "content_block_start":
+                            bedrock_index = event_data.get("index", 0)
+                            block = event_data.get("content_block", {})
+                            block_type = block.get("type", "")
+
+                            # Map Bedrock index to global index
+                            index_map[bedrock_index] = global_index
+
+                            # Prepare block for emitting to client
+                            # Convert tool_use to server_tool_use for standalone tools (client-facing)
+                            emit_block = dict(block)
+                            if block_type == "tool_use":
+                                name = block.get("name", "")
+                                if name in ("bash_code_execution", "text_editor_code_execution"):
+                                    emit_block = {
+                                        "type": "server_tool_use",
+                                        "id": block.get("id", ""),
+                                        "name": name,
+                                    }
+
+                            # Store current_block with ORIGINAL type for continuation
+                            # (Bedrock/Claude expects tool_use, not server_tool_use)
+                            current_block = {
+                                "type": block_type,
+                                **block
+                            }
+                            current_block_index = bedrock_index
+
+                            # Emit with converted type (server_tool_use) to client
+                            yield self._format_sse_event({
+                                "type": "content_block_start",
+                                "index": global_index,
+                                "content_block": emit_block,
+                            })
+                            continue
+
+                        # Handle content_block_delta
+                        if event_type == "content_block_delta":
+                            bedrock_index = event_data.get("index", 0)
+                            delta = event_data.get("delta", {})
+
+                            # Get our global index
+                            our_index = index_map.get(bedrock_index, global_index)
+
+                            # Accumulate input for tool_use blocks
+                            # (current_block stores original type from Bedrock, which is "tool_use")
+                            if current_block and current_block.get("type") == "tool_use":
+                                delta_type = delta.get("type", "")
+                                if delta_type == "input_json_delta":
+                                    partial = delta.get("partial_json", "")
+                                    if "input_json" not in current_block:
+                                        current_block["input_json"] = ""
+                                    current_block["input_json"] += partial
+
+                            # Forward the delta with our index
+                            yield self._format_sse_event({
+                                "type": "content_block_delta",
+                                "index": our_index,
+                                "delta": delta,
+                            })
+                            continue
+
+                        # Handle content_block_stop
+                        if event_type == "content_block_stop":
+                            bedrock_index = event_data.get("index", 0)
+                            our_index = index_map.get(bedrock_index, global_index)
+
+                            # Finalize current block
+                            if current_block:
+                                # Parse accumulated JSON for tool_use
+                                # (current_block stores original type "tool_use" for Bedrock continuation)
+                                if current_block.get("type") == "tool_use":
+                                    input_json = current_block.pop("input_json", "{}")
+                                    try:
+                                        current_block["input"] = json.loads(input_json)
+                                    except json.JSONDecodeError:
+                                        current_block["input"] = {}
+
+                                content_blocks.append(current_block)
+
+                            yield self._format_sse_event({
+                                "type": "content_block_stop",
+                                "index": our_index,
+                            })
+
+                            global_index += 1
+                            current_block = None
+                            current_block_index = None
+                            continue
+
+                        # Handle message_delta (contains stop_reason and usage)
+                        if event_type == "message_delta":
+                            delta = event_data.get("delta", {})
+                            usage = event_data.get("usage", {})
+
+                            iteration_stop_reason = delta.get("stop_reason")
+                            accumulated_output_tokens += usage.get("output_tokens", 0)
+
+                            # Don't emit message_delta yet - wait until loop ends
+                            continue
+
+                        # Handle message_stop - don't emit, we'll emit at the end
+                        if event_type == "message_stop":
+                            continue
+
+                except Exception as e:
+                    logger.error(f"[Standalone Streaming] Bedrock stream error: {e}")
+                    yield self._format_sse_event({
+                        "type": "error",
+                        "error": {
+                            "type": "api_error",
+                            "message": str(e),
+                        }
+                    })
+                    return
+
+                # Find tool uses from accumulated content blocks
+                # Note: content_blocks stores original 'tool_use' type (for Bedrock continuation)
+                # We check for both types for safety
+                server_tool_uses = [
+                    b for b in content_blocks
+                    if b.get("type") in ("tool_use", "server_tool_use") and
+                       b.get("name") in ("bash_code_execution", "text_editor_code_execution")
+                ]
+
+                logger.info(f"[Standalone Streaming] Iteration {iteration + 1}: "
+                           f"found {len(server_tool_uses)} tool uses, "
+                           f"stop_reason={iteration_stop_reason}")
+
+                # Check if we should continue
+                # NOTE: In Bedrock streaming, stop_reason may be 'end_turn' even when there are
+                # tool_use blocks. We should continue if there are tool uses, regardless of stop_reason.
+                if not server_tool_uses:
+                    final_stop_reason = iteration_stop_reason or "end_turn"
+                    logger.info(f"[Standalone Streaming] Loop complete, no tool uses, stop_reason={final_stop_reason}")
+                    break
+
+                # Execute tools and emit result events
+                tool_results = []
+                for tool_use in server_tool_uses:
+                    result = await self._execute_server_tool(tool_use, session)
+                    tool_results.append(result)
+
+                    # Emit tool result events
+                    result_events = self._emit_tool_result_events(result, global_index)
+                    for event in result_events:
+                        yield event
+                    global_index += 1
+
+                # Build continuation messages for next iteration
+                messages = self._build_continuation_messages(
+                    messages,
+                    content_blocks,
+                    tool_results,
+                )
+
+        except Exception as e:
+            logger.error(f"[Standalone Streaming] Error in loop: {e}")
+            yield self._format_sse_event({
+                "type": "error",
+                "error": {
+                    "type": "api_error",
+                    "message": str(e),
+                }
+            })
+            return
+
+        # Emit final message_delta and message_stop
+        for event in self._emit_message_end(final_stop_reason, accumulated_output_tokens):
+            yield event
+
+        logger.info(f"[Standalone Streaming] Complete, session={session.session_id}")
+
+    def _parse_sse_event(self, sse_event: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse an SSE event string into a dict.
+
+        Args:
+            sse_event: SSE-formatted string (event: type\ndata: json\n\n)
+
+        Returns:
+            Parsed event dict or None if parsing fails
+        """
+        if not sse_event or not sse_event.strip():
+            return None
+
+        try:
+            # Find the data line
+            for line in sse_event.split("\n"):
+                if line.startswith("data:"):
+                    json_str = line[5:].strip()
+                    return json.loads(json_str)
+        except (json.JSONDecodeError, IndexError):
+            pass
+
+        return None
 
     async def _get_or_create_session(
         self,

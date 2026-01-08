@@ -2252,57 +2252,41 @@ Before writing code, verify:
                     }))
 
             elif block_type == "server_tool_use":
+                # Include input in content_block_start for server_tool_use
+                content_block = {
+                    "type": "server_tool_use",
+                    "id": block_dict.get("id", ""),
+                    "name": block_dict.get("name", ""),
+                }
+                tool_input = block_dict.get("input", {})
+                if tool_input:
+                    content_block["input"] = tool_input
+
                 events.append(self._format_sse_event({
                     "type": "content_block_start",
                     "index": current_index,
-                    "content_block": {
-                        "type": "server_tool_use",
-                        "id": block_dict.get("id", ""),
-                        "name": block_dict.get("name", ""),
-                    },
+                    "content_block": content_block,
                 }))
-                tool_input = block_dict.get("input", {})
-                if tool_input:
-                    events.append(self._format_sse_event({
-                        "type": "content_block_delta",
-                        "index": current_index,
-                        "delta": {
-                            "type": "input_json_delta",
-                            "partial_json": json.dumps(tool_input),
-                        },
-                    }))
 
             elif block_type == "tool_use":
+                # Build content_block with caller and input
+                content_block = {
+                    "type": "tool_use",
+                    "id": block_dict.get("id", ""),
+                    "name": block_dict.get("name", ""),
+                }
+                tool_input = block_dict.get("input", {})
+                if tool_input:
+                    content_block["input"] = tool_input
+                caller = block_dict.get("caller")
+                if caller:
+                    content_block["caller"] = caller
+
                 events.append(self._format_sse_event({
                     "type": "content_block_start",
                     "index": current_index,
-                    "content_block": {
-                        "type": "tool_use",
-                        "id": block_dict.get("id", ""),
-                        "name": block_dict.get("name", ""),
-                    },
+                    "content_block": content_block,
                 }))
-                tool_input = block_dict.get("input", {})
-                if tool_input:
-                    events.append(self._format_sse_event({
-                        "type": "content_block_delta",
-                        "index": current_index,
-                        "delta": {
-                            "type": "input_json_delta",
-                            "partial_json": json.dumps(tool_input),
-                        },
-                    }))
-                # Add caller info if present
-                caller = block_dict.get("caller")
-                if caller:
-                    events.append(self._format_sse_event({
-                        "type": "content_block_delta",
-                        "index": current_index,
-                        "delta": {
-                            "type": "caller_delta",
-                            "caller": caller,
-                        },
-                    }))
 
             elif block_type in ("thinking", "redacted_thinking"):
                 events.append(self._format_sse_event({

@@ -47,6 +47,12 @@ print(f"Content blocks: {len(response1.content)}")
 for i, block in enumerate(response1.content):
     block_type = getattr(block, 'type', 'unknown')
     print(f"  Block {i}: {block_type}")
+    if block_type == "tool_use":
+        print(f"    name: {getattr(block, 'name', '')}")
+        print(f"    caller: {getattr(block, 'caller', None)}")
+    elif block_type == "server_tool_use":
+        print(f"    name: {getattr(block, 'name', '')}")
+        print(f"    input: {getattr(block, 'input', {})}")
 
 # Test: Streaming PTC - simple code that calls external tool
 print("\n" + "=" * 60)
@@ -79,6 +85,13 @@ with client.beta.messages.stream(
     for i, block in enumerate(final_message.content):
         block_type = getattr(block, 'type', 'unknown')
         print(f"  Block {i}: {block_type}")
+        if block_type == "tool_use":
+            print(f"    name: {getattr(block, 'name', '')}")
+            print(f"    input: {getattr(block, 'input', {})}")
+            print(f"    caller: {getattr(block, 'caller', None)}")
+        elif block_type == "server_tool_use":
+            print(f"    name: {getattr(block, 'name', '')}")
+            print(f"    input: {getattr(block, 'input', {})}")
 
 print("\n" + "=" * 60)
 print("PTC Streaming Test Complete!")

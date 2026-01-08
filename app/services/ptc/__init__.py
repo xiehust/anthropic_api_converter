@@ -2,7 +2,7 @@
 Programmatic Tool Calling (PTC) module.
 
 Provides Docker sandbox-based code execution for Anthropic's
-Programmatic Tool Calling feature.
+Programmatic Tool Calling feature and standalone code execution.
 """
 
 from .sandbox import (
@@ -13,6 +13,13 @@ from .sandbox import (
     BatchToolCallRequest,
     ExecutionResult,
     PendingToolCall,
+)
+from .standalone_sandbox import (
+    StandaloneSandboxExecutor,
+    StandaloneSandboxConfig,
+    StandaloneSandboxSession,
+    BashExecutionResult,
+    TextEditorResult,
 )
 from .exceptions import (
     PTCError,
@@ -29,7 +36,7 @@ from .exceptions import (
 )
 
 __all__ = [
-    # Sandbox
+    # PTC Sandbox
     "PTCSandboxExecutor",
     "SandboxConfig",
     "SandboxSession",
@@ -37,6 +44,12 @@ __all__ = [
     "BatchToolCallRequest",
     "ExecutionResult",
     "PendingToolCall",
+    # Standalone Sandbox
+    "StandaloneSandboxExecutor",
+    "StandaloneSandboxConfig",
+    "StandaloneSandboxSession",
+    "BashExecutionResult",
+    "TextEditorResult",
     # Exceptions
     "PTCError",
     "SandboxError",

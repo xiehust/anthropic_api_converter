@@ -128,7 +128,7 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
 
     // PTC (Programmatic Tool Calling)
     enablePtc: false,                     // Disabled by default, enabled when using EC2
-    ptcSandboxImage: 'python:3.11-slim',
+    ptcSandboxImage: 'public.ecr.aws/f8g1z3n8/bedrock-proxy-sandbox:minimal.0.1',
     ptcSessionTimeout: 270,               // 4.5 minutes
     ptcExecutionTimeout: 60,
     ptcMemoryLimit: '256m',

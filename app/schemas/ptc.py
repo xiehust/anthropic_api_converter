@@ -200,3 +200,7 @@ class PTCExecutionState(BaseModel):
 PTC_BETA_HEADER = "advanced-tool-use-2025-11-20"
 PTC_TOOL_TYPE = "code_execution_20250825"
 PTC_ALLOWED_CALLER = "code_execution_20250825"
+
+# Standalone Code Execution (server-side bash/file operations)
+STANDALONE_CODE_EXEC_BETA_HEADER = "code-execution-2025-08-25"
+STANDALONE_TOOL_TYPE = "code_execution_20250825"  # Same tool type as PTC

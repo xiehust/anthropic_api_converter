@@ -617,12 +617,18 @@ class StandaloneCodeExecutionService:
         anthropic_beta: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """
-        Handle standalone code execution request with true streaming.
+        Handle standalone code execution request with hybrid streaming.
 
-        Uses actual Bedrock streaming and forwards events in real-time:
-        - Text content is streamed token-by-token
-        - Tool use blocks are buffered until complete, then executed
-        - Tool results are emitted after execution
+        Uses NON-STREAMING Bedrock API internally, but emits SSE events to the client
+        as each iteration completes. This is more reliable than true streaming because
+        Bedrock non-streaming API handles agentic continuations correctly.
+
+        Flow:
+        1. Call Bedrock non-streaming API
+        2. Emit SSE events for content blocks
+        3. Execute tools, emit result events
+        4. Repeat until no more tool calls
+        5. Emit final message events
 
         Args:
             request: The message request
@@ -643,7 +649,8 @@ class StandaloneCodeExecutionService:
         # Initialize
         message_id = f"msg_{uuid4().hex[:24]}"
         global_index = 0  # Global content block index across all iterations
-        accumulated_output_tokens = 0
+        total_input_tokens = 0
+        total_output_tokens = 0
         final_stop_reason = "end_turn"
         emitted_message_start = False
 
@@ -670,7 +677,7 @@ class StandaloneCodeExecutionService:
             for iteration in range(MAX_ITERATIONS):
                 logger.info(f"[Standalone Streaming] Iteration {iteration + 1}/{MAX_ITERATIONS}")
 
-                # Build request for this iteration (with streaming enabled)
+                # Build request for this iteration (NON-STREAMING)
                 standalone_tools = self._build_tools_for_request(request.tools)
 
                 iter_request = MessageRequest(
@@ -682,153 +689,21 @@ class StandaloneCodeExecutionService:
                     top_p=request.top_p,
                     top_k=request.top_k,
                     stop_sequences=request.stop_sequences,
-                    stream=True,  # Enable streaming for Bedrock
+                    stream=False,  # Use NON-STREAMING for reliability
                     tools=standalone_tools,
                     tool_choice=request.tool_choice,
                     thinking=request.thinking,
                     metadata=request.metadata,
                 )
 
-                # Track content blocks for this iteration
-                content_blocks: List[Dict[str, Any]] = []
-                current_block: Optional[Dict[str, Any]] = None
-                current_block_index: Optional[int] = None
-                iteration_stop_reason = None
-
-                # Index mapping: Bedrock index -> our global index
-                index_map: Dict[int, int] = {}
-
+                # Call Bedrock non-streaming
                 try:
-                    # Stream from Bedrock
-                    async for sse_event in bedrock_service.invoke_model_stream(
+                    response = await bedrock_service.invoke_model(
                         iter_request,
                         anthropic_beta=filtered_beta,
-                    ):
-                        # Parse the SSE event
-                        event_data = self._parse_sse_event(sse_event)
-                        if not event_data:
-                            continue
-
-                        event_type = event_data.get("type", "")
-
-                        # Handle message_start (only emit once)
-                        if event_type == "message_start":
-                            if not emitted_message_start:
-                                # Modify the message to use our ID
-                                msg = event_data.get("message", {})
-                                msg["id"] = message_id
-                                yield self._format_sse_event(event_data)
-                                emitted_message_start = True
-                            continue
-
-                        # Handle content_block_start
-                        if event_type == "content_block_start":
-                            bedrock_index = event_data.get("index", 0)
-                            block = event_data.get("content_block", {})
-                            block_type = block.get("type", "")
-
-                            # Map Bedrock index to global index
-                            index_map[bedrock_index] = global_index
-
-                            # Prepare block for emitting to client
-                            # Convert tool_use to server_tool_use for standalone tools (client-facing)
-                            emit_block = dict(block)
-                            if block_type == "tool_use":
-                                name = block.get("name", "")
-                                if name in ("bash_code_execution", "text_editor_code_execution"):
-                                    emit_block = {
-                                        "type": "server_tool_use",
-                                        "id": block.get("id", ""),
-                                        "name": name,
-                                    }
-
-                            # Store current_block with ORIGINAL type for continuation
-                            # (Bedrock/Claude expects tool_use, not server_tool_use)
-                            current_block = {
-                                "type": block_type,
-                                **block
-                            }
-                            current_block_index = bedrock_index
-
-                            # Emit with converted type (server_tool_use) to client
-                            yield self._format_sse_event({
-                                "type": "content_block_start",
-                                "index": global_index,
-                                "content_block": emit_block,
-                            })
-                            continue
-
-                        # Handle content_block_delta
-                        if event_type == "content_block_delta":
-                            bedrock_index = event_data.get("index", 0)
-                            delta = event_data.get("delta", {})
-
-                            # Get our global index
-                            our_index = index_map.get(bedrock_index, global_index)
-
-                            # Accumulate input for tool_use blocks
-                            # (current_block stores original type from Bedrock, which is "tool_use")
-                            if current_block and current_block.get("type") == "tool_use":
-                                delta_type = delta.get("type", "")
-                                if delta_type == "input_json_delta":
-                                    partial = delta.get("partial_json", "")
-                                    if "input_json" not in current_block:
-                                        current_block["input_json"] = ""
-                                    current_block["input_json"] += partial
-
-                            # Forward the delta with our index
-                            yield self._format_sse_event({
-                                "type": "content_block_delta",
-                                "index": our_index,
-                                "delta": delta,
-                            })
-                            continue
-
-                        # Handle content_block_stop
-                        if event_type == "content_block_stop":
-                            bedrock_index = event_data.get("index", 0)
-                            our_index = index_map.get(bedrock_index, global_index)
-
-                            # Finalize current block
-                            if current_block:
-                                # Parse accumulated JSON for tool_use
-                                # (current_block stores original type "tool_use" for Bedrock continuation)
-                                if current_block.get("type") == "tool_use":
-                                    input_json = current_block.pop("input_json", "{}")
-                                    try:
-                                        current_block["input"] = json.loads(input_json)
-                                    except json.JSONDecodeError:
-                                        current_block["input"] = {}
-
-                                content_blocks.append(current_block)
-
-                            yield self._format_sse_event({
-                                "type": "content_block_stop",
-                                "index": our_index,
-                            })
-
-                            global_index += 1
-                            current_block = None
-                            current_block_index = None
-                            continue
-
-                        # Handle message_delta (contains stop_reason and usage)
-                        if event_type == "message_delta":
-                            delta = event_data.get("delta", {})
-                            usage = event_data.get("usage", {})
-
-                            iteration_stop_reason = delta.get("stop_reason")
-                            accumulated_output_tokens += usage.get("output_tokens", 0)
-
-                            # Don't emit message_delta yet - wait until loop ends
-                            continue
-
-                        # Handle message_stop - don't emit, we'll emit at the end
-                        if event_type == "message_stop":
-                            continue
-
+                    )
                 except Exception as e:
-                    logger.error(f"[Standalone Streaming] Bedrock stream error: {e}")
+                    logger.error(f"[Standalone Streaming] Bedrock call failed: {e}")
                     yield self._format_sse_event({
                         "type": "error",
                         "error": {
@@ -838,25 +713,36 @@ class StandaloneCodeExecutionService:
                     })
                     return
 
-                # Find tool uses from accumulated content blocks
-                # Note: content_blocks stores original 'tool_use' type (for Bedrock continuation)
-                # We check for both types for safety
-                server_tool_uses = [
-                    b for b in content_blocks
-                    if b.get("type") in ("tool_use", "server_tool_use") and
-                       b.get("name") in ("bash_code_execution", "text_editor_code_execution")
-                ]
+                # Track tokens
+                if response.usage:
+                    total_input_tokens += response.usage.input_tokens
+                    total_output_tokens += response.usage.output_tokens
+
+                # Emit message_start on first iteration
+                if not emitted_message_start:
+                    yield self._emit_message_start(message_id, request.model, total_input_tokens)
+                    emitted_message_start = True
+
+                # Get response content and convert to server_tool_use
+                response_content = response.content if hasattr(response, 'content') else []
+                converted_content = self._convert_to_server_tool_use(response_content)
+
+                # Emit content block events for this iteration's content
+                events, global_index = self._emit_content_block_events(converted_content, global_index)
+                for event in events:
+                    yield event
+
+                # Find tool uses (check original content, not converted)
+                server_tool_uses = self._find_server_tool_use(response_content)
 
                 logger.info(f"[Standalone Streaming] Iteration {iteration + 1}: "
                            f"found {len(server_tool_uses)} tool uses, "
-                           f"stop_reason={iteration_stop_reason}")
+                           f"stop_reason={response.stop_reason}")
 
                 # Check if we should continue
-                # NOTE: In Bedrock streaming, stop_reason may be 'end_turn' even when there are
-                # tool_use blocks. We should continue if there are tool uses, regardless of stop_reason.
-                if not server_tool_uses:
-                    final_stop_reason = iteration_stop_reason or "end_turn"
-                    logger.info(f"[Standalone Streaming] Loop complete, no tool uses, stop_reason={final_stop_reason}")
+                if not server_tool_uses or response.stop_reason != "tool_use":
+                    final_stop_reason = response.stop_reason or "end_turn"
+                    logger.info(f"[Standalone Streaming] Loop complete, stop_reason={final_stop_reason}")
                     break
 
                 # Execute tools and emit result events
@@ -874,7 +760,7 @@ class StandaloneCodeExecutionService:
                 # Build continuation messages for next iteration
                 messages = self._build_continuation_messages(
                     messages,
-                    content_blocks,
+                    response_content,  # Use original content (with tool_use) for continuation
                     tool_results,
                 )
 
@@ -890,34 +776,10 @@ class StandaloneCodeExecutionService:
             return
 
         # Emit final message_delta and message_stop
-        for event in self._emit_message_end(final_stop_reason, accumulated_output_tokens):
+        for event in self._emit_message_end(final_stop_reason, total_output_tokens):
             yield event
 
         logger.info(f"[Standalone Streaming] Complete, session={session.session_id}")
-
-    def _parse_sse_event(self, sse_event: str) -> Optional[Dict[str, Any]]:
-        """
-        Parse an SSE event string into a dict.
-
-        Args:
-            sse_event: SSE-formatted string (event: type\ndata: json\n\n)
-
-        Returns:
-            Parsed event dict or None if parsing fails
-        """
-        if not sse_event or not sse_event.strip():
-            return None
-
-        try:
-            # Find the data line
-            for line in sse_event.split("\n"):
-                if line.startswith("data:"):
-                    json_str = line[5:].strip()
-                    return json.loads(json_str)
-        except (json.JSONDecodeError, IndexError):
-            pass
-
-        return None
 
     async def _get_or_create_session(
         self,

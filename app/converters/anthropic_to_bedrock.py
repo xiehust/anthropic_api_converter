@@ -22,6 +22,14 @@ from app.schemas.anthropic import (
     Tool,
     ToolResultContent,
     ToolUseContent,
+    # Standalone code execution types
+    BashCodeExecutionToolResult,
+    BashCodeExecutionResult,
+    TextEditorCodeExecutionToolResult,
+    TextEditorCodeExecutionResult,
+    ServerToolUseContent,
+    ServerToolResultContent,
+    CodeExecutionResultContent,
 )
 
 
@@ -494,6 +502,183 @@ class AnthropicToBedrockConverter:
                         }
                     }
                 )
+
+            # Handle server_tool_use (PTC/Standalone code execution tool invocation)
+            elif isinstance(block, ServerToolUseContent):
+                # Convert server tool use to standard toolUse format for Bedrock
+                bedrock_content.append(
+                    {
+                        "toolUse": {
+                            "toolUseId": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        }
+                    }
+                )
+
+            # Handle server_tool_result (PTC code execution result)
+            elif isinstance(block, ServerToolResultContent):
+                # Convert server tool result to toolResult format
+                result_text_parts = []
+                for result_item in block.content:
+                    # Check for execution result types (CodeExecutionResultContent, BashCodeExecutionResult)
+                    if isinstance(result_item, CodeExecutionResultContent):
+                        result_text_parts.append(f"stdout: {result_item.stdout}")
+                        if result_item.stderr:
+                            result_text_parts.append(f"stderr: {result_item.stderr}")
+                        result_text_parts.append(f"return_code: {result_item.return_code}")
+                    elif isinstance(result_item, BashCodeExecutionResult):
+                        result_text_parts.append(f"stdout: {result_item.stdout}")
+                        if result_item.stderr:
+                            result_text_parts.append(f"stderr: {result_item.stderr}")
+                        result_text_parts.append(f"return_code: {result_item.return_code}")
+                    elif isinstance(result_item, TextEditorCodeExecutionResult):
+                        # Text editor result - convert to text representation
+                        if result_item.error_code:
+                            result_text_parts.append(f"error: {result_item.error_code}")
+                        elif result_item.content is not None:
+                            result_text_parts.append(f"content: {result_item.content}")
+                        elif result_item.is_file_update is not None:
+                            result_text_parts.append(f"is_file_update: {result_item.is_file_update}")
+                        else:
+                            result_text_parts.append("operation completed")
+
+                bedrock_content.append(
+                    {
+                        "toolResult": {
+                            "toolUseId": block.tool_use_id,
+                            "content": [{"text": "\n".join(result_text_parts)}],
+                            "status": "success",
+                        }
+                    }
+                )
+
+            # Handle standalone bash code execution tool result
+            elif isinstance(block, BashCodeExecutionToolResult):
+                # Convert bash execution result to toolResult format
+                result_content = block.content
+                result_text = f"stdout: {result_content.stdout}"
+                if result_content.stderr:
+                    result_text += f"\nstderr: {result_content.stderr}"
+                result_text += f"\nreturn_code: {result_content.return_code}"
+
+                bedrock_content.append(
+                    {
+                        "toolResult": {
+                            "toolUseId": block.tool_use_id,
+                            "content": [{"text": result_text}],
+                            "status": "error" if result_content.return_code != 0 else "success",
+                        }
+                    }
+                )
+
+            # Handle standalone text editor code execution tool result
+            elif isinstance(block, TextEditorCodeExecutionToolResult):
+                # Convert text editor result to toolResult format
+                result_content = block.content
+                if result_content.error_code:
+                    result_text = f"error: {result_content.error_code}"
+                    status = "error"
+                elif result_content.content is not None:
+                    # View command result
+                    result_text = f"file_type: {result_content.file_type}\n"
+                    result_text += f"content:\n{result_content.content}"
+                    if result_content.num_lines is not None:
+                        result_text += f"\nlines: {result_content.num_lines}/{result_content.total_lines}"
+                    status = "success"
+                elif result_content.is_file_update is not None:
+                    # Create command result
+                    result_text = f"is_file_update: {result_content.is_file_update}"
+                    status = "success"
+                elif result_content.old_start is not None:
+                    # str_replace command result
+                    result_text = f"old_start: {result_content.old_start}, old_lines: {result_content.old_lines}\n"
+                    result_text += f"new_start: {result_content.new_start}, new_lines: {result_content.new_lines}"
+                    if result_content.lines:
+                        result_text += f"\ndiff:\n" + "\n".join(result_content.lines)
+                    status = "success"
+                else:
+                    result_text = "operation completed"
+                    status = "success"
+
+                bedrock_content.append(
+                    {
+                        "toolResult": {
+                            "toolUseId": block.tool_use_id,
+                            "content": [{"text": result_text}],
+                            "status": status,
+                        }
+                    }
+                )
+
+            # Handle dict blocks (from raw message data)
+            elif isinstance(block, dict):
+                block_type = block.get("type", "")
+                if block_type == "text":
+                    bedrock_content.append({"text": block.get("text", "")})
+                elif block_type == "server_tool_use":
+                    bedrock_content.append(
+                        {
+                            "toolUse": {
+                                "toolUseId": block.get("id", ""),
+                                "name": block.get("name", ""),
+                                "input": block.get("input", {}),
+                            }
+                        }
+                    )
+                elif block_type in ("bash_code_execution_tool_result", "text_editor_code_execution_tool_result"):
+                    # Handle raw dict format of standalone tool results
+                    content = block.get("content", {})
+                    if block_type == "bash_code_execution_tool_result":
+                        result_text = f"stdout: {content.get('stdout', '')}"
+                        if content.get('stderr'):
+                            result_text += f"\nstderr: {content.get('stderr')}"
+                        result_text += f"\nreturn_code: {content.get('return_code', 0)}"
+                        status = "error" if content.get('return_code', 0) != 0 else "success"
+                    else:
+                        # text_editor result
+                        if content.get('error_code'):
+                            result_text = f"error: {content.get('error_code')}"
+                            status = "error"
+                        else:
+                            result_text = json.dumps(content)
+                            status = "success"
+
+                    bedrock_content.append(
+                        {
+                            "toolResult": {
+                                "toolUseId": block.get("tool_use_id", ""),
+                                "content": [{"text": result_text}],
+                                "status": status,
+                            }
+                        }
+                    )
+                elif block_type == "tool_use":
+                    bedrock_content.append(
+                        {
+                            "toolUse": {
+                                "toolUseId": block.get("id", ""),
+                                "name": block.get("name", ""),
+                                "input": block.get("input", {}),
+                            }
+                        }
+                    )
+                elif block_type == "tool_result":
+                    tool_result_content = []
+                    content = block.get("content", "")
+                    if isinstance(content, str):
+                        tool_result_content = [{"text": content}]
+                    else:
+                        tool_result_content = self._convert_content_blocks(content)
+                    bedrock_content.append(
+                        {
+                            "toolResult": {
+                                "toolUseId": block.get("tool_use_id", ""),
+                                "content": tool_result_content,
+                                "status": "error" if block.get("is_error") else "success",
+                            }
+                        }
+                    )
 
         return bedrock_content
 

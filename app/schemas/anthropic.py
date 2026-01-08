@@ -81,18 +81,87 @@ class ServerToolUseContent(BaseModel):
 
 
 class CodeExecutionResultContent(BaseModel):
-    """Content block for code execution result."""
+    """Content block for code execution result (PTC)."""
     type: Literal["code_execution_result"] = "code_execution_result"
     stdout: str = ""
     stderr: str = ""
     return_code: int = 0
 
 
+# ==================== Standalone Code Execution Result Types ====================
+
+class BashCodeExecutionResult(BaseModel):
+    """
+    Result from bash code execution in standalone code execution.
+
+    Contains stdout, stderr, and return_code from executing a bash command.
+    """
+    type: Literal["bash_code_execution_result"] = "bash_code_execution_result"
+    stdout: str = ""
+    stderr: str = ""
+    return_code: int = 0
+
+
+class TextEditorCodeExecutionResult(BaseModel):
+    """
+    Result from text editor code execution in standalone code execution.
+
+    Different fields are populated based on the command:
+    - view: file_type, content, num_lines, start_line, total_lines
+    - create: is_file_update
+    - str_replace: old_start, old_lines, new_start, new_lines, lines (diff)
+    - errors: error_code
+    """
+    type: Literal["text_editor_code_execution_result"] = "text_editor_code_execution_result"
+    # For 'view' command
+    file_type: Optional[str] = None  # "text"
+    content: Optional[str] = None
+    num_lines: Optional[int] = Field(None, alias="numLines")
+    start_line: Optional[int] = Field(None, alias="startLine")
+    total_lines: Optional[int] = Field(None, alias="totalLines")
+    # For 'create' command
+    is_file_update: Optional[bool] = None
+    # For 'str_replace' command
+    old_start: Optional[int] = Field(None, alias="oldStart")
+    old_lines: Optional[int] = Field(None, alias="oldLines")
+    new_start: Optional[int] = Field(None, alias="newStart")
+    new_lines: Optional[int] = Field(None, alias="newLines")
+    lines: Optional[List[str]] = None  # Diff lines
+    # For errors
+    error_code: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class BashCodeExecutionToolResult(BaseModel):
+    """
+    Tool result wrapper for bash code execution.
+
+    Returned as a content block in the response.
+    """
+    type: Literal["bash_code_execution_tool_result"] = "bash_code_execution_tool_result"
+    tool_use_id: str
+    content: BashCodeExecutionResult
+
+
+class TextEditorCodeExecutionToolResult(BaseModel):
+    """
+    Tool result wrapper for text editor code execution.
+
+    Returned as a content block in the response.
+    """
+    type: Literal["text_editor_code_execution_tool_result"] = "text_editor_code_execution_tool_result"
+    tool_use_id: str
+    content: TextEditorCodeExecutionResult
+
+
+# ==================== Server Tool Result (supports both PTC and Standalone) ====================
+
 class ServerToolResultContent(BaseModel):
     """Server tool result content block (result of server_tool_use like code_execution)."""
     type: Literal["server_tool_result"] = "server_tool_result"
     tool_use_id: str
-    content: List[CodeExecutionResultContent]
+    content: List[Union[CodeExecutionResultContent, BashCodeExecutionResult, TextEditorCodeExecutionResult]]
 
 
 class ToolResultContent(BaseModel):
@@ -115,6 +184,9 @@ ContentBlock = Union[
     ToolResultContent,
     ServerToolUseContent,  # PTC server tool use
     ServerToolResultContent,  # PTC server tool result
+    # Standalone code execution result types
+    BashCodeExecutionToolResult,
+    TextEditorCodeExecutionToolResult,
 ]
 
 

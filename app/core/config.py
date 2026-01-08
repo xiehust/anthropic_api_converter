@@ -234,6 +234,34 @@ class Settings(BaseSettings):
         description="Disable network access in PTC sandbox"
     )
 
+    # Standalone Code Execution Settings (code-execution-2025-08-25 beta)
+    # Different from PTC: executes bash/file operations server-side (no client tool calls)
+    enable_standalone_code_execution: bool = Field(
+        default=True,
+        alias="ENABLE_STANDALONE_CODE_EXECUTION",
+        description="Enable standalone code execution feature (requires Docker)"
+    )
+    standalone_max_iterations: int = Field(
+        default=25,
+        alias="STANDALONE_MAX_ITERATIONS",
+        description="Maximum agentic loop iterations for standalone code execution"
+    )
+    standalone_bash_timeout: int = Field(
+        default=30,
+        alias="STANDALONE_BASH_TIMEOUT",
+        description="Timeout in seconds for individual bash command execution"
+    )
+    standalone_max_file_size: int = Field(
+        default=10 * 1024 * 1024,  # 10MB
+        alias="STANDALONE_MAX_FILE_SIZE",
+        description="Maximum file size in bytes for text editor operations"
+    )
+    standalone_workspace_dir: str = Field(
+        default="/workspace",
+        alias="STANDALONE_WORKSPACE_DIR",
+        description="Working directory inside the sandbox container"
+    )
+
     @field_validator("cors_origins", "cors_allow_methods", "cors_allow_headers", mode="before")
     @classmethod
     def parse_list_fields(cls, v: Any) -> List[str]:

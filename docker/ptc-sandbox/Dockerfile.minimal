@@ -27,6 +27,9 @@ RUN pip install --no-cache-dir \
 # Create non-root user for security
 RUN useradd -m -s /bin/bash sandbox
 
+# Create workspace directory with proper permissions for sandbox user
+RUN mkdir -p /workspace && chown sandbox:sandbox /workspace
+
 # Set working directory
 WORKDIR /workspace
 

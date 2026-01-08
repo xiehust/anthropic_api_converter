@@ -26,6 +26,10 @@ from app.schemas.anthropic import (
 from app.services.bedrock_service import BedrockService
 from app.services.ptc_service import PTCService, get_ptc_service
 from app.services.ptc import DockerNotAvailableError, SandboxError, ToolCallRequest, ExecutionResult
+from app.services.standalone_code_execution_service import (
+    StandaloneCodeExecutionService,
+    get_standalone_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +157,12 @@ def get_ptc_service_dep() -> PTCService:
     return get_ptc_service()
 
 
+# Dependency to get standalone code execution service
+def get_standalone_service_dep() -> StandaloneCodeExecutionService:
+    """Get standalone code execution service instance."""
+    return get_standalone_service()
+
+
 @router.post(
     "/messages",
     response_model=MessageResponse,
@@ -175,6 +185,7 @@ async def create_message(
     bedrock_service: BedrockService = Depends(get_bedrock_service),
     usage_tracker: UsageTracker = Depends(get_usage_tracker),
     ptc_service: PTCService = Depends(get_ptc_service_dep),
+    standalone_service: StandaloneCodeExecutionService = Depends(get_standalone_service_dep),
 ):
     """
     Create a message (Anthropic-compatible endpoint).
@@ -310,6 +321,74 @@ async def create_message(
                 )
             except SandboxError as e:
                 logger.error(f"Request {request_id}: Sandbox error: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={
+                        "type": "api_error",
+                        "message": f"Code execution error: {str(e)}",
+                    },
+                )
+
+        # Check if this is a standalone code execution request
+        # (code-execution-2025-08-25 header + code_execution tool without allowed_callers)
+        # PTC has higher priority, so this only runs if is_ptc is False
+        is_standalone = StandaloneCodeExecutionService.is_standalone_request(request_data, anthropic_beta)
+        if is_standalone:
+            logger.info(f"Request {request_id}: Detected standalone code execution request")
+            print(f"[STANDALONE] Detected standalone code execution request")
+
+            if request_data.stream:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "type": "invalid_request_error",
+                        "message": "Standalone code execution does not support streaming. "
+                                   "Please set stream=false in your request.",
+                    },
+                )
+
+            try:
+                # Handle standalone code execution
+                response, container_info = await standalone_service.handle_request(
+                    request=request_data,
+                    bedrock_service=bedrock_service,
+                    request_id=request_id,
+                    service_tier=service_tier,
+                    container_id=container_id,
+                    anthropic_beta=anthropic_beta,
+                )
+
+                # Record usage
+                usage_tracker.record_usage(
+                    api_key=api_key_info.get("api_key"),
+                    request_id=request_id,
+                    model=request_data.model,
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                    cached_tokens=getattr(response.usage, 'cache_read_input_tokens', 0) or 0,
+                    cache_write_input_tokens=getattr(response.usage, 'cache_creation_input_tokens', 0) or 0,
+                    success=True,
+                )
+
+                # Add container info to response
+                response_dict = response.model_dump()
+                if container_info:
+                    response_dict["container"] = container_info.model_dump()
+
+                logger.debug(f"[STANDALONE] Final response: {response_dict}")
+                return JSONResponse(content=response_dict)
+
+            except DockerNotAvailableError as e:
+                logger.error(f"Request {request_id}: Docker not available for standalone: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "type": "api_error",
+                        "message": str(e),
+                    },
+                )
+            except SandboxError as e:
+                logger.error(f"Request {request_id}: Standalone sandbox error: {e}")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail={

@@ -18,6 +18,7 @@ from app.schemas.anthropic import (
     TextContent,
     ThinkingContent,
     ToolUseContent,
+    ServerToolUseContent,
     Usage,
 )
 

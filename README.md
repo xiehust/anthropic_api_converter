@@ -497,6 +497,7 @@ cd docker/ptc-sandbox
 | `python:3.11-slim`（默认） | ~50MB | 仅 Python 标准库 |
 | `ptc-sandbox:minimal` | ~200MB | numpy, pandas, requests, httpx |
 | `ptc-sandbox:datascience` | ~800MB | numpy, pandas, scipy, matplotlib, scikit-learn, statsmodels |
+| `public.ecr.aws/f8g1z3n8/bedrock-proxy-sandbox:datascience.0.1` | ~800MB | numpy, pandas, scipy, matplotlib, scikit-learn, statsmodels |
 
 详细说明请参见 [PTC Sandbox 自定义镜像文档](docker/ptc-sandbox/README.md)
 

@@ -3,7 +3,7 @@ from anthropic import Anthropic
 
 # Initialize the client
 client = Anthropic(
-    api_key='sk-22b986366e084cafae975331ae994e8a',
+    api_key='sk-',
     base_url='http://localhost:8002'
 )
 

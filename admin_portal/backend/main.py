@@ -12,12 +12,19 @@ from pathlib import Path
 # Add parent directory to path to import from app
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-# Load environment variables from .env file
+# Load environment variables from .env files
 from dotenv import load_dotenv
 
+# Load root .env first (DynamoDB, AWS settings)
+root_env_path = Path(__file__).parent.parent.parent / ".env"
+if root_env_path.exists():
+    load_dotenv(root_env_path)
+    print(f"Loaded environment from: {root_env_path}")
+
+# Load local .env second (Cognito settings - overrides root)
 env_path = Path(__file__).parent / ".env"
 if env_path.exists():
-    load_dotenv(env_path)
+    load_dotenv(env_path, override=True)
     print(f"Loaded environment from: {env_path}")
 
 from fastapi import FastAPI, Request

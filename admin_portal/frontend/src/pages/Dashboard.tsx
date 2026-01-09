@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { useDashboardStats } from '../hooks';
+import { formatTokens } from '../utils';
 
 export default function Dashboard() {
   const { t } = useTranslation();
@@ -121,6 +122,51 @@ export default function Dashboard() {
             <span className="text-2xl font-bold text-white">{t('dashboard.operational')}</span>
           </div>
           <p className="text-xs text-slate-500 mt-2">All systems normal</p>
+        </div>
+      </div>
+
+      {/* Token Usage Card */}
+      <div className="bg-surface-dark border border-border-dark rounded-xl p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-slate-400 text-sm font-medium">{t('dashboard.totalTokenUsage')}</span>
+          <span className="material-symbols-outlined text-cyan-500">token</span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[16px] text-emerald-500">arrow_upward</span>
+              <span className="text-xs text-slate-400">{t('apiKeys.inputTokens')}</span>
+            </div>
+            <span className="text-lg font-bold text-white">{formatTokens(stats?.total_input_tokens)}</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[16px] text-blue-400">arrow_downward</span>
+              <span className="text-xs text-slate-400">{t('apiKeys.outputTokens')}</span>
+            </div>
+            <span className="text-lg font-bold text-white">{formatTokens(stats?.total_output_tokens)}</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[16px] text-purple-400">cached</span>
+              <span className="text-xs text-slate-400">{t('apiKeys.cacheRead')}</span>
+            </div>
+            <span className="text-lg font-bold text-white">{formatTokens(stats?.total_cached_tokens)}</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[16px] text-amber-400">edit_note</span>
+              <span className="text-xs text-slate-400">{t('apiKeys.cacheWrite')}</span>
+            </div>
+            <span className="text-lg font-bold text-white">{formatTokens(stats?.total_cache_write_tokens)}</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[16px] text-slate-400">send</span>
+              <span className="text-xs text-slate-400">{t('apiKeys.requests')}</span>
+            </div>
+            <span className="text-lg font-bold text-white">{(stats?.total_requests || 0).toLocaleString()}</span>
+          </div>
         </div>
       </div>
 

@@ -29,8 +29,9 @@ def main():
     print("\nTables:")
     print(f"  - {dynamodb_client.api_keys_table_name}")
     print(f"  - {dynamodb_client.usage_table_name}")
-    print(f"  - {dynamodb_client.cache_table_name}")
+    print(f"  - {dynamodb_client.usage_stats_table_name}")
     print(f"  - {dynamodb_client.model_mapping_table_name}")
+    print(f"  - {dynamodb_client.model_pricing_table_name}")
 
 
 if __name__ == "__main__":

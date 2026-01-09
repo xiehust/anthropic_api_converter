@@ -17,3 +17,9 @@ class DashboardStats(BaseModel):
     new_keys_this_week: Optional[int] = 0
     # Models that have usage but no pricing configured
     models_without_pricing: List[str] = []
+    # Total token usage across all API keys
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_cached_tokens: int = 0
+    total_cache_write_tokens: int = 0
+    total_requests: int = 0

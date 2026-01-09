@@ -52,7 +52,19 @@
     "passwordMixedCase": "包含大小写字母",
     "passwordNumbers": "至少一个数字",
     "needHelp": "需要帮助？",
-    "privacyPolicy": "隐私政策"
+    "privacyPolicy": "隐私政策",
+    "forgotPassword": "忘记密码？",
+    "forgotPasswordMessage": "输入您的邮箱地址，我们将发送验证码以重置密码。",
+    "email": "邮箱",
+    "emailPlaceholder": "输入您的邮箱地址",
+    "sendCode": "发送验证码",
+    "backToLogin": "返回登录",
+    "codeSentMessage": "我们已将验证码发送到您的邮箱。请在下方输入验证码和新密码。",
+    "verificationCode": "验证码",
+    "verificationCodePlaceholder": "输入验证码",
+    "resetPassword": "重置密码",
+    "resetSuccess": "密码重置成功",
+    "resetSuccessMessage": "您的密码已重置。现在可以使用新密码登录。"
   },
   "nav": {
     "dashboard": "仪表盘",
@@ -74,7 +86,8 @@
     "operational": "正常运行",
     "newKeysThisWeek": "本周新增",
     "totalModels": "模型总数",
-    "activeModels": "已启用"
+    "activeModels": "已启用",
+    "totalTokenUsage": "令牌总使用量"
   },
   "apiKeys": {
     "title": "用户与 API 密钥管理",

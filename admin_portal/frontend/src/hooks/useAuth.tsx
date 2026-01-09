@@ -15,12 +15,15 @@ import {
   getCurrentUser,
   fetchAuthSession,
   confirmSignIn,
+  resetPassword,
+  confirmResetPassword,
   AuthUser,
 } from 'aws-amplify/auth';
 import { isAmplifyConfigured } from '../config/amplify';
 import { AUTH_ERROR_EVENT } from '../services/api';
 
 export type AuthState = 'idle' | 'loading' | 'authenticated' | 'unauthenticated' | 'newPasswordRequired';
+export type ResetPasswordState = 'idle' | 'codeSent' | 'success';
 
 export interface AuthUserInfo {
   username: string;
@@ -43,6 +46,12 @@ interface AuthContextValue {
   completeNewPassword: (newPassword: string) => Promise<boolean>;
   getAccessToken: () => Promise<string | null>;
   clearSessionExpired: () => void;
+  // Reset password
+  resetPasswordState: ResetPasswordState;
+  resetPasswordUsername: string | null;
+  initiateResetPassword: (username: string) => Promise<boolean>;
+  completeResetPassword: (code: string, newPassword: string) => Promise<boolean>;
+  cancelResetPassword: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -53,6 +62,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [resetPasswordState, setResetPasswordState] = useState<ResetPasswordState>('idle');
+  const [resetPasswordUsername, setResetPasswordUsername] = useState<string | null>(null);
   const navigate = useNavigate();
 
   // Check current authentication status
@@ -262,6 +273,73 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null);
   }, []);
 
+  // Initiate password reset - sends verification code to user's email
+  const initiateResetPassword = useCallback(async (username: string): Promise<boolean> => {
+    // Development mode - no reset available
+    if (!isAmplifyConfigured()) {
+      setError('Password reset is not available in development mode');
+      return false;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const output = await resetPassword({ username });
+
+      if (output.nextStep.resetPasswordStep === 'CONFIRM_RESET_PASSWORD_WITH_CODE') {
+        setResetPasswordUsername(username);
+        setResetPasswordState('codeSent');
+        return true;
+      }
+
+      // Handle other possible steps
+      setError(`Unexpected reset step: ${output.nextStep.resetPasswordStep}`);
+      return false;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to send reset code';
+      setError(message);
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Complete password reset with verification code and new password
+  const completeResetPassword = useCallback(async (code: string, newPassword: string): Promise<boolean> => {
+    if (!resetPasswordUsername) {
+      setError('No reset password session found');
+      return false;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      await confirmResetPassword({
+        username: resetPasswordUsername,
+        confirmationCode: code,
+        newPassword,
+      });
+
+      setResetPasswordState('success');
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to reset password';
+      setError(message);
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, [resetPasswordUsername]);
+
+  // Cancel reset password flow and return to login
+  const cancelResetPassword = useCallback(() => {
+    setResetPasswordState('idle');
+    setResetPasswordUsername(null);
+    setError(null);
+  }, []);
+
   const value: AuthContextValue = {
     authState,
     authenticated: authState === 'authenticated',
@@ -276,6 +354,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     completeNewPassword,
     getAccessToken,
     clearSessionExpired,
+    resetPasswordState,
+    resetPasswordUsername,
+    initiateResetPassword,
+    completeResetPassword,
+    cancelResetPassword,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

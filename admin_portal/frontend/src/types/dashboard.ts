@@ -10,4 +10,10 @@ export interface DashboardStats {
   new_keys_this_week: number;
   // Models that have usage but no pricing configured
   models_without_pricing: string[];
+  // Total token usage across all API keys
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cached_tokens: number;
+  total_cache_write_tokens: number;
+  total_requests: number;
 }

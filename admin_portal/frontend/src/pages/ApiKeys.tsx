@@ -10,6 +10,7 @@ import {
   useDashboardStats,
 } from '../hooks';
 import type { ApiKey, ApiKeyCreate, ApiKeyUpdate } from '../types';
+import { formatTokens } from '../utils';
 
 // Modal Component
 function Modal({
@@ -571,7 +572,7 @@ export default function ApiKeys() {
                               arrow_upward
                             </span>
                             <span className="text-xs text-white font-medium">
-                              {((key.total_input_tokens || 0) / 1000).toFixed(1)}k
+                              {formatTokens(key.total_input_tokens)}
                             </span>
                             <span className="text-xs text-slate-500">{t('apiKeys.inputTokens')}</span>
                           </div>
@@ -580,7 +581,7 @@ export default function ApiKeys() {
                               arrow_downward
                             </span>
                             <span className="text-xs text-white font-medium">
-                              {((key.total_output_tokens || 0) / 1000).toFixed(1)}k
+                              {formatTokens(key.total_output_tokens)}
                             </span>
                             <span className="text-xs text-slate-500">{t('apiKeys.outputTokens')}</span>
                           </div>
@@ -589,7 +590,7 @@ export default function ApiKeys() {
                               cached
                             </span>
                             <span className="text-xs text-white font-medium">
-                              {((key.total_cached_tokens || 0) / 1000).toFixed(1)}k
+                              {formatTokens(key.total_cached_tokens)}
                             </span>
                             <span className="text-xs text-slate-500">{t('apiKeys.cacheRead')}</span>
                           </div>
@@ -598,7 +599,7 @@ export default function ApiKeys() {
                               edit_note
                             </span>
                             <span className="text-xs text-white font-medium">
-                              {((key.total_cache_write_tokens || 0) / 1000).toFixed(1)}k
+                              {formatTokens(key.total_cache_write_tokens)}
                             </span>
                             <span className="text-xs text-slate-500">{t('apiKeys.cacheWrite')}</span>
                           </div>

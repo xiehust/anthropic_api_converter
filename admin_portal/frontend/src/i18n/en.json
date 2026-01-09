@@ -74,7 +74,8 @@
     "operational": "Operational",
     "newKeysThisWeek": "new this week",
     "totalModels": "Total Models",
-    "activeModels": "active"
+    "activeModels": "active",
+    "totalTokenUsage": "Total Token Usage"
   },
   "apiKeys": {
     "title": "User & API Key Management",

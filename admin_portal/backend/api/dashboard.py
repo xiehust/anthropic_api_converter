@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from fastapi import APIRouter
 
-from app.db.dynamodb import DynamoDBClient, APIKeyManager, ModelPricingManager, UsageTracker, ModelMappingManager
+from app.db.dynamodb import DynamoDBClient, APIKeyManager, ModelPricingManager, UsageTracker, ModelMappingManager, UsageStatsManager
 from app.core.config import settings
 from admin_portal.backend.schemas.dashboard import DashboardStats
 
@@ -106,6 +106,25 @@ async def get_dashboard_stats():
     total_models = len(all_pricing)
     active_models = sum(1 for p in all_pricing if p.get("status") == "active")
 
+    # Calculate total token usage across all API keys
+    usage_stats_manager = UsageStatsManager(db_client)
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_cached_tokens = 0
+    total_cache_write_tokens = 0
+    total_requests = 0
+
+    for key in all_keys:
+        api_key = key.get("api_key")
+        if api_key:
+            stats = usage_stats_manager.get_stats(api_key)
+            if stats:
+                total_input_tokens += int(stats.get("total_input_tokens", 0) or 0)
+                total_output_tokens += int(stats.get("total_output_tokens", 0) or 0)
+                total_cached_tokens += int(stats.get("total_cached_tokens", 0) or 0)
+                total_cache_write_tokens += int(stats.get("total_cache_write_tokens", 0) or 0)
+                total_requests += int(stats.get("total_requests", 0) or 0)
+
     # Get set of models that have pricing configured (Bedrock model IDs)
     priced_models = {p.get("model_id") for p in all_pricing if p.get("model_id")}
 
@@ -162,4 +181,9 @@ async def get_dashboard_stats():
         system_status="operational",
         new_keys_this_week=new_keys_this_week,
         models_without_pricing=models_without_pricing,
+        total_input_tokens=total_input_tokens,
+        total_output_tokens=total_output_tokens,
+        total_cached_tokens=total_cached_tokens,
+        total_cache_write_tokens=total_cache_write_tokens,
+        total_requests=total_requests,
     )

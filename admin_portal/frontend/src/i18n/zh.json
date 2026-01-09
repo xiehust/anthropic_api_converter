@@ -74,7 +74,8 @@
     "operational": "正常运行",
     "newKeysThisWeek": "本周新增",
     "totalModels": "模型总数",
-    "activeModels": "已启用"
+    "activeModels": "已启用",
+    "totalTokenUsage": "令牌总使用量"
   },
   "apiKeys": {
     "title": "用户与 API 密钥管理",

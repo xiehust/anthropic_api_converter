@@ -386,7 +386,8 @@ class StandaloneCodeExecutionService:
         return f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
 
     def _emit_message_start(
-        self, message_id: str, model: str, input_tokens: int
+        self, message_id: str, model: str, input_tokens: int,
+        container_info: Optional[ContainerInfo] = None
     ) -> str:
         """
         Generate message_start SSE event.
@@ -395,25 +396,35 @@ class StandaloneCodeExecutionService:
             message_id: Unique message ID
             model: Model name
             input_tokens: Initial input token count
+            container_info: Optional container info for session reuse
 
         Returns:
             SSE-formatted message_start event
         """
+        message = {
+            "id": message_id,
+            "type": "message",
+            "role": "assistant",
+            "content": [],
+            "model": model,
+            "stop_reason": None,
+            "stop_sequence": None,
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": 0,
+            },
+        }
+
+        # Add container info inside message if available
+        if container_info:
+            message["container"] = {
+                "id": container_info.id,
+                "expires_at": container_info.expires_at,
+            }
+
         return self._format_sse_event({
             "type": "message_start",
-            "message": {
-                "id": message_id,
-                "type": "message",
-                "role": "assistant",
-                "content": [],
-                "model": model,
-                "stop_reason": None,
-                "stop_sequence": None,
-                "usage": {
-                    "input_tokens": input_tokens,
-                    "output_tokens": 0,
-                },
-            }
+            "message": message,
         })
 
     def _emit_content_block_events(
@@ -720,7 +731,14 @@ class StandaloneCodeExecutionService:
 
                 # Emit message_start on first iteration
                 if not emitted_message_start:
-                    yield self._emit_message_start(message_id, request.model, total_input_tokens)
+                    # Build container info from session
+                    container_info = ContainerInfo(
+                        id=session.session_id,
+                        expires_at=session.expires_at.isoformat()
+                    )
+                    yield self._emit_message_start(
+                        message_id, request.model, total_input_tokens, container_info
+                    )
                     emitted_message_start = True
 
                 # Get response content and convert to server_tool_use

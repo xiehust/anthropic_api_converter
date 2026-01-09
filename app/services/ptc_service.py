@@ -2203,25 +2203,37 @@ Before writing code, verify:
         return f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
 
     def _emit_message_start(
-        self, message_id: str, model: str, input_tokens: int
+        self, message_id: str, model: str, input_tokens: int,
+        container_info: Optional[ContainerInfo] = None
     ) -> str:
         """Generate message_start SSE event."""
-        return self._format_sse_event({
-            "type": "message_start",
-            "message": {
-                "id": message_id,
-                "type": "message",
-                "role": "assistant",
-                "content": [],
-                "model": model,
-                "stop_reason": None,
-                "stop_sequence": None,
-                "usage": {
-                    "input_tokens": input_tokens,
-                    "output_tokens": 0,
-                },
+        message = {
+            "id": message_id,
+            "type": "message",
+            "role": "assistant",
+            "content": [],
+            "model": model,
+            "stop_reason": None,
+            "stop_sequence": None,
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": 0,
+            },
+        }
+
+        # Add container info inside message if available
+        if container_info:
+            message["container"] = {
+                "id": container_info.id,
+                "expires_at": container_info.expires_at,
             }
-        })
+
+        event_data = {
+            "type": "message_start",
+            "message": message,
+        }
+
+        return self._format_sse_event(event_data)
 
     def _emit_content_block_events(
         self, content: List[Any], start_index: int
@@ -2398,8 +2410,14 @@ Before writing code, verify:
                 total_input_tokens += response.usage.input_tokens
                 total_output_tokens += response.usage.output_tokens
 
-            # Emit message_start
-            yield self._emit_message_start(message_id, request.model, total_input_tokens)
+            # Build container info
+            container_info = ContainerInfo(
+                id=session.session_id,
+                expires_at=session.expires_at.isoformat()
+            )
+
+            # Emit message_start with container info
+            yield self._emit_message_start(message_id, request.model, total_input_tokens, container_info)
 
             # Check if Claude called execute_code
             execute_code_call = self._find_execute_code_call(response)
@@ -2666,8 +2684,14 @@ Before writing code, verify:
                 })
                 return
 
-            # Emit message_start
-            yield self._emit_message_start(message_id, original_request.model, 0)
+            # Build container info
+            container_info = ContainerInfo(
+                id=session.session_id,
+                expires_at=session.expires_at.isoformat()
+            )
+
+            # Emit message_start with container info
+            yield self._emit_message_start(message_id, original_request.model, 0, container_info)
 
             if not is_complete and isinstance(result, (ToolCallRequest, BatchToolCallRequest)):
                 # Another tool call - emit events and return

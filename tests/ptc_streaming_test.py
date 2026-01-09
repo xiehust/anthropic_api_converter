@@ -71,9 +71,20 @@ with client.beta.messages.stream(
 ) as stream:
     print("\nStreaming events:")
     event_counts = {}
+    container_id = None
     for event in stream:
         event_type = type(event).__name__
         event_counts[event_type] = event_counts.get(event_type, 0) + 1
+
+        # Check for container info in message_start
+        if event_type == "BetaRawMessageStartEvent":
+            print(f"  [message_start event] {event}")
+            # Check the raw event data
+            if hasattr(event, 'message') and event.message:
+                print(f"  [message] {event.message}")
+                if hasattr(event.message, 'container') and event.message.container:
+                    container_id = event.message.container.id
+                    print(f"  [Container ID from message_start] {container_id}")
 
     print("  Event counts:")
     for evt, count in sorted(event_counts.items()):

@@ -45,12 +45,16 @@ def _extract_ptc_tool_result(request: MessageRequest, container_id: Optional[str
             Tuple of (session_id, "batch", {call_id: result_content}, has_any_error)
         None if not a PTC continuation.
     """
+    print(f"[PTC Extract] container_id={container_id}")
     if not container_id:
+        print("[PTC Extract] No container_id, returning None")
         return None
 
     # Check if there's a pending execution for this container
     pending_state = ptc_service.get_pending_execution(container_id)
+    print(f"[PTC Extract] pending_state={pending_state is not None}, states_keys={list(ptc_service._execution_states.keys())}")
     if not pending_state:
+        print(f"[PTC Extract] No pending state for {container_id}, returning None")
         return None
 
     # Check if the last message contains a tool_result
@@ -229,6 +233,7 @@ async def create_message(
     print(f"[REQUEST] Model: {request_data.model}")
     print(f"[REQUEST] Stream: {request_data.stream}")
     print(f"[REQUEST] Beta: {anthropic_beta}")
+    print(f"[REQUEST] Container: {container_id}")
     print(f"[REQUEST] API Key: {api_key_info.get('api_key', 'unknown')[:20]}...")
     print(f"{'='*80}\n")
 

@@ -2937,17 +2937,12 @@ Before writing code, verify:
         effective_anthropic_beta = execution_state.original_anthropic_beta
 
         # Build messages
+        # In PTC continuation flow, we skip ALL assistant messages and user messages with tool_result
+        # from the client's echoed conversation. The client echoes tool_use blocks without the
+        # 'caller' field (SDK strips it), so we can't distinguish PTC tool calls from direct calls.
+        # We reconstruct the conversation using only the original user query and our stored state.
         messages = []
         msg_list = list(original_request.messages)
-
-        # Find last assistant message index
-        last_assistant_idx = -1
-        for i in range(len(msg_list) - 1, -1, -1):
-            msg = msg_list[i]
-            role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
-            if role == "assistant":
-                last_assistant_idx = i
-                break
 
         for i, msg in enumerate(msg_list):
             if isinstance(msg, dict):
@@ -2959,11 +2954,12 @@ Before writing code, verify:
             else:
                 continue
 
-            # Skip last assistant message
-            if role == "assistant" and i == last_assistant_idx:
+            # Skip ALL assistant messages - we'll add our own stored content
+            # This avoids issues with tool_use blocks that don't have corresponding tool_results
+            if role == "assistant":
                 continue
 
-            # Skip user messages with tool_result
+            # Skip user messages with tool_result - those are for PTC tool calls
             if role == "user" and isinstance(content, list):
                 has_tool_result = any(
                     (isinstance(b, dict) and b.get("type") == "tool_result") or
@@ -2974,13 +2970,6 @@ Before writing code, verify:
                     continue
 
             msg_dict = msg if isinstance(msg, dict) else msg.model_dump()
-
-            if role == "assistant" and isinstance(msg_dict.get("content"), list):
-                msg_dict = dict(msg_dict)
-                msg_dict["content"] = _filter_content_blocks_for_bedrock(msg_dict["content"])
-                if not msg_dict["content"]:
-                    continue
-
             messages.append(msg_dict)
 
         # Append stored assistant content
@@ -3037,6 +3026,194 @@ Before writing code, verify:
 
         if final_response.usage:
             total_output_tokens += final_response.usage.output_tokens
+
+        # Check if Claude called execute_code again (recursive code execution)
+        next_execute_code = self._find_execute_code_call(final_response)
+
+        if next_execute_code:
+            # Recursive handling for multi-round code execution
+            logger.info("[PTC Streaming] Claude requested another code execution, handling recursively")
+
+            # Execute the new code in sandbox
+            new_code = next_execute_code.get("input", {}).get("code", "")
+            new_code_execution_tool_id = f"srvtoolu_{uuid4().hex[:12]}"
+
+            # Store new assistant content for potential further continuation
+            new_assistant_content = []
+            for block in final_response.content:
+                if hasattr(block, "model_dump"):
+                    new_assistant_content.append(block.model_dump())
+                elif isinstance(block, dict):
+                    new_assistant_content.append(block)
+
+            gen = self.sandbox_executor.execute_code(new_code, session)
+
+            try:
+                new_result = await gen.__anext__()
+
+                if isinstance(new_result, (ToolCallRequest, BatchToolCallRequest)):
+                    # Tool call(s) requested - emit events and return
+                    content_blocks = []
+
+                    # Add text from response
+                    for block in final_response.content:
+                        if hasattr(block, "type"):
+                            if block.type == "text":
+                                content_blocks.append({"type": "text", "text": block.text if hasattr(block, "text") else ""})
+
+                    # Add server_tool_use for code_execution
+                    content_blocks.append({
+                        "type": "server_tool_use",
+                        "id": new_code_execution_tool_id,
+                        "name": "code_execution",
+                        "input": {"code": new_code}
+                    })
+
+                    # Add tool_use block(s) for client execution
+                    if isinstance(new_result, BatchToolCallRequest):
+                        pending_call_ids = [r.call_id for r in new_result.requests]
+                        first_call = new_result.requests[0]
+
+                        for tool_request in new_result.requests:
+                            content_blocks.append({
+                                "type": "tool_use",
+                                "id": f"toolu_{tool_request.call_id[:12]}",
+                                "name": tool_request.tool_name,
+                                "input": tool_request.arguments,
+                                "caller": {
+                                    "type": PTC_ALLOWED_CALLER,
+                                    "tool_id": new_code_execution_tool_id
+                                }
+                            })
+
+                        # Store state for continuation
+                        new_state = PTCExecutionState(
+                            session_id=session.session_id,
+                            code_execution_tool_id=new_code_execution_tool_id,
+                            code=new_code,
+                            pending_tool_call_id=first_call.call_id,
+                            pending_tool_name=first_call.tool_name,
+                            pending_tool_input=first_call.arguments,
+                            pending_batch_call_ids=pending_call_ids,
+                            original_system=execution_state.original_system,
+                            original_model=execution_state.original_model,
+                            original_max_tokens=execution_state.original_max_tokens,
+                            original_temperature=execution_state.original_temperature,
+                            original_top_p=execution_state.original_top_p,
+                            original_top_k=execution_state.original_top_k,
+                            original_stop_sequences=execution_state.original_stop_sequences,
+                            original_tool_choice=execution_state.original_tool_choice,
+                            original_thinking=execution_state.original_thinking,
+                            original_anthropic_beta=effective_anthropic_beta,
+                            original_assistant_content=new_assistant_content,
+                            original_execute_code_id=next_execute_code.get("id"),
+                        )
+                        self._execution_states[session.session_id] = new_state
+                        self._execution_generators[session.session_id] = gen
+
+                        session.pending_tool_call = PendingToolCall(
+                            call_id=first_call.call_id,
+                            tool_name=first_call.tool_name,
+                            arguments=first_call.arguments,
+                            session_id=session.session_id,
+                            code_execution_tool_id=new_code_execution_tool_id
+                        )
+                    else:
+                        # Single tool call
+                        content_blocks.append({
+                            "type": "tool_use",
+                            "id": f"toolu_{uuid4().hex[:12]}",
+                            "name": new_result.tool_name,
+                            "input": new_result.arguments,
+                            "caller": {
+                                "type": PTC_ALLOWED_CALLER,
+                                "tool_id": new_code_execution_tool_id
+                            }
+                        })
+
+                        # Store state for continuation
+                        new_state = PTCExecutionState(
+                            session_id=session.session_id,
+                            code_execution_tool_id=new_code_execution_tool_id,
+                            code=new_code,
+                            pending_tool_call_id=new_result.call_id,
+                            pending_tool_name=new_result.tool_name,
+                            pending_tool_input=new_result.arguments,
+                            original_system=execution_state.original_system,
+                            original_model=execution_state.original_model,
+                            original_max_tokens=execution_state.original_max_tokens,
+                            original_temperature=execution_state.original_temperature,
+                            original_top_p=execution_state.original_top_p,
+                            original_top_k=execution_state.original_top_k,
+                            original_stop_sequences=execution_state.original_stop_sequences,
+                            original_tool_choice=execution_state.original_tool_choice,
+                            original_thinking=execution_state.original_thinking,
+                            original_anthropic_beta=effective_anthropic_beta,
+                            original_assistant_content=new_assistant_content,
+                            original_execute_code_id=next_execute_code.get("id"),
+                        )
+                        self._execution_states[session.session_id] = new_state
+                        self._execution_generators[session.session_id] = gen
+
+                        session.pending_tool_call = PendingToolCall(
+                            call_id=new_result.call_id,
+                            tool_name=new_result.tool_name,
+                            arguments=new_result.arguments,
+                            session_id=session.session_id,
+                            code_execution_tool_id=new_code_execution_tool_id
+                        )
+
+                    # Emit content block events
+                    events, global_index = self._emit_content_block_events(content_blocks, global_index)
+                    for event in events:
+                        yield event
+
+                    # Emit message end with stop_reason="tool_use"
+                    for event in self._emit_message_end("tool_use", total_output_tokens):
+                        yield event
+                    return
+
+                elif isinstance(new_result, ExecutionResult):
+                    # Code completed - recursively call finalize
+                    async for event in self._finalize_code_execution_streaming(
+                        result=new_result,
+                        code_execution_tool_id=new_code_execution_tool_id,
+                        original_request=original_request,
+                        bedrock_service=bedrock_service,
+                        request_id=request_id,
+                        service_tier=service_tier,
+                        session=session,
+                        ptc_callable_tools=ptc_callable_tools,
+                        code=new_code,
+                        execution_state=PTCExecutionState(
+                            session_id=session.session_id,
+                            code_execution_tool_id=new_code_execution_tool_id,
+                            code=new_code,
+                            pending_tool_call_id="",
+                            pending_tool_name="",
+                            pending_tool_input={},
+                            original_system=execution_state.original_system,
+                            original_model=execution_state.original_model,
+                            original_max_tokens=execution_state.original_max_tokens,
+                            original_temperature=execution_state.original_temperature,
+                            original_top_p=execution_state.original_top_p,
+                            original_top_k=execution_state.original_top_k,
+                            original_stop_sequences=execution_state.original_stop_sequences,
+                            original_tool_choice=execution_state.original_tool_choice,
+                            original_thinking=execution_state.original_thinking,
+                            original_anthropic_beta=effective_anthropic_beta,
+                            original_assistant_content=new_assistant_content,
+                            original_execute_code_id=next_execute_code.get("id"),
+                        ),
+                        message_id=message_id,
+                        start_index=global_index,
+                    ):
+                        yield event
+                    return
+
+            except StopAsyncIteration:
+                # Code completed without tool calls
+                pass
 
         # Add direct caller to tool_use blocks
         final_response = self._add_direct_caller_to_tool_use(final_response)

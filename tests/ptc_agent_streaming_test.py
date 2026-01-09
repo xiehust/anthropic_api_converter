@@ -14,6 +14,9 @@ from typing import Dict, List, Optional, Any
 from anthropic import Anthropic
 from anthropic.types.beta import BetaTextBlock, BetaToolUseBlock
 
+# Import test configuration
+from config import API_KEY, BASE_URL, MODEL_ID
+
 # Import team expense API utilities
 from utils.team_expense_api import get_custom_budget, get_expenses, get_team_members
 
@@ -21,10 +24,6 @@ from utils.team_expense_api import get_custom_budget, get_expenses, get_team_mem
 # ============================================================
 # Configuration
 # ============================================================
-
-API_KEY = 'sk-22b986366e084cafae975331ae994e8a'
-BASE_URL = 'http://localhost:8002'
-MODEL_ID = 'claude-sonnet-4-5-20250929'
 
 # Initialize client
 client = Anthropic(api_key=API_KEY, base_url=BASE_URL)

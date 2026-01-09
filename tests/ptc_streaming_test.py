@@ -1,10 +1,10 @@
 from anthropic import Anthropic
 
+# Import test configuration
+from config import API_KEY, BASE_URL, MODEL_ID
+
 # Initialize the client
-client = Anthropic(
-    api_key='sk-22b986366e084cafae975331ae994e8a',
-    base_url='http://localhost:8002'
-)
+client = Anthropic(api_key=API_KEY, base_url=BASE_URL)
 
 # Define PTC tools - external tool called from code
 tools = [

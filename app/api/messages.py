@@ -45,12 +45,16 @@ def _extract_ptc_tool_result(request: MessageRequest, container_id: Optional[str
             Tuple of (session_id, "batch", {call_id: result_content}, has_any_error)
         None if not a PTC continuation.
     """
+    print(f"[PTC Extract] container_id={container_id}")
     if not container_id:
+        print("[PTC Extract] No container_id, returning None")
         return None
 
     # Check if there's a pending execution for this container
     pending_state = ptc_service.get_pending_execution(container_id)
+    print(f"[PTC Extract] pending_state={pending_state is not None}, states_keys={list(ptc_service._execution_states.keys())}")
     if not pending_state:
+        print(f"[PTC Extract] No pending state for {container_id}, returning None")
         return None
 
     # Check if the last message contains a tool_result
@@ -229,6 +233,7 @@ async def create_message(
     print(f"[REQUEST] Model: {request_data.model}")
     print(f"[REQUEST] Stream: {request_data.stream}")
     print(f"[REQUEST] Beta: {anthropic_beta}")
+    print(f"[REQUEST] Container: {container_id}")
     print(f"[REQUEST] API Key: {api_key_info.get('api_key', 'unknown')[:20]}...")
     print(f"{'='*80}\n")
 
@@ -243,22 +248,64 @@ async def create_message(
         print(f"[PTC] Detected Programmatic Tool Calling request")
 
     try:
-        # Handle PTC requests (non-streaming only for now)
+        # Handle PTC requests
         if is_ptc:
-            if request_data.stream:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "type": "invalid_request_error",
-                        "message": "Programmatic Tool Calling does not support streaming yet. "
-                                   "Please set stream=false in your request.",
-                    },
-                )
-
             try:
                 # Check if this is a tool_result continuation for a pending sandbox
                 ptc_continuation = _extract_ptc_tool_result(request_data, container_id, ptc_service)
 
+                if request_data.stream:
+                    # Streaming PTC request
+                    logger.info(f"Request {request_id}: Streaming PTC request")
+
+                    if ptc_continuation:
+                        # Resume sandbox execution with tool result(s) - streaming
+                        session_id, tool_use_id, tool_result_content, is_error = ptc_continuation
+
+                        is_batch = tool_use_id == "batch"
+                        if is_batch:
+                            logger.info(f"[PTC Streaming] Resuming sandbox with batch results ({len(tool_result_content)} tools)")
+                        else:
+                            logger.info(f"[PTC Streaming] Resuming sandbox execution for session {session_id}")
+
+                        return StreamingResponse(
+                            ptc_service.handle_tool_result_continuation_streaming(
+                                session_id=session_id,
+                                tool_result=tool_result_content,
+                                is_error=is_error,
+                                original_request=request_data,
+                                bedrock_service=bedrock_service,
+                                request_id=request_id,
+                                service_tier=service_tier,
+                            ),
+                            media_type="text/event-stream",
+                            headers={
+                                "Cache-Control": "no-cache",
+                                "Connection": "keep-alive",
+                                "X-Request-ID": request_id,
+                                "X-Container-ID": container_id or "",
+                            },
+                        )
+                    else:
+                        # New PTC request - streaming
+                        return StreamingResponse(
+                            ptc_service.handle_ptc_request_streaming(
+                                request=request_data,
+                                bedrock_service=bedrock_service,
+                                request_id=request_id,
+                                service_tier=service_tier,
+                                container_id=container_id,
+                                anthropic_beta=anthropic_beta,
+                            ),
+                            media_type="text/event-stream",
+                            headers={
+                                "Cache-Control": "no-cache",
+                                "Connection": "keep-alive",
+                                "X-Request-ID": request_id,
+                            },
+                        )
+
+                # Non-streaming PTC request
                 if ptc_continuation:
                     # Resume sandbox execution with tool result(s)
                     session_id, tool_use_id, tool_result_content, is_error = ptc_continuation
@@ -338,12 +385,28 @@ async def create_message(
             print(f"[STANDALONE] Detected standalone code execution request")
 
             if request_data.stream:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "type": "invalid_request_error",
-                        "message": "Standalone code execution does not support streaming. "
-                                   "Please set stream=false in your request.",
+                # Streaming standalone code execution
+                logger.info(f"Request {request_id}: Streaming standalone code execution")
+
+                # Create session first to get container ID for headers
+                session = await standalone_service._get_or_create_session(container_id)
+
+                return StreamingResponse(
+                    standalone_service.handle_request_streaming(
+                        request=request_data,
+                        bedrock_service=bedrock_service,
+                        request_id=request_id,
+                        service_tier=service_tier,
+                        container_id=session.session_id,
+                        anthropic_beta=anthropic_beta,
+                    ),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Request-ID": request_id,
+                        "X-Container-ID": session.session_id,
+                        "X-Container-Expires-At": session.expires_at.isoformat(),
                     },
                 )
 

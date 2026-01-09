@@ -5,8 +5,10 @@ Debug streaming events to see the exact event structure.
 import httpx
 import json
 
-PROXY_BASE_URL = "http://localhost:8000"
-API_KEY = "sk-"
+# Import test configuration
+from config import API_KEY, BASE_URL
+
+PROXY_BASE_URL = BASE_URL
 TEST_MODEL = "openai.gpt-oss-120b-1:0"
 
 

@@ -52,7 +52,19 @@
     "passwordMixedCase": "Upper and lowercase letters",
     "passwordNumbers": "At least one number",
     "needHelp": "Need help?",
-    "privacyPolicy": "Privacy Policy"
+    "privacyPolicy": "Privacy Policy",
+    "forgotPassword": "Forgot password?",
+    "forgotPasswordMessage": "Enter your email address and we'll send you a verification code to reset your password.",
+    "email": "Email",
+    "emailPlaceholder": "Enter your email address",
+    "sendCode": "Send Code",
+    "backToLogin": "Back to Login",
+    "codeSentMessage": "We've sent a verification code to your email. Enter the code below along with your new password.",
+    "verificationCode": "Verification Code",
+    "verificationCodePlaceholder": "Enter verification code",
+    "resetPassword": "Reset Password",
+    "resetSuccess": "Password Reset Successfully",
+    "resetSuccessMessage": "Your password has been reset. You can now login with your new password."
   },
   "nav": {
     "dashboard": "Dashboard",

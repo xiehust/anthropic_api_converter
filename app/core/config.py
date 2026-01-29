@@ -170,9 +170,20 @@ class Settings(BaseSettings):
         default=[
             "fine-grained-tool-streaming-2025-05-14",
             "interleaved-thinking-2025-05-14",
+            "context-management-2025-06-27",
         ],
         alias="BETA_HEADERS_PASSTHROUGH",
         description="Beta headers that pass through to Bedrock without mapping",
+    )
+
+    # Beta headers that should be filtered out (NOT passed to Bedrock)
+    # These are Anthropic-specific headers that Bedrock doesn't support
+    beta_headers_blocklist: List[str] = Field(
+        default=[
+            "prompt-caching-scope-2026-01-05",
+        ],
+        alias="BETA_HEADERS_BLOCKLIST",
+        description="Beta headers that should NOT be passed to Bedrock (unsupported)",
     )
 
     # Models that support beta header mapping

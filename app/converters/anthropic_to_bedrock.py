@@ -145,6 +145,9 @@ class AnthropicToBedrockConverter:
                     # Pass through directly without mapping
                     bedrock_beta.append(beta_value)
                     print(f"[CONVERTER] Passing through beta header: {beta_value}")
+                elif beta_value in settings.beta_headers_blocklist:
+                    # Filter out blocked headers (not supported by Bedrock)
+                    print(f"[CONVERTER] Filtering out unsupported beta header: {beta_value}")
                 else:
                     # Unknown beta header - pass through as-is
                     bedrock_beta.append(beta_value)

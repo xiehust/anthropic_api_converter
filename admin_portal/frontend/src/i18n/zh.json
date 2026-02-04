@@ -71,6 +71,7 @@
     "apiKeys": "API 密钥",
     "users": "用户",
     "pricing": "定价",
+    "modelMapping": "模型映射",
     "models": "模型",
     "logs": "日志",
     "settings": "设置",
@@ -201,6 +202,34 @@
     "pricingCreated": "模型定价创建成功",
     "pricingUpdated": "模型定价更新成功",
     "pricingDeleted": "模型定价删除成功"
+  },
+  "modelMapping": {
+    "title": "模型映射",
+    "subtitle": "管理 Anthropic 到 Bedrock 模型 ID 的映射关系",
+    "addMapping": "添加映射",
+    "searchPlaceholder": "按模型 ID 搜索...",
+    "anthropicModelId": "Anthropic 模型 ID",
+    "bedrockModelId": "Bedrock 模型 ID",
+    "source": "来源",
+    "sources": {
+      "default": "默认",
+      "custom": "自定义"
+    },
+    "form": {
+      "createTitle": "添加新映射",
+      "editTitle": "编辑映射",
+      "anthropicModelId": "Anthropic 模型 ID",
+      "anthropicModelIdPlaceholder": "例如：opus 或 claude-opus-4-5-20251101",
+      "bedrockModelId": "Bedrock 模型 ID",
+      "bedrockModelIdPlaceholder": "例如：global.anthropic.claude-opus-4-5-20251101-v1:0",
+      "save": "保存映射"
+    },
+    "confirmDelete": "确定要删除此映射吗？",
+    "mappingCreated": "模型映射创建成功",
+    "mappingUpdated": "模型映射更新成功",
+    "mappingDeleted": "模型映射删除成功",
+    "cannotEditDefault": "无法编辑默认映射。请创建自定义覆盖。",
+    "cannotDeleteDefault": "无法删除默认映射。"
   },
   "language": {
     "select": "语言",

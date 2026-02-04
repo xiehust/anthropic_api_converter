@@ -18,6 +18,7 @@ export default function Sidebar() {
     { path: '/dashboard', icon: 'dashboard', label: t('nav.dashboard'), section: 'main' },
     { path: '/api-keys', icon: 'vpn_key', label: t('nav.apiKeys'), section: 'main' },
     { path: '/pricing', icon: 'payments', label: t('nav.pricing'), section: 'config' },
+    { path: '/model-mapping', icon: 'swap_horiz', label: t('nav.modelMapping'), section: 'config' },
   ];
 
   const isActive = (path: string) => location.pathname === path;

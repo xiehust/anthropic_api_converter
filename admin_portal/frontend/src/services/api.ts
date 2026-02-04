@@ -17,6 +17,10 @@ import type {
   PricingUpdate,
   PricingListResponse,
   DashboardStats,
+  ModelMapping,
+  ModelMappingCreate,
+  ModelMappingUpdate,
+  ModelMappingListResponse,
 } from '../types';
 
 const API_BASE_URL = '/api';
@@ -267,6 +271,41 @@ export const pricingApi = {
 
   delete: async (modelId: string): Promise<{ message: string }> => {
     return apiFetch(`/pricing/${encodeURIComponent(modelId)}`, {
+      method: 'DELETE',
+    });
+  },
+};
+
+// Model Mapping API
+export const modelMappingApi = {
+  list: async (params?: { search?: string }): Promise<ModelMappingListResponse> => {
+    const searchParams = new URLSearchParams();
+    if (params?.search) searchParams.set('search', params.search);
+
+    const query = searchParams.toString();
+    return apiFetch(`/model-mapping${query ? `?${query}` : ''}`);
+  },
+
+  get: async (anthropicModelId: string): Promise<ModelMapping> => {
+    return apiFetch(`/model-mapping/${encodeURIComponent(anthropicModelId)}`);
+  },
+
+  create: async (data: ModelMappingCreate): Promise<ModelMapping> => {
+    return apiFetch('/model-mapping', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  update: async (anthropicModelId: string, data: ModelMappingUpdate): Promise<ModelMapping> => {
+    return apiFetch(`/model-mapping/${encodeURIComponent(anthropicModelId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  delete: async (anthropicModelId: string): Promise<{ message: string }> => {
+    return apiFetch(`/model-mapping/${encodeURIComponent(anthropicModelId)}`, {
       method: 'DELETE',
     });
   },

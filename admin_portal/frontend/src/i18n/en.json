@@ -71,6 +71,7 @@
     "apiKeys": "API Keys",
     "users": "Users",
     "pricing": "Pricing",
+    "modelMapping": "Model Mapping",
     "models": "Models",
     "logs": "Logs",
     "settings": "Settings",
@@ -201,6 +202,34 @@
     "pricingCreated": "Model pricing created successfully",
     "pricingUpdated": "Model pricing updated successfully",
     "pricingDeleted": "Model pricing deleted successfully"
+  },
+  "modelMapping": {
+    "title": "Model Mapping",
+    "subtitle": "Manage Anthropic to Bedrock model ID mappings",
+    "addMapping": "Add Mapping",
+    "searchPlaceholder": "Search by model ID...",
+    "anthropicModelId": "Anthropic Model ID",
+    "bedrockModelId": "Bedrock Model ID",
+    "source": "Source",
+    "sources": {
+      "default": "Default",
+      "custom": "Custom"
+    },
+    "form": {
+      "createTitle": "Add New Mapping",
+      "editTitle": "Edit Mapping",
+      "anthropicModelId": "Anthropic Model ID",
+      "anthropicModelIdPlaceholder": "e.g., opus or claude-opus-4-5-20251101",
+      "bedrockModelId": "Bedrock Model ID",
+      "bedrockModelIdPlaceholder": "e.g., global.anthropic.claude-opus-4-5-20251101-v1:0",
+      "save": "Save Mapping"
+    },
+    "confirmDelete": "Are you sure you want to delete this mapping?",
+    "mappingCreated": "Model mapping created successfully",
+    "mappingUpdated": "Model mapping updated successfully",
+    "mappingDeleted": "Model mapping deleted successfully",
+    "cannotEditDefault": "Default mappings cannot be edited. Create a custom override instead.",
+    "cannotDeleteDefault": "Default mappings cannot be deleted."
   },
   "language": {
     "select": "Language",

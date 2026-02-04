@@ -6,8 +6,37 @@ import {
   useUpdateModelMapping,
   useDeleteModelMapping,
 } from '../hooks/useModelMapping';
-import { SlideOver } from '../components/SlideOver';
 import type { ModelMapping, ModelMappingCreate } from '../types';
+
+// Slide-over Panel Component
+function SlideOver({
+  isOpen,
+  onClose,
+  title,
+  children,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  children: React.ReactNode;
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-hidden">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose}></div>
+      <div className="absolute inset-y-0 right-0 max-w-md w-full bg-surface-dark shadow-2xl border-l border-border-dark flex flex-col transform transition-transform duration-300">
+        <div className="px-6 py-4 border-b border-border-dark flex items-center justify-between">
+          <h2 className="text-lg font-bold text-white">{title}</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-300">
+            <span className="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6">{children}</div>
+      </div>
+    </div>
+  );
+}
 
 export default function ModelMappingPage() {
   const { t } = useTranslation();

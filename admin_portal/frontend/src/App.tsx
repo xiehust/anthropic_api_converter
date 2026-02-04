@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { MainLayout } from './components/Layout';
-import { Login, Dashboard, ApiKeys, Pricing } from './pages';
+import { Login, Dashboard, ApiKeys, Pricing, ModelMapping } from './pages';
 import { useAuth } from './hooks';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -57,6 +57,7 @@ export default function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/api-keys" element={<ApiKeys />} />
         <Route path="/pricing" element={<Pricing />} />
+        <Route path="/model-mapping" element={<ModelMapping />} />
       </Route>
 
       {/* Default redirect */}

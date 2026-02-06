@@ -401,12 +401,14 @@ class AnthropicToBedrockConverter:
             List of content blocks in Bedrock format
         """
         if isinstance(content, str):
-            return [{"text": content}]
+            return [{"text": content}] if content else []
 
         bedrock_content = []
 
         for block in content:
             if isinstance(block, TextContent):
+                if not block.text:
+                    continue  # Skip empty text blocks - Bedrock Converse API rejects them
                 bedrock_content.append({"text": block.text})
                 # Add cache point as a separate block if cache_control is present
                 # and model supports prompt caching (Claude models only)
@@ -618,7 +620,9 @@ class AnthropicToBedrockConverter:
             elif isinstance(block, dict):
                 block_type = block.get("type", "")
                 if block_type == "text":
-                    bedrock_content.append({"text": block.get("text", "")})
+                    text_value = block.get("text", "")
+                    if text_value:  # Skip empty text blocks - Bedrock Converse API rejects them
+                        bedrock_content.append({"text": text_value})
                 elif block_type == "server_tool_use":
                     bedrock_content.append(
                         {

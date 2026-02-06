@@ -172,6 +172,7 @@ class Settings(BaseSettings):
             "fine-grained-tool-streaming-2025-05-14",
             "interleaved-thinking-2025-05-14",
             "context-management-2025-06-27",
+            "compact-2026-01-12",
         ],
         alias="BETA_HEADERS_PASSTHROUGH",
         description="Beta headers that pass through to Bedrock without mapping",

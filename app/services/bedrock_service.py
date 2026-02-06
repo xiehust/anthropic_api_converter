@@ -338,6 +338,10 @@ class BedrockService:
         if request.output_config:
             native_request["output_config"] = request.output_config
 
+        # Add context_management if present (e.g., compact-2026-01-12 beta)
+        if request.context_management:
+            native_request["context_management"] = request.context_management
+
         # Add beta headers from client
         # Some headers are mapped (Anthropic → Bedrock), others pass through directly
         bedrock_beta = []
@@ -642,7 +646,7 @@ class BedrockService:
         """
         from app.schemas.anthropic import (
             MessageResponse, Usage, TextContent, ThinkingContent,
-            RedactedThinkingContent, ToolUseContent
+            RedactedThinkingContent, ToolUseContent, CompactionContent
         )
 
         # Extract content blocks
@@ -673,6 +677,11 @@ class BedrockService:
                     name=block.get("name", ""),
                     input=block.get("input", {})
                 ))
+            elif block_type == "compaction":
+                content_blocks.append(CompactionContent(
+                    type="compaction",
+                    content=block.get("content")
+                ))
 
         # Extract usage
         usage_data = response_body.get("usage", {})
@@ -680,7 +689,8 @@ class BedrockService:
             input_tokens=usage_data.get("input_tokens", 0),
             output_tokens=usage_data.get("output_tokens", 0),
             cache_creation_input_tokens=usage_data.get("cache_creation_input_tokens"),
-            cache_read_input_tokens=usage_data.get("cache_read_input_tokens")
+            cache_read_input_tokens=usage_data.get("cache_read_input_tokens"),
+            iterations=usage_data.get("iterations")
         )
 
         return MessageResponse(

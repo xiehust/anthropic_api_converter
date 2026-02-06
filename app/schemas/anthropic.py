@@ -57,6 +57,12 @@ class RedactedThinkingContent(BaseModel):
     data: str  # Base64 encoded redacted data
 
 
+class CompactionContent(BaseModel):
+    """Compaction content block returned when context compaction is triggered."""
+    type: Literal["compaction"] = "compaction"
+    content: Optional[str] = None
+
+
 class CallerInfo(BaseModel):
     """Information about who invoked a tool (for PTC)."""
     type: Literal["direct", "code_execution_20250825"]
@@ -180,6 +186,7 @@ ContentBlock = Union[
     DocumentContent,
     ThinkingContent,
     RedactedThinkingContent,
+    CompactionContent,
     ToolUseContent,
     ToolResultContent,
     ServerToolUseContent,  # PTC server tool use
@@ -284,6 +291,9 @@ class MessageRequest(BaseModel):
     # Output configuration (e.g., effort level for Claude models)
     output_config: Optional[Dict[str, Any]] = None
 
+    # Context management (e.g., compact-2026-01-12 beta for context trimming)
+    context_management: Optional[Dict[str, Any]] = None
+
     # PTC container for session reuse (just the container ID string)
     container: Optional[str] = None
 
@@ -303,6 +313,7 @@ class Usage(BaseModel):
     output_tokens: int
     cache_creation_input_tokens: Optional[int] = None
     cache_read_input_tokens: Optional[int] = None
+    iterations: Optional[List[Dict[str, Any]]] = None
 
 
 class MessageResponse(BaseModel):
@@ -313,7 +324,7 @@ class MessageResponse(BaseModel):
     content: List[ContentBlock]
     model: str
     stop_reason: Optional[Literal[
-        "end_turn", "max_tokens", "stop_sequence", "tool_use"
+        "end_turn", "max_tokens", "stop_sequence", "tool_use", "compaction"
     ]] = None
     stop_sequence: Optional[str] = None
     usage: Usage

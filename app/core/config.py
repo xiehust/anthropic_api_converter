@@ -193,6 +193,8 @@ class Settings(BaseSettings):
         default=[
             "claude-opus-4-5-20251101",
             "global.anthropic.claude-opus-4-5-20251101-v1:0",
+            "claude-opus-4-6",
+            "global.anthropic.claude-opus-4-6-v1",
         ],
         alias="BETA_HEADER_SUPPORTED_MODELS",
         description="List of model IDs that support beta header mapping",

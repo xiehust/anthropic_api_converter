@@ -334,6 +334,10 @@ class BedrockService:
         if request.metadata:
             native_request["metadata"] = request.metadata.model_dump() if hasattr(request.metadata, "model_dump") else request.metadata
 
+        # Add output_config if present (e.g., effort level)
+        if request.output_config:
+            native_request["output_config"] = request.output_config
+
         # Add beta headers from client
         # Some headers are mapped (Anthropic → Bedrock), others pass through directly
         bedrock_beta = []

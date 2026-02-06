@@ -281,6 +281,9 @@ class MessageRequest(BaseModel):
     # Metadata
     metadata: Optional[Metadata] = None
 
+    # Output configuration (e.g., effort level for Claude models)
+    output_config: Optional[Dict[str, Any]] = None
+
     # PTC container for session reuse (just the container ID string)
     container: Optional[str] = None
 

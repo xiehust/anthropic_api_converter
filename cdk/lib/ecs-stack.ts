@@ -153,6 +153,21 @@ export class ECSStack extends cdk.Stack {
       })
     );
 
+    // Grant AWS Marketplace permissions (subscribe and view subscriptions)
+    taskRole.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'aws-marketplace:Subscribe',
+          'aws-marketplace:Unsubscribe',
+          'aws-marketplace:ViewSubscriptions',
+          'aws-marketplace:GetEntitlements',
+          'aws-marketplace:ListEntitlements',
+        ],
+        resources: ['*'],
+      })
+    );
+
     // Create Secret for Master API Key
     const masterApiKeySecret = new secretsmanager.Secret(this, 'MasterAPIKeySecret', {
       secretName: `anthropic-proxy-${config.environmentName}-master-api-key`,

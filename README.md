@@ -75,10 +75,12 @@
   - 预算限制与自动停用功能
 
 ### 支持的模型
-- Claude 4.5/5 Sonnet
+- Claude 4.5/4.6
 - Claude 4.5 Haiku
 - Qwen3-coder-480b
 - Qwen3-235b-instruct
+- Kimi 2.5
+- minimax2.1
 - 任何其他支持 Converse API 的 Bedrock 模型
 
 ## 使用场景
@@ -283,14 +285,25 @@ message = client.messages.create(
 - **PTC 代码执行追踪**：记录 Programmatic Tool Calling 的执行过程
 - **错误诊断**：自动记录异常信息和错误状态
 
-### Span 层级结构
+### Span 层级结构（基于 Turn 的 Agent Loop 追踪）
 
 ```
-[Root] proxy.request                          ← 中间件创建的根 Span
-  └── gen_ai.chat                             ← LLM 请求 Span
-        ├── bedrock.invoke_model              ← Bedrock API 调用
-        └── gen_ai.execute_tool {tool_name}   ← 工具调用（每个工具一个 Span）
+Trace "chat claude-sonnet-4-5-20250929"
+  ├── Turn 1 (input=用户消息, output=助手回复)
+  │     ├── gen_ai.chat (模型, Token 用量, 延迟)
+  │     ├── Tool: Read (input=工具输入)
+  │     └── Tool: Edit (input=工具输入)
+  ├── Turn 2
+  │     ├── gen_ai.chat
+  │     └── Tool: Bash
+  └── Turn 3
+        └── gen_ai.chat (最终文本响应，无工具调用)
 ```
+
+每个 Agent Loop 中的 HTTP 请求映射为一个 **Turn** span，包含：
+- `gen_ai.chat` 生成 span（记录模型、Token 用量、延迟）
+- 响应中每个 tool_use 块对应一个 Tool span
+- 结构化的 input/output 属性（Langfuse UI 自动渲染为 JSON 对象）
 
 ### 记录的关键属性
 
@@ -301,8 +314,7 @@ message = client.messages.create(
 | `gen_ai.usage.output_tokens` | 输出 Token 数 | `350` |
 | `gen_ai.response.finish_reasons` | 停止原因 | `["end_turn"]` |
 | `gen_ai.conversation.id` | 会话 ID | `session-abc123` |
-| `proxy.usage.cache_read_tokens` | 缓存读取 Token | `800` |
-| `proxy.usage.cache_write_tokens` | 缓存写入 Token | `200` |
+| `langfuse.observation.usage_details` | 完整用量 JSON（含缓存 Token） | `{"input":1500,"output":350,"cache_read_input_tokens":800}` |
 | `proxy.api_key_hash` | API Key 哈希（隐私安全） | `a1b2c3d4...` |
 
 ### 连接到 Langfuse Cloud
@@ -347,7 +359,7 @@ curl http://localhost:8000/v1/messages \
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
-
+![alt text](image-12.png)
 **5. 在 Langfuse 中查看追踪**
 
 登录 Langfuse Cloud，在 Traces 页面即可看到追踪数据，包括：
@@ -392,9 +404,38 @@ OTEL_TRACE_CONTENT=true
 ```
 
 启用后，追踪数据中将包含：
-- 最近 3 条消息的内容摘要（每条截取前 500 字符）
-- 响应文本内容（截取前 500 字符）
-- 流式响应的完整文本（截取前 2000 字符）
+- Trace 级别 Input：结构化 JSON 对象（system prompt、tools 含 input_schema、用户消息）
+- Turn 级别 Input/Output：当前轮次的用户消息和助手回复
+- gen_ai.chat 的 prompt：仅包含当前轮次的消息（不包含历史消息）
+- 响应文本和工具调用详情
+
+### CDK 部署开启追踪
+
+通过 CDK 部署到 ECS 时，可以通过环境变量在部署时开启追踪，**无需修改代码**：
+
+```bash
+# 以 Langfuse 为例
+ENABLE_TRACING=true \
+OTEL_EXPORTER_OTLP_ENDPOINT=https://us.cloud.langfuse.com/api/public/otel \
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $(echo -n 'pk-xxx:sk-xxx' | base64)" \
+OTEL_SERVICE_NAME=anthropic-bedrock-proxy-prod \
+OTEL_TRACE_CONTENT=true \
+OTEL_TRACE_SAMPLING_RATIO=1.0 \
+./scripts/deploy.sh -e prod -p arm64
+```
+
+| 环境变量 | 说明 | 默认值 |
+|---------|------|--------|
+| `ENABLE_TRACING` | 开启追踪 | `false` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP 导出端点 | 无 |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | 协议 (`http/protobuf` / `grpc`) | `http/protobuf` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | 认证 Headers | 无 |
+| `OTEL_SERVICE_NAME` | 服务名称 | 无 |
+| `OTEL_TRACE_CONTENT` | 记录 prompt/completion 内容 | `false` |
+| `OTEL_TRACE_SAMPLING_RATIO` | 采样率 (0.0-1.0) | `1.0` |
+
+> **优先级**：环境变量 > `cdk/config/config.ts` 中的配置 > 默认值
 
 ### 采样配置
 

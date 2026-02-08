@@ -408,6 +408,34 @@ When enabled, trace data will include:
 - Current turn's messages only (not full history) in gen_ai.chat spans
 - Response text and tool call details
 
+### CDK Deployment with Tracing
+
+When deploying to ECS via CDK, you can enable tracing via environment variables at deploy time — **no code changes required**:
+
+```bash
+# Example with Langfuse
+ENABLE_TRACING=true \
+OTEL_EXPORTER_OTLP_ENDPOINT=https://us.cloud.langfuse.com/api/public/otel \
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $(echo -n 'pk-xxx:sk-xxx' | base64)" \
+OTEL_SERVICE_NAME=anthropic-bedrock-proxy-prod \
+OTEL_TRACE_CONTENT=true \
+OTEL_TRACE_SAMPLING_RATIO=1.0 \
+./scripts/deploy.sh -e prod -p arm64
+```
+
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `ENABLE_TRACING` | Enable tracing | `false` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP export endpoint | none |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | Protocol (`http/protobuf` / `grpc`) | `http/protobuf` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Auth headers | none |
+| `OTEL_SERVICE_NAME` | Service name | none |
+| `OTEL_TRACE_CONTENT` | Record prompt/completion content | `false` |
+| `OTEL_TRACE_SAMPLING_RATIO` | Sampling ratio (0.0-1.0) | `1.0` |
+
+> **Priority**: Environment variables > `cdk/config/config.ts` settings > defaults
+
 ### Sampling Configuration
 
 For high-traffic scenarios, control trace data volume with sampling:

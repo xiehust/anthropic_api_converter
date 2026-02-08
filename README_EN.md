@@ -63,6 +63,12 @@ This lightweight API convertion service enables you to use various large languag
 - **Rate Limiting**: Token bucket algorithm per API key
 - **Usage Tracking**: Comprehensive analytics and token usage tracking
 - **Service Tiers**: Bedrock Service Tier configuration for cost/latency optimization
+- **OpenTelemetry Distributed Tracing**: Export LLM call traces to any OTEL-compatible backend (Langfuse, Jaeger, Grafana Tempo, etc.)
+  - Follows [OTEL GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) for model, token usage, and latency
+  - Turn-based agent loop tracing with structured trace hierarchy
+  - Session-level trace correlation via `x-session-id` header
+  - Full token statistics for both streaming and non-streaming responses
+  - Zero-overhead design: all tracing functions are no-ops when disabled
 - **Admin Portal**: Web-based management interface for API key management, usage monitoring, and budget control
   - Cognito authentication with USER_PASSWORD_AUTH and SRP flows
   - Real-time API key usage statistics (input/output/cache tokens)
@@ -70,10 +76,12 @@ This lightweight API convertion service enables you to use various large languag
   - Budget limits with automatic key deactivation
 
 ### Supported Models
-- Claude 4.5/5 Sonnet
+- Claude 4.5/4.6
 - Claude 4.5 Haiku
 - Qwen3-coder-480b
 - Qwen3-235b-instruct
+- Kimi 2.5
+- minimax2.1
 - Any other Bedrock models supporting Converse API
 
 ## Usage Cases
@@ -192,6 +200,228 @@ This ensures that requests will not fail even if an incompatible service tier is
 | MiniMax Series | ✅ | ✅ | ✅ | ✅ |
 
 > **Note**: Specific model support for service tiers may change with AWS Bedrock updates. Please refer to the [AWS Official Documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-service-tiers.html) for the latest information.
+
+## Beta Header Mapping & Tool Input Examples
+
+### Beta Header Mapping
+
+The proxy supports automatic mapping of Anthropic beta headers to Bedrock beta headers, enabling access to Anthropic beta features when using Bedrock.
+
+**Default Mapping:**
+
+| Anthropic Beta Header | Bedrock Beta Headers |
+|----------------------|---------------------|
+| `advanced-tool-use-2025-11-20` | `tool-examples-2025-10-29`, `tool-search-tool-2025-10-19` |
+
+**Supported Models:**
+- Claude Opus 4.5 (`claude-opus-4-5-20251101`)
+
+**Usage Example:**
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-your-api-key",
+    base_url="http://localhost:8000"
+)
+
+# Use beta header
+message = client.beta.messages.create(
+    model="claude-opus-4-5-20251101",
+    max_tokens=1024,
+    betas=["advanced-tool-use-2025-11-20"],
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+### Tool Input Examples (input_examples)
+
+The `input_examples` parameter allows providing example inputs for tool definitions to help the model better understand tool usage.
+
+```python
+message = client.messages.create(
+    model="claude-opus-4-5-20251101",
+    max_tokens=1024,
+    tools=[
+        {
+            "name": "get_weather",
+            "description": "Get weather for a given location",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "City name"},
+                    "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+                },
+                "required": ["location"]
+            },
+            "input_examples": [
+                {"location": "San Francisco, CA", "unit": "fahrenheit"},
+                {"location": "Tokyo, Japan", "unit": "celsius"},
+                {"location": "New York, NY"}  # unit is optional
+            ]
+        }
+    ],
+    messages=[{"role": "user", "content": "What's the weather in Tokyo?"}]
+)
+```
+
+### Configuration Extension
+
+**Add new beta header mappings:**
+Modify `BETA_HEADER_MAPPING` in `.env` or `app/core/config.py`.
+
+**Enable beta header mapping for more models:**
+Add model IDs to the `BETA_HEADER_SUPPORTED_MODELS` list.
+
+## OpenTelemetry Distributed Tracing (LLM Observability)
+
+The proxy has built-in OpenTelemetry tracing support, exporting detailed LLM call information to any OTEL-compatible observability backend for:
+
+- **Token Usage Tracking**: Input/output/cache token statistics per request
+- **Latency Analysis**: End-to-end latency, Bedrock API call latency, streaming response duration
+- **Session Correlation**: Correlate multiple requests in the same conversation via `x-session-id` header
+- **Tool Call Tracing**: Record each tool call's name and ID
+- **PTC Code Execution Tracing**: Track Programmatic Tool Calling execution flow
+- **Error Diagnostics**: Automatic exception recording and error status
+
+### Trace Hierarchy (Turn-Based Agent Loop)
+
+```
+Trace "chat claude-sonnet-4-5-20250929"
+  ├── Turn 1 (input=user_msg, output=assistant_response)
+  │     ├── gen_ai.chat (model, tokens, usage)
+  │     ├── Tool: Read (input=tool_input)
+  │     └── Tool: Edit (input=tool_input)
+  ├── Turn 2
+  │     ├── gen_ai.chat
+  │     └── Tool: Bash
+  └── Turn 3
+        └── gen_ai.chat (final text response, no tools)
+```
+
+Each HTTP request in an agent loop maps to a **Turn** span containing:
+- A `gen_ai.chat` generation span with model, token usage, and latency
+- Tool spans for each tool_use block in the response
+- Structured input/output attributes for Langfuse rendering
+
+### Key Attributes
+
+| Attribute | Description | Example |
+|-----------|-------------|---------|
+| `gen_ai.request.model` | Request model | `claude-sonnet-4-5-20250929` |
+| `gen_ai.usage.input_tokens` | Input tokens | `1500` |
+| `gen_ai.usage.output_tokens` | Output tokens | `350` |
+| `gen_ai.response.finish_reasons` | Stop reason | `["end_turn"]` |
+| `gen_ai.conversation.id` | Session ID | `session-abc123` |
+| `langfuse.observation.usage_details` | Full usage JSON with cache tokens | `{"input":1500,"output":350,"cache_read_input_tokens":800}` |
+| `proxy.api_key_hash` | API key hash (privacy-safe) | `a1b2c3d4...` |
+
+### Connecting to Langfuse Cloud
+
+[Langfuse](https://langfuse.com) is an open-source LLM observability platform with native OTEL support.
+
+**1. Get Langfuse Credentials**
+
+Log in to [Langfuse Cloud](https://us.cloud.langfuse.com), go to project Settings → API Keys to get your Public Key and Secret Key.
+
+**2. Generate Base64 Auth String**
+
+```bash
+echo -n "your-public-key:your-secret-key" | base64
+```
+
+**3. Configure Environment Variables**
+
+```bash
+ENABLE_TRACING=true
+OTEL_EXPORTER_OTLP_ENDPOINT=https://us.cloud.langfuse.com/api/public/otel
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64-string-from-step-2>
+OTEL_SERVICE_NAME=anthropic-bedrock-proxy
+OTEL_TRACE_CONTENT=true
+```
+
+**4. Start Service and Send Requests**
+
+```bash
+# Start service
+uv run uvicorn app.main:app --reload
+
+# Send request (with session ID for trace correlation)
+curl http://localhost:8000/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: sk-your-key" \
+  -H "x-session-id: my-test-session" \
+  -d '{
+    "model": "claude-sonnet-4-5-20250929",
+    "max_tokens": 1024,
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+**5. View Traces in Langfuse**
+
+Log in to Langfuse Cloud and navigate to the Traces page to see:
+- Complete span hierarchy and timeline
+- Token usage and cache hit statistics
+- Conversations grouped by Session ID
+- Model, latency, and cost metrics
+
+### Connecting to Other OTEL Backends
+
+**Jaeger (Local Debugging):**
+
+```bash
+# Start Jaeger
+docker run -d -p 4318:4318 -p 16686:16686 jaegertracing/all-in-one
+
+# Configure proxy
+ENABLE_TRACING=true
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_SERVICE_NAME=anthropic-bedrock-proxy
+
+# View traces: http://localhost:16686
+```
+
+**Grafana Tempo:**
+
+```bash
+ENABLE_TRACING=true
+OTEL_EXPORTER_OTLP_ENDPOINT=https://your-tempo-endpoint
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <credentials>
+```
+
+### Content Tracing (Optional)
+
+By default, tracing **does not record** actual request and response content (as it may contain sensitive information). To enable content tracing for debugging:
+
+```bash
+# Enable content tracing (records prompt and completion content, beware of PII risks)
+OTEL_TRACE_CONTENT=true
+```
+
+When enabled, trace data will include:
+- Structured trace input as JSON (system prompt, tools with schemas, user message)
+- Current turn's messages only (not full history) in gen_ai.chat spans
+- Response text and tool call details
+
+### Sampling Configuration
+
+For high-traffic scenarios, control trace data volume with sampling:
+
+```bash
+# 50% sampling (sample 1 out of every 2 requests)
+OTEL_TRACE_SAMPLING_RATIO=0.5
+
+# 10% sampling (for high-traffic production)
+OTEL_TRACE_SAMPLING_RATIO=0.1
+
+# Full sampling (default, for development and low-traffic environments)
+OTEL_TRACE_SAMPLING_RATIO=1.0
+```
 
 ## Architecture
 
@@ -621,6 +851,30 @@ PTC_MEMORY_LIMIT=256m
 PTC_NETWORK_DISABLED=True
 ```
 
+#### OpenTelemetry Distributed Tracing
+```bash
+# Enable tracing (default: disabled)
+ENABLE_TRACING=true
+
+# OTLP export endpoint
+OTEL_EXPORTER_OTLP_ENDPOINT=https://your-otel-endpoint
+
+# Export protocol: http/protobuf (default) or grpc
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+
+# Export auth headers (format: key1=value1,key2=value2)
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic xxxxx
+
+# Service name (to distinguish trace data from different environments)
+OTEL_SERVICE_NAME=anthropic-bedrock-proxy
+
+# Record request/response content (contains PII, default: disabled)
+OTEL_TRACE_CONTENT=false
+
+# Sampling ratio (0.0-1.0, default: 1.0 = full sampling)
+OTEL_TRACE_SAMPLING_RATIO=1.0
+```
+
 #### Bedrock Service Tier
 ```bash
 # Default service tier: 'default', 'flex', 'priority', 'reserved'
@@ -834,6 +1088,14 @@ anthropic_api_proxy/
        --- bedrock.py    # Bedrock API schemas
    --- services/         # Business logic
        --- bedrock_service.py
+   --- tracing/          # OpenTelemetry distributed tracing
+       --- provider.py   # TracerProvider initialization and exporter config
+       --- middleware.py  # Turn-based request tracing middleware
+       --- spans.py      # Span creation helpers
+       --- streaming.py  # Streaming response token accumulator
+       --- attributes.py # OTEL GenAI semantic convention constants
+       --- context.py    # Session ID extraction and thread context propagation
+       --- session_store.py # In-memory session-to-trace mapping
    --- main.py           # Application entry point
 --- tests/
    --- unit/             # Unit tests

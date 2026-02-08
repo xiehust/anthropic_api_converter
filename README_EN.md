@@ -421,7 +421,7 @@ OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $(echo -n 'pk-xxx:sk-xxx' | base
 OTEL_SERVICE_NAME=anthropic-bedrock-proxy-prod \
 OTEL_TRACE_CONTENT=true \
 OTEL_TRACE_SAMPLING_RATIO=1.0 \
-./scripts/deploy.sh -e prod -p arm64
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64 -l ec2
 ```
 
 | Environment Variable | Description | Default |

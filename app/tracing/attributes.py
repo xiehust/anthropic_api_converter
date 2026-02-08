@@ -33,6 +33,12 @@ PROXY_PTC_SESSION_ID = "proxy.ptc.session_id"
 # Langfuse-specific attributes
 LANGFUSE_USER_ID = "langfuse.user.id"
 LANGFUSE_SESSION_ID = "langfuse.session.id"
+LANGFUSE_TRACE_NAME = "langfuse.trace.name"
+LANGFUSE_TRACE_INPUT = "langfuse.trace.input"
+LANGFUSE_TRACE_OUTPUT = "langfuse.trace.output"
+LANGFUSE_OBSERVATION_INPUT = "langfuse.observation.input"
+LANGFUSE_OBSERVATION_OUTPUT = "langfuse.observation.output"
+LANGFUSE_OBSERVATION_USAGE_DETAILS = "langfuse.observation.usage_details"
 
 # Span names
 SPAN_PROXY_REQUEST = "proxy.request"
@@ -40,3 +46,5 @@ SPAN_GEN_AI_CHAT = "gen_ai.chat"
 SPAN_BEDROCK_INVOKE = "bedrock.invoke_model"
 SPAN_GEN_AI_EXECUTE_TOOL = "gen_ai.execute_tool"
 SPAN_PTC_CODE_EXECUTION = "ptc.code_execution"
+SPAN_TURN = "Turn"
+SPAN_TRACE_ROOT = "trace_root"

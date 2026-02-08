@@ -481,14 +481,6 @@ class BedrockService:
         if effective_service_tier and effective_service_tier != "default":
             bedrock_request["serviceTier"] = {"type": effective_service_tier}
 
-        # Create bedrock span if tracing enabled
-        _bedrock_span = None
-        if settings.enable_tracing:
-            from app.tracing.spans import start_bedrock_span
-            from app.tracing.provider import get_tracer
-            tracer = get_tracer("app.services.bedrock")
-            _bedrock_span = start_bedrock_span(tracer, "converse", request.model)
-
         try:
             print(f"[BEDROCK] Calling Bedrock Converse API...")
 
@@ -509,8 +501,6 @@ class BedrockService:
 
             print(f"[BEDROCK] Successfully converted response to Anthropic format")
 
-            if _bedrock_span is not None:
-                _bedrock_span.end()
             return anthropic_response
 
         except ClientError as e:
@@ -540,37 +530,21 @@ class BedrockService:
                     anthropic_response = self.bedrock_to_anthropic.convert_response(
                         response, request.model, message_id
                     )
-                    if _bedrock_span is not None:
-                        _bedrock_span.end()
                     return anthropic_response
                 except ClientError as retry_error:
                     retry_code = retry_error.response["Error"]["Code"]
                     retry_message = retry_error.response["Error"]["Message"]
                     print(f"[ERROR] Retry with default tier also failed: {retry_code}: {retry_message}")
-                    if _bedrock_span is not None:
-                        from app.tracing.spans import set_error_on_span
-                        set_error_on_span(_bedrock_span, retry_error)
-                        _bedrock_span.end()
                     raise map_bedrock_error(retry_code, retry_message)
                 except Exception as retry_error:
                     print(f"[ERROR] Retry with default tier also failed: {retry_error}")
-                    if _bedrock_span is not None:
-                        from app.tracing.spans import set_error_on_span
-                        set_error_on_span(_bedrock_span, retry_error)
-                        _bedrock_span.end()
                     raise map_bedrock_error(error_code, error_message)
 
             # Map Bedrock error to appropriate exception with correct HTTP status
-            if _bedrock_span is not None:
-                from app.tracing.spans import set_error_on_span
-                set_error_on_span(_bedrock_span, e)
-                _bedrock_span.end()
             raise map_bedrock_error(error_code, error_message)
 
         except BedrockAPIError:
             # Re-raise our custom exceptions as-is
-            if _bedrock_span is not None:
-                _bedrock_span.end()
             raise
         except Exception as e:
             print(f"\n[ERROR] Exception in Bedrock invoke_model for request {request_id}")
@@ -578,10 +552,6 @@ class BedrockService:
             print(f"[ERROR] Message: {str(e)}")
             import traceback
             print(f"[ERROR] Traceback:\n{traceback.format_exc()}\n")
-            if _bedrock_span is not None:
-                from app.tracing.spans import set_error_on_span
-                set_error_on_span(_bedrock_span, e)
-                _bedrock_span.end()
             raise BedrockAPIError(
                 error_code="InternalError",
                 error_message=f"Failed to invoke Bedrock model: {str(e)}",
@@ -634,14 +604,6 @@ class BedrockService:
             else:
                 print(f"  - messages[{idx}]: role={role}, content=str")
 
-        # Create bedrock span if tracing enabled
-        _bedrock_span = None
-        if settings.enable_tracing:
-            from app.tracing.spans import start_bedrock_span
-            from app.tracing.provider import get_tracer
-            tracer = get_tracer("app.services.bedrock")
-            _bedrock_span = start_bedrock_span(tracer, "invoke_model", request.model)
-
         try:
             print(f"[BEDROCK NATIVE] Calling InvokeModel API...")
 
@@ -668,8 +630,6 @@ class BedrockService:
 
             print(f"[BEDROCK NATIVE] Successfully created MessageResponse")
 
-            if _bedrock_span is not None:
-                _bedrock_span.end()
             return anthropic_response
 
         except ClientError as e:
@@ -680,16 +640,10 @@ class BedrockService:
             print(f"[ERROR] Message: {error_message}")
             print(f"[ERROR] Response: {e.response}\n")
 
-            if _bedrock_span is not None:
-                from app.tracing.spans import set_error_on_span
-                set_error_on_span(_bedrock_span, e)
-                _bedrock_span.end()
             # Map Bedrock error to appropriate exception
             raise map_bedrock_error(error_code, error_message)
 
         except BedrockAPIError:
-            if _bedrock_span is not None:
-                _bedrock_span.end()
             raise
         except Exception as e:
             print(f"\n[ERROR] Exception in InvokeModel for request {request_id}")
@@ -697,10 +651,6 @@ class BedrockService:
             print(f"[ERROR] Message: {str(e)}")
             import traceback
             print(f"[ERROR] Traceback:\n{traceback.format_exc()}\n")
-            if _bedrock_span is not None:
-                from app.tracing.spans import set_error_on_span
-                set_error_on_span(_bedrock_span, e)
-                _bedrock_span.end()
             raise BedrockAPIError(
                 error_code="InternalError",
                 error_message=f"Failed to invoke model: {str(e)}",

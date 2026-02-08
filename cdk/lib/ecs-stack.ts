@@ -235,6 +235,15 @@ export class ECSStack extends cdk.Stack {
       // Metrics
       ENABLE_METRICS: config.enableMetrics.toString(),
 
+      // OpenTelemetry Tracing
+      ENABLE_TRACING: config.enableTracing.toString(),
+      ...(config.otelExporterEndpoint && { OTEL_EXPORTER_OTLP_ENDPOINT: config.otelExporterEndpoint }),
+      ...(config.otelExporterProtocol && { OTEL_EXPORTER_OTLP_PROTOCOL: config.otelExporterProtocol }),
+      ...(config.otelExporterHeaders && { OTEL_EXPORTER_OTLP_HEADERS: config.otelExporterHeaders }),
+      ...(config.otelServiceName && { OTEL_SERVICE_NAME: config.otelServiceName }),
+      ...(config.otelTraceContent !== undefined && { OTEL_TRACE_CONTENT: config.otelTraceContent.toString() }),
+      ...(config.otelTraceSamplingRatio !== undefined && { OTEL_TRACE_SAMPLING_RATIO: config.otelTraceSamplingRatio.toString() }),
+
       // Streaming
       STREAMING_TIMEOUT: '300',
 

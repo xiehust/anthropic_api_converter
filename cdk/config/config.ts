@@ -63,6 +63,15 @@ export interface EnvironmentConfig {
   bedrockThreadPoolSize: number;
   bedrockSemaphoreSize: number;
 
+  // OpenTelemetry Tracing Configuration
+  enableTracing: boolean;                    // Enable OTEL tracing
+  otelExporterEndpoint?: string;             // OTLP exporter endpoint (e.g., Langfuse, Jaeger)
+  otelExporterProtocol?: string;             // http/protobuf (default) or grpc
+  otelExporterHeaders?: string;              // Auth headers (format: key1=value1,key2=value2)
+  otelServiceName?: string;                  // Service name in tracing backend
+  otelTraceContent?: boolean;                // Record prompt/completion content (PII risk)
+  otelTraceSamplingRatio?: number;           // Sampling ratio 0.0-1.0
+
   // Admin Portal Configuration
   adminPortalEnabled: boolean;
   adminPortalCpu: number;           // CPU units (1024 = 1 vCPU)
@@ -137,6 +146,15 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     bedrockThreadPoolSize: 15,
     bedrockSemaphoreSize: 15,
 
+    // OpenTelemetry Tracing
+    enableTracing: false,
+    // otelExporterEndpoint: 'https://cloud.langfuse.com/api/public/otel',
+    // otelExporterProtocol: 'http/protobuf',
+    // otelExporterHeaders: 'Authorization=Basic <base64(publicKey:secretKey)>',
+    // otelServiceName: 'anthropic-bedrock-proxy-dev',
+    // otelTraceContent: false,
+    // otelTraceSamplingRatio: 1.0,
+
     // Admin Portal
     adminPortalEnabled: true,
     adminPortalCpu: 1024,          // 1 vCPU (Fargate: 1024 CPU requires 2048-8192 MB memory)
@@ -208,6 +226,15 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     // Bedrock Concurrency
     bedrockThreadPoolSize: 30,
     bedrockSemaphoreSize: 30,
+
+    // OpenTelemetry Tracing
+    enableTracing: false,
+    // otelExporterEndpoint: 'https://cloud.langfuse.com/api/public/otel',
+    // otelExporterProtocol: 'http/protobuf',
+    // otelExporterHeaders: 'Authorization=Basic <base64(publicKey:secretKey)>',
+    // otelServiceName: 'anthropic-bedrock-proxy-prod',
+    // otelTraceContent: false,
+    // otelTraceSamplingRatio: 0.1,
 
     // Admin Portal
     adminPortalEnabled: true,

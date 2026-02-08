@@ -1,6 +1,7 @@
 """
 Session ID extraction and OTEL context propagation for threaded execution.
 """
+import hashlib
 from typing import Any, Optional
 
 from opentelemetry import context as otel_context
@@ -10,7 +11,11 @@ def get_session_id(request: Any = None, request_data: Any = None) -> Optional[st
     """
     Extract session ID from request sources.
 
-    Priority: x-session-id header > metadata.session_id > PTC container > None
+    Priority:
+      1. x-session-id header (explicit)
+      2. metadata.session_id (explicit)
+      3. PTC container ID
+      4. Auto-derived from first user message + model (for agent loop grouping)
     """
     # Try x-session-id header
     if request is not None:
@@ -40,7 +45,50 @@ def get_session_id(request: Any = None, request_data: Any = None) -> Optional[st
             elif hasattr(container, "id"):
                 return container.id
 
+        # Auto-derive session ID from first user message + model
+        # This groups agent loop requests (same first user msg) into one session
+        return _derive_session_id(request_data)
+
     return None
+
+
+def _derive_session_id(request_data: Any) -> Optional[str]:
+    """Derive a stable session ID by hashing the first user message + model."""
+    try:
+        messages = getattr(request_data, "messages", None)
+        model = getattr(request_data, "model", "") or ""
+        if not messages:
+            return None
+
+        # Find the first user message
+        first_user_text = None
+        for msg in messages:
+            role = getattr(msg, "role", None) if hasattr(msg, "role") else msg.get("role") if isinstance(msg, dict) else None
+            if role != "user":
+                continue
+            content = getattr(msg, "content", "") if hasattr(msg, "content") else msg.get("content", "") if isinstance(msg, dict) else ""
+            if isinstance(content, str) and content:
+                first_user_text = content
+                break
+            elif isinstance(content, list):
+                for block in content:
+                    btype = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+                    if btype == "text":
+                        text = getattr(block, "text", "") if hasattr(block, "text") else block.get("text", "")
+                        if text:
+                            first_user_text = text
+                            break
+                if first_user_text:
+                    break
+
+        if not first_user_text:
+            return None
+
+        # Hash first user message + model for a stable session ID
+        key = f"{model}:{first_user_text}"
+        return f"auto-{hashlib.sha256(key.encode()).hexdigest()[:16]}"
+    except Exception:
+        return None
 
 
 def propagate_context_to_thread():

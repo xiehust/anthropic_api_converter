@@ -1,6 +1,7 @@
 """
 Span creation and attribute-setting helpers for tracing.
 """
+import json
 import logging
 from typing import Any, Optional
 
@@ -21,20 +22,62 @@ from app.tracing.attributes import (
     GEN_AI_CONVERSATION_ID,
     GEN_AI_TOOL_NAME,
     GEN_AI_TOOL_CALL_ID,
+    LANGFUSE_SESSION_ID,
     PROXY_REQUEST_ID,
     PROXY_STREAM,
     PROXY_IS_PTC,
-    PROXY_API_MODE,
     PROXY_USAGE_CACHE_READ_TOKENS,
     PROXY_USAGE_CACHE_WRITE_TOKENS,
     PROXY_PTC_SESSION_ID,
+    LANGFUSE_OBSERVATION_USAGE_DETAILS,
     SPAN_GEN_AI_CHAT,
-    SPAN_BEDROCK_INVOKE,
     SPAN_GEN_AI_EXECUTE_TOOL,
     SPAN_PTC_CODE_EXECUTION,
+    SPAN_TURN,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def start_turn_span(
+    tracer: Optional[Tracer],
+    turn_num: int,
+    context=None,
+) -> Optional[Span]:
+    """Start a Turn span as a child of the root trace span."""
+    if tracer is None:
+        return None
+
+    span = tracer.start_span(f"{SPAN_TURN} {turn_num}", context=context)
+    return span
+
+
+def _extract_current_turn_messages(messages) -> list:
+    """Extract only the current turn's messages from the full history.
+
+    In an agent loop, each request includes all previous messages.
+    - Turn 1: [user] — just the initial user message
+    - Turn N: [...history, assistant(tool_use), user(tool_result)] — we only want the last pair
+
+    Returns the messages belonging to the current turn only.
+    """
+    if not messages:
+        return []
+
+    # Find the index of the last assistant message
+    last_assistant_idx = -1
+    for i in range(len(messages) - 1, -1, -1):
+        role = getattr(messages[i], "role", None) if hasattr(messages[i], "role") else messages[i].get("role") if isinstance(messages[i], dict) else None
+        if role == "assistant":
+            last_assistant_idx = i
+            break
+
+    if last_assistant_idx == -1:
+        # No assistant message — this is the first turn, return all messages
+        return list(messages)
+
+    # Return from last assistant message onwards (assistant + user follow-up)
+    return list(messages[last_assistant_idx:])
 
 
 def start_llm_span(
@@ -44,12 +87,13 @@ def start_llm_span(
     session_id: Optional[str] = None,
     stream: bool = False,
     is_ptc: bool = False,
+    context=None,
 ) -> Optional[Span]:
     """Start a gen_ai.chat span for an LLM request."""
     if tracer is None:
         return None
 
-    span = tracer.start_span(SPAN_GEN_AI_CHAT)
+    span = tracer.start_span(SPAN_GEN_AI_CHAT, context=context)
 
     span.set_attribute(GEN_AI_OPERATION_NAME, "chat")
     span.set_attribute(GEN_AI_SYSTEM, "aws.bedrock")
@@ -71,30 +115,55 @@ def start_llm_span(
 
     if session_id:
         span.set_attribute(GEN_AI_CONVERSATION_ID, session_id)
+        span.set_attribute(LANGFUSE_SESSION_ID, session_id)
 
     # Optionally trace prompt content (PII opt-in)
     if settings.otel_trace_content:
         try:
-            messages = getattr(request_data, "messages", [])
+            all_messages = getattr(request_data, "messages", [])
+            messages = _extract_current_turn_messages(all_messages)
             if messages:
-                # Add prompt content as a span event
                 prompt_summary = []
-                for msg in messages[-3:]:  # Last 3 messages to keep size manageable
+                for msg in messages:
                     role = getattr(msg, "role", "unknown") if hasattr(msg, "role") else msg.get("role", "unknown")
                     content = getattr(msg, "content", "") if hasattr(msg, "content") else msg.get("content", "")
                     if isinstance(content, str):
-                        prompt_summary.append(f"{role}: {content[:500]}")
+                        prompt_summary.append(f"{role}: {content}")
                     elif isinstance(content, list):
-                        text_parts = []
+                        block_parts = []
                         for block in content:
-                            if isinstance(block, dict) and block.get("type") == "text":
-                                text_parts.append(block.get("text", "")[:200])
-                            elif hasattr(block, "type") and block.type == "text":
-                                text_parts.append(getattr(block, "text", "")[:200])
-                        if text_parts:
-                            prompt_summary.append(f"{role}: {' '.join(text_parts)}")
+                            btype = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+                            if btype == "text":
+                                text = getattr(block, "text", "") if hasattr(block, "text") else block.get("text", "")
+                                if text:
+                                    block_parts.append(text)
+                            elif btype == "tool_use":
+                                name = getattr(block, "name", "") if hasattr(block, "name") else block.get("name", "")
+                                tool_input = getattr(block, "input", {}) if hasattr(block, "input") else block.get("input", {})
+                                block_parts.append(f"[tool_use: {name}({str(tool_input)})]")
+                            elif btype == "tool_result":
+                                tid = getattr(block, "tool_use_id", "") if hasattr(block, "tool_use_id") else block.get("tool_use_id", "")
+                                # Extract text from tool_result content
+                                tc = getattr(block, "content", "") if hasattr(block, "content") else block.get("content", "")
+                                if isinstance(tc, str):
+                                    block_parts.append(f"[tool_result({tid}): {tc}]")
+                                elif isinstance(tc, list):
+                                    tr_texts = []
+                                    for tb in tc:
+                                        tb_type = getattr(tb, "type", None) or (tb.get("type") if isinstance(tb, dict) else None)
+                                        if tb_type == "text":
+                                            tr_texts.append(getattr(tb, "text", "") if hasattr(tb, "text") else tb.get("text", ""))
+                                    block_parts.append(f"[tool_result({tid}): {' '.join(tr_texts)}]")
+                                else:
+                                    block_parts.append(f"[tool_result({tid})]")
+                        if block_parts:
+                            prompt_summary.append(f"{role}: {' '.join(block_parts)}")
 
-                span.add_event("gen_ai.prompt", {"content": "\n".join(prompt_summary)})
+                prompt_text = "\n".join(prompt_summary)
+                # Set as span attribute (Langfuse maps this to observation Input)
+                span.set_attribute("gen_ai.prompt", prompt_text)
+                # Also add as event for detailed view
+                span.add_event("gen_ai.content.prompt", {"gen_ai.prompt": prompt_text})
         except Exception:
             pass  # Don't fail on content tracing errors
 
@@ -135,46 +204,51 @@ def set_llm_response_attributes(span: Optional[Span], response: Any) -> None:
             if cache_write:
                 span.set_attribute(PROXY_USAGE_CACHE_WRITE_TOKENS, cache_write)
 
+            # Set Langfuse usage_details JSON with all token fields including cache
+            # This is the only way Langfuse picks up cache tokens via OTEL
+            usage_details = {"input": input_tokens or 0, "output": output_tokens or 0}
+            if cache_read:
+                usage_details["cache_read_input_tokens"] = cache_read
+            if cache_write:
+                usage_details["cache_creation_input_tokens"] = cache_write
+            span.set_attribute(LANGFUSE_OBSERVATION_USAGE_DETAILS, json.dumps(usage_details))
+
         # Optionally trace completion content
         if settings.otel_trace_content:
             content = getattr(response, "content", [])
             if content:
-                text_parts = []
+                output_parts = []
                 for block in content:
-                    if hasattr(block, "type") and block.type == "text":
-                        text_parts.append(getattr(block, "text", "")[:500])
-                if text_parts:
-                    span.add_event("gen_ai.completion", {"content": "\n".join(text_parts)})
+                    btype = getattr(block, "type", None)
+                    if btype == "text":
+                        output_parts.append(getattr(block, "text", ""))
+                    elif btype == "tool_use":
+                        name = getattr(block, "name", "")
+                        tool_input = getattr(block, "input", {})
+                        output_parts.append(f"[tool_use: {name}({str(tool_input)})]")
+                    elif btype == "thinking":
+                        thinking_text = getattr(block, "thinking", "")
+                        output_parts.append(f"[thinking: {thinking_text}]")
+                if output_parts:
+                    completion_text = "\n".join(output_parts)
+                    span.set_attribute("gen_ai.completion", completion_text)
+                    span.add_event("gen_ai.content.completion", {"gen_ai.completion": completion_text})
 
     except Exception as e:
         logger.debug(f"Error setting response attributes on span: {e}")
-
-
-def start_bedrock_span(
-    tracer: Optional[Tracer],
-    api_mode: str,
-    model_id: str,
-) -> Optional[Span]:
-    """Start a bedrock.invoke_model child span."""
-    if tracer is None:
-        return None
-
-    span = tracer.start_span(SPAN_BEDROCK_INVOKE)
-    span.set_attribute(PROXY_API_MODE, api_mode)
-    span.set_attribute(GEN_AI_REQUEST_MODEL, model_id)
-    return span
 
 
 def start_tool_span(
     tracer: Optional[Tracer],
     tool_name: str,
     tool_use_id: str,
+    context=None,
 ) -> Optional[Span]:
     """Start a gen_ai.execute_tool child span."""
     if tracer is None:
         return None
 
-    span = tracer.start_span(f"{SPAN_GEN_AI_EXECUTE_TOOL} {tool_name}")
+    span = tracer.start_span(f"{SPAN_GEN_AI_EXECUTE_TOOL} {tool_name}", context=context)
     span.set_attribute(GEN_AI_TOOL_NAME, tool_name)
     span.set_attribute(GEN_AI_TOOL_CALL_ID, tool_use_id)
     return span

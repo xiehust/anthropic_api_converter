@@ -318,11 +318,24 @@ export function getConfig(environmentName: string = 'dev'): EnvironmentConfig {
   // Enable PTC automatically when using EC2 launch type with Docker socket
   const enablePtc = launchType === 'ec2' && config.ec2EnableDockerSocket;
 
+  // Override OTEL tracing settings from environment variables
+  // This allows enabling tracing at deploy time without modifying config code
+  const enableTracing = process.env.ENABLE_TRACING
+    ? process.env.ENABLE_TRACING.toLowerCase() === 'true'
+    : config.enableTracing;
+
   return {
     ...config,
     platform,
     launchType,
     ec2InstanceType,
     enablePtc,
+    enableTracing,
+    ...(process.env.OTEL_EXPORTER_OTLP_ENDPOINT && { otelExporterEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT }),
+    ...(process.env.OTEL_EXPORTER_OTLP_PROTOCOL && { otelExporterProtocol: process.env.OTEL_EXPORTER_OTLP_PROTOCOL }),
+    ...(process.env.OTEL_EXPORTER_OTLP_HEADERS && { otelExporterHeaders: process.env.OTEL_EXPORTER_OTLP_HEADERS }),
+    ...(process.env.OTEL_SERVICE_NAME && { otelServiceName: process.env.OTEL_SERVICE_NAME }),
+    ...(process.env.OTEL_TRACE_CONTENT && { otelTraceContent: process.env.OTEL_TRACE_CONTENT.toLowerCase() === 'true' }),
+    ...(process.env.OTEL_TRACE_SAMPLING_RATIO && { otelTraceSamplingRatio: parseFloat(process.env.OTEL_TRACE_SAMPLING_RATIO) }),
   };
 }

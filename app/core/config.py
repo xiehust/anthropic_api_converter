@@ -130,6 +130,16 @@ class Settings(BaseSettings):
     enable_tracing: bool = Field(default=False, alias="ENABLE_TRACING")
     sentry_dsn: Optional[str] = Field(default=None, alias="SENTRY_DSN")
 
+    # OpenTelemetry Tracing (active when enable_tracing=True)
+    otel_exporter_endpoint: Optional[str] = Field(default=None, alias="OTEL_EXPORTER_OTLP_ENDPOINT")
+    otel_exporter_protocol: str = Field(default="http/protobuf", alias="OTEL_EXPORTER_OTLP_PROTOCOL")
+    otel_exporter_headers: Optional[str] = Field(default=None, alias="OTEL_EXPORTER_OTLP_HEADERS")
+    otel_service_name: str = Field(default="anthropic-bedrock-proxy", alias="OTEL_SERVICE_NAME")
+    otel_trace_content: bool = Field(default=False, alias="OTEL_TRACE_CONTENT")
+    otel_trace_sampling_ratio: float = Field(default=1.0, alias="OTEL_TRACE_SAMPLING_RATIO")
+    otel_batch_max_queue_size: int = Field(default=2048, alias="OTEL_BATCH_MAX_QUEUE_SIZE")
+    otel_batch_schedule_delay_ms: int = Field(default=5000, alias="OTEL_BATCH_SCHEDULE_DELAY_MS")
+
     # Request Timeouts
     bedrock_timeout: int = Field(default=600, alias="BEDROCK_TIMEOUT")  # seconds (10 minutes)
     dynamodb_timeout: int = Field(default=10, alias="DYNAMODB_TIMEOUT")  # seconds

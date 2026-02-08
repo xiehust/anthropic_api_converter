@@ -398,18 +398,27 @@ class BedrockService:
         async with semaphore:
             loop = asyncio.get_event_loop()
             executor = _get_executor()
+
+            # Propagate OTEL context to thread pool worker
+            _otel_ctx = None
+            if settings.enable_tracing:
+                from app.tracing.context import propagate_context_to_thread
+                _otel_ctx = propagate_context_to_thread()
+
             return await loop.run_in_executor(
                 executor,
                 self._invoke_model_sync,
                 request,
                 request_id,
                 service_tier,
-                anthropic_beta
+                anthropic_beta,
+                _otel_ctx
             )
 
     def _invoke_model_sync(
         self, request: MessageRequest, request_id: Optional[str] = None,
-        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None
+        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None,
+        otel_ctx=None
     ) -> MessageResponse:
         """
         Synchronous Bedrock model invocation (runs in thread pool).
@@ -421,6 +430,7 @@ class BedrockService:
             request_id: Optional request ID
             service_tier: Optional Bedrock service tier
             anthropic_beta: Optional beta header from Anthropic client (comma-separated)
+            otel_ctx: Optional OTEL context for trace propagation
 
         Returns:
             Anthropic MessageResponse
@@ -428,6 +438,24 @@ class BedrockService:
         Raises:
             Exception: If Bedrock API call fails
         """
+        # Attach OTEL context from parent async task
+        _otel_token = None
+        if otel_ctx is not None:
+            from app.tracing.context import attach_context_in_thread
+            _otel_token = attach_context_in_thread(otel_ctx)
+
+        try:
+            return self._invoke_model_sync_inner(request, request_id, service_tier, anthropic_beta)
+        finally:
+            if _otel_token is not None:
+                from app.tracing.context import detach_context_in_thread
+                detach_context_in_thread(_otel_token)
+
+    def _invoke_model_sync_inner(
+        self, request: MessageRequest, request_id: Optional[str] = None,
+        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None
+    ) -> MessageResponse:
+        """Inner sync invocation after OTEL context is attached."""
         # Route Claude models to InvokeModel API for better feature support
         if self._is_claude_model(request.model):
             print(f"[BEDROCK] Using InvokeModel API for Claude model: {request.model}")
@@ -453,6 +481,14 @@ class BedrockService:
         if effective_service_tier and effective_service_tier != "default":
             bedrock_request["serviceTier"] = {"type": effective_service_tier}
 
+        # Create bedrock span if tracing enabled
+        _bedrock_span = None
+        if settings.enable_tracing:
+            from app.tracing.spans import start_bedrock_span
+            from app.tracing.provider import get_tracer
+            tracer = get_tracer("app.services.bedrock")
+            _bedrock_span = start_bedrock_span(tracer, "converse", request.model)
+
         try:
             print(f"[BEDROCK] Calling Bedrock Converse API...")
 
@@ -473,6 +509,8 @@ class BedrockService:
 
             print(f"[BEDROCK] Successfully converted response to Anthropic format")
 
+            if _bedrock_span is not None:
+                _bedrock_span.end()
             return anthropic_response
 
         except ClientError as e:
@@ -502,21 +540,37 @@ class BedrockService:
                     anthropic_response = self.bedrock_to_anthropic.convert_response(
                         response, request.model, message_id
                     )
+                    if _bedrock_span is not None:
+                        _bedrock_span.end()
                     return anthropic_response
                 except ClientError as retry_error:
                     retry_code = retry_error.response["Error"]["Code"]
                     retry_message = retry_error.response["Error"]["Message"]
                     print(f"[ERROR] Retry with default tier also failed: {retry_code}: {retry_message}")
+                    if _bedrock_span is not None:
+                        from app.tracing.spans import set_error_on_span
+                        set_error_on_span(_bedrock_span, retry_error)
+                        _bedrock_span.end()
                     raise map_bedrock_error(retry_code, retry_message)
                 except Exception as retry_error:
                     print(f"[ERROR] Retry with default tier also failed: {retry_error}")
+                    if _bedrock_span is not None:
+                        from app.tracing.spans import set_error_on_span
+                        set_error_on_span(_bedrock_span, retry_error)
+                        _bedrock_span.end()
                     raise map_bedrock_error(error_code, error_message)
 
             # Map Bedrock error to appropriate exception with correct HTTP status
+            if _bedrock_span is not None:
+                from app.tracing.spans import set_error_on_span
+                set_error_on_span(_bedrock_span, e)
+                _bedrock_span.end()
             raise map_bedrock_error(error_code, error_message)
 
         except BedrockAPIError:
             # Re-raise our custom exceptions as-is
+            if _bedrock_span is not None:
+                _bedrock_span.end()
             raise
         except Exception as e:
             print(f"\n[ERROR] Exception in Bedrock invoke_model for request {request_id}")
@@ -524,6 +578,10 @@ class BedrockService:
             print(f"[ERROR] Message: {str(e)}")
             import traceback
             print(f"[ERROR] Traceback:\n{traceback.format_exc()}\n")
+            if _bedrock_span is not None:
+                from app.tracing.spans import set_error_on_span
+                set_error_on_span(_bedrock_span, e)
+                _bedrock_span.end()
             raise BedrockAPIError(
                 error_code="InternalError",
                 error_message=f"Failed to invoke Bedrock model: {str(e)}",
@@ -576,6 +634,14 @@ class BedrockService:
             else:
                 print(f"  - messages[{idx}]: role={role}, content=str")
 
+        # Create bedrock span if tracing enabled
+        _bedrock_span = None
+        if settings.enable_tracing:
+            from app.tracing.spans import start_bedrock_span
+            from app.tracing.provider import get_tracer
+            tracer = get_tracer("app.services.bedrock")
+            _bedrock_span = start_bedrock_span(tracer, "invoke_model", request.model)
+
         try:
             print(f"[BEDROCK NATIVE] Calling InvokeModel API...")
 
@@ -602,6 +668,8 @@ class BedrockService:
 
             print(f"[BEDROCK NATIVE] Successfully created MessageResponse")
 
+            if _bedrock_span is not None:
+                _bedrock_span.end()
             return anthropic_response
 
         except ClientError as e:
@@ -612,10 +680,16 @@ class BedrockService:
             print(f"[ERROR] Message: {error_message}")
             print(f"[ERROR] Response: {e.response}\n")
 
+            if _bedrock_span is not None:
+                from app.tracing.spans import set_error_on_span
+                set_error_on_span(_bedrock_span, e)
+                _bedrock_span.end()
             # Map Bedrock error to appropriate exception
             raise map_bedrock_error(error_code, error_message)
 
         except BedrockAPIError:
+            if _bedrock_span is not None:
+                _bedrock_span.end()
             raise
         except Exception as e:
             print(f"\n[ERROR] Exception in InvokeModel for request {request_id}")
@@ -623,6 +697,10 @@ class BedrockService:
             print(f"[ERROR] Message: {str(e)}")
             import traceback
             print(f"[ERROR] Traceback:\n{traceback.format_exc()}\n")
+            if _bedrock_span is not None:
+                from app.tracing.spans import set_error_on_span
+                set_error_on_span(_bedrock_span, e)
+                _bedrock_span.end()
             raise BedrockAPIError(
                 error_code="InternalError",
                 error_message=f"Failed to invoke model: {str(e)}",
@@ -738,6 +816,12 @@ class BedrockService:
             executor = _get_executor()
             loop = asyncio.get_event_loop()
 
+            # Propagate OTEL context to stream worker thread
+            _otel_ctx = None
+            if settings.enable_tracing:
+                from app.tracing.context import propagate_context_to_thread
+                _otel_ctx = propagate_context_to_thread()
+
             # Route Claude models to InvokeModelWithResponseStream for better feature support
             if self._is_claude_model(request.model):
                 print(f"[BEDROCK STREAM] Using InvokeModelWithResponseStream for Claude model: {request.model}")
@@ -762,7 +846,8 @@ class BedrockService:
                     native_request,
                     request,
                     message_id,
-                    event_queue
+                    event_queue,
+                    _otel_ctx
                 )
             else:
                 print(f"[BEDROCK STREAM] Converting request to Bedrock format for request {request_id}")
@@ -790,7 +875,8 @@ class BedrockService:
                     request,
                     message_id,
                     effective_service_tier,
-                    event_queue
+                    event_queue,
+                    _otel_ctx
                 )
 
             # Consume events from queue asynchronously
@@ -865,7 +951,8 @@ class BedrockService:
         request: MessageRequest,
         message_id: str,
         effective_service_tier: str,
-        event_queue: queue.Queue
+        event_queue: queue.Queue,
+        otel_ctx=None
     ) -> None:
         """
         Worker function that runs in thread pool to handle streaming.
@@ -879,7 +966,14 @@ class BedrockService:
             message_id: Message ID for the response
             effective_service_tier: Service tier being used
             event_queue: Queue for passing events to async consumer
+            otel_ctx: Optional OTEL context for trace propagation
         """
+        # Attach OTEL context from parent async task
+        _otel_token = None
+        if otel_ctx is not None:
+            from app.tracing.context import attach_context_in_thread
+            _otel_token = attach_context_in_thread(otel_ctx)
+
         current_index = 0
         seen_indices: set = set()
         accumulated_usage = {
@@ -968,6 +1062,10 @@ class BedrockService:
             import traceback
             print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
             event_queue.put(("error", ("internal_error", str(e))))
+        finally:
+            if _otel_token is not None:
+                from app.tracing.context import detach_context_in_thread
+                detach_context_in_thread(_otel_token)
 
     def _stream_worker_native(
         self,
@@ -975,7 +1073,8 @@ class BedrockService:
         native_request: Dict[str, Any],
         _request: MessageRequest,  # Kept for potential future use
         _message_id: str,  # Kept for potential future use
-        event_queue: queue.Queue
+        event_queue: queue.Queue,
+        otel_ctx=None
     ) -> None:
         """
         Worker function for InvokeModelWithResponseStream (native Anthropic format).
@@ -989,7 +1088,14 @@ class BedrockService:
             request: Original Anthropic request
             message_id: Message ID for the response
             event_queue: Queue for passing events to async consumer
+            otel_ctx: Optional OTEL context for trace propagation
         """
+        # Attach OTEL context from parent async task
+        _otel_token = None
+        if otel_ctx is not None:
+            from app.tracing.context import attach_context_in_thread
+            _otel_token = attach_context_in_thread(otel_ctx)
+
         try:
             print(f"[BEDROCK STREAM NATIVE] Calling InvokeModelWithResponseStream API...")
 
@@ -1054,6 +1160,10 @@ class BedrockService:
             import traceback
             print(f"[ERROR] Traceback:\n{traceback.format_exc()}")
             event_queue.put(("error", ("internal_error", str(e))))
+        finally:
+            if _otel_token is not None:
+                from app.tracing.context import detach_context_in_thread
+                detach_context_in_thread(_otel_token)
 
     def _process_stream_event(
         self,

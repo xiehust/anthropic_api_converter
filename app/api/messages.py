@@ -247,6 +247,21 @@ async def create_message(
         logger.info(f"Request {request_id}: Detected PTC request")
         print(f"[PTC] Detected Programmatic Tool Calling request")
 
+    # Initialize tracing span
+    _trace_span = None
+    if settings.enable_tracing:
+        from app.tracing.spans import start_llm_span, set_llm_response_attributes, set_error_on_span
+        from app.tracing.provider import get_tracer
+        from app.tracing.context import get_session_id
+        tracer = get_tracer("app.api.messages")
+        session_id = get_session_id(request, request_data)
+        _trace_span = start_llm_span(
+            tracer, request_data, request_id,
+            session_id=session_id,
+            stream=request_data.stream,
+            is_ptc=is_ptc,
+        )
+
     try:
         # Handle PTC requests
         if is_ptc:
@@ -463,16 +478,25 @@ async def create_message(
         # Check if streaming is requested
         if request_data.stream:
             # Return streaming response
+            generator = _handle_streaming_request(
+                request_data,
+                request_id,
+                api_key_info,
+                bedrock_service,
+                usage_tracker,
+                service_tier,
+                anthropic_beta,
+            )
+            # Wrap with tracing accumulator if tracing is enabled
+            if _trace_span is not None:
+                from app.tracing.streaming import StreamingSpanAccumulator
+                accumulator = StreamingSpanAccumulator(
+                    _trace_span, request_data, request_id,
+                    trace_content=settings.otel_trace_content,
+                )
+                generator = accumulator.wrap_stream(generator)
             return StreamingResponse(
-                _handle_streaming_request(
-                    request_data,
-                    request_id,
-                    api_key_info,
-                    bedrock_service,
-                    usage_tracker,
-                    service_tier,
-                    anthropic_beta,
-                ),
+                generator,
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -485,6 +509,11 @@ async def create_message(
             response = await bedrock_service.invoke_model(
                 request_data, request_id, service_tier, anthropic_beta
             )
+
+            if _trace_span is not None:
+                from app.tracing.spans import set_llm_response_attributes
+                set_llm_response_attributes(_trace_span, response)
+                _trace_span.end()
 
             # Record usage
             usage_tracker.record_usage(
@@ -505,6 +534,10 @@ async def create_message(
         print(f"\n[ERROR] HTTPException in request {request_id}")
         print(f"[ERROR] Status: {he.status_code}")
         print(f"[ERROR] Detail: {he.detail}\n")
+        if _trace_span is not None:
+            from app.tracing.spans import set_error_on_span
+            set_error_on_span(_trace_span, he)
+            _trace_span.end()
         raise
 
     except BedrockAPIError as e:
@@ -526,6 +559,10 @@ async def create_message(
         )
 
         # Return error response with correct HTTP status
+        if _trace_span is not None:
+            from app.tracing.spans import set_error_on_span
+            set_error_on_span(_trace_span, e)
+            _trace_span.end()
         raise HTTPException(
             status_code=e.http_status,
             detail={
@@ -553,6 +590,10 @@ async def create_message(
         )
 
         # Return error response
+        if _trace_span is not None:
+            from app.tracing.spans import set_error_on_span
+            set_error_on_span(_trace_span, e)
+            _trace_span.end()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={

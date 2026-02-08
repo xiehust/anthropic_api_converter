@@ -807,8 +807,18 @@ Before writing code, verify:
         Returns:
             Tuple of (response, container_info)
         """
+        # Start PTC tracing span
+        _ptc_span = None
+        if settings.enable_tracing:
+            from app.tracing.spans import start_ptc_span
+            from app.tracing.provider import get_tracer
+            tracer = get_tracer("app.services.ptc")
+            _ptc_span = start_ptc_span(tracer, session_id=container_id or "new")
+
         # Check Docker availability
         if not self.is_docker_available():
+            if _ptc_span is not None:
+                _ptc_span.end()
             raise DockerNotAvailableError(
                 "Programmatic Tool Calling requires Docker which is not available. "
                 "Please ensure Docker is running."
@@ -846,7 +856,7 @@ Before writing code, verify:
                 # Execute code in sandbox
                 # Pass bedrock_request (which includes PTC system prompt) instead of original request
                 # This ensures the PTC system prompt is preserved in continuation requests
-                return await self._handle_code_execution(
+                result = await self._handle_code_execution(
                     execute_code_call,
                     response,
                     session,
@@ -857,6 +867,9 @@ Before writing code, verify:
                     ptc_callable_tools,
                     anthropic_beta,
                 )
+                if _ptc_span is not None:
+                    _ptc_span.end()
+                return result
             else:
                 # No code execution, return response with container info
                 # Add caller: {type: "direct"} to any direct tool_use blocks
@@ -865,10 +878,16 @@ Before writing code, verify:
                     id=session.session_id,
                     expires_at=session.expires_at.isoformat()
                 )
+                if _ptc_span is not None:
+                    _ptc_span.end()
                 return response, container_info
 
         except Exception as e:
             logger.error(f"Error handling PTC request: {e}")
+            if _ptc_span is not None:
+                from app.tracing.spans import set_error_on_span
+                set_error_on_span(_ptc_span, e)
+                _ptc_span.end()
             raise
 
     async def _get_or_create_session(

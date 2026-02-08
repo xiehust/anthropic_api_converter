@@ -86,10 +86,22 @@ async def lifespan(app: FastAPI):
 
     print("Application started successfully")
 
+    # Initialize OpenTelemetry tracing
+    if settings.enable_tracing:
+        from app.tracing import init_tracing
+        init_tracing()
+        print("OpenTelemetry tracing initialized")
+
     yield
 
     # Shutdown
     print("Shutting down application...")
+
+    # Shutdown tracing
+    if settings.enable_tracing:
+        from app.tracing import shutdown_tracing
+        shutdown_tracing()
+        print("OpenTelemetry tracing shut down")
 
     # Cleanup PTC Docker containers
     await cleanup_ptc_resources()
@@ -161,6 +173,11 @@ app.add_middleware(RateLimitMiddleware)
 # Add authentication middleware (must be added after rate limiting)
 # Note: DynamoDB client is initialized globally above
 app.add_middleware(AuthMiddleware, dynamodb_client=dynamodb_client)
+
+# Add tracing middleware (must be added last to be outermost)
+if settings.enable_tracing:
+    from app.tracing.middleware import TracingMiddleware
+    app.add_middleware(TracingMiddleware)
 
 
 # Include routers

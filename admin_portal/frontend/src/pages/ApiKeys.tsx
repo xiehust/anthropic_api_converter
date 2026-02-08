@@ -240,6 +240,59 @@ export default function ApiKeys() {
     }
   };
 
+  const handleExport = useCallback(() => {
+    const apiKeys = data?.items || [];
+    if (apiKeys.length === 0) {
+      alert('No data to export');
+      return;
+    }
+
+    const headers = ['API Key', 'Name', 'Owner', 'User ID', 'Status', 'Monthly Budget', 'Budget Used (MTD)', 'Budget Used (Total)', 'Rate Limit', 'Service Tier', 'Created At', 'Total Requests', 'Total Input Tokens', 'Total Output Tokens', 'Total Cached Tokens'];
+    
+    const rows = apiKeys.map((key) => [
+      key.api_key,
+      key.name,
+      key.owner_name || key.user_id,
+      key.user_id,
+      key.is_active ? 'Active' : 'Inactive',
+      key.monthly_budget || 0,
+      key.budget_used_mtd || 0,
+      key.budget_used || 0,
+      key.rate_limit || 0,
+      key.service_tier || 'default',
+      new Date((key.created_at as number) * 1000).toISOString(),
+      key.total_requests || 0,
+      key.total_input_tokens || 0,
+      key.total_output_tokens || 0,
+      key.total_cached_tokens || 0,
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map((row) =>
+        row.map((cell) => {
+          const cellStr = String(cell);
+          if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
+            return `"${cellStr.replace(/"/g, '""')}"`;
+          }
+          return cellStr;
+        }).join(',')
+      ),
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    const timestamp = new Date().toISOString().split('T')[0];
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', `api-keys-export-${timestamp}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, [data]);
+
   const copyToClipboard = useCallback(async (text: string) => {
     try {
       // Try modern Clipboard API first (requires HTTPS)
@@ -337,7 +390,10 @@ export default function ApiKeys() {
           <p className="text-slate-400 text-base">{t('apiKeys.subtitle')}</p>
         </div>
         <div className="flex gap-3">
-          <button className="flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-surface-dark border border-border-dark text-white text-sm font-medium hover:bg-border-dark transition-colors">
+          <button 
+            onClick={handleExport}
+            className="flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-surface-dark border border-border-dark text-white text-sm font-medium hover:bg-border-dark transition-colors"
+          >
             <span className="material-symbols-outlined text-[20px]">file_download</span>
             {t('apiKeys.export')}
           </button>

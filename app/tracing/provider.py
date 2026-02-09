@@ -2,17 +2,58 @@
 OpenTelemetry TracerProvider configuration and management.
 """
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import TracerProvider, SpanProcessor, ReadableSpan
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
+from opentelemetry.context import Context
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Instrumentation scope prefixes that our app uses.
+# Spans from other libraries (Docker SDK, gRPC, etc.) are filtered out.
+_ALLOWED_SCOPE_PREFIXES: Tuple[str, ...] = (
+    "app.",
+    "anthropic-bedrock-proxy",
+)
+
+
+class ChatOnlySpanProcessor(SpanProcessor):
+    """SpanProcessor that only exports spans created by our application.
+
+    This prevents traces from third-party libraries (Docker SDK, gRPC, etc.)
+    that pick up the global TracerProvider from being exported to the backend.
+    """
+
+    def __init__(self, delegate: SpanProcessor):
+        self._delegate = delegate
+
+    def _is_app_span(self, span: ReadableSpan) -> bool:
+        scope_name = (
+            span.instrumentation_scope.name
+            if span.instrumentation_scope
+            else ""
+        )
+        return any(scope_name.startswith(p) for p in _ALLOWED_SCOPE_PREFIXES)
+
+    def on_start(self, span, parent_context: Optional[Context] = None) -> None:
+        if self._is_app_span(span):
+            self._delegate.on_start(span, parent_context)
+
+    def on_end(self, span: ReadableSpan) -> None:
+        if self._is_app_span(span):
+            self._delegate.on_end(span)
+
+    def shutdown(self) -> None:
+        self._delegate.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return self._delegate.force_flush(timeout_millis)
 
 _provider: Optional[TracerProvider] = None
 
@@ -78,12 +119,15 @@ def init_tracing() -> None:
                 headers=headers or None,
             )
 
-        # Add batch processor
-        processor = BatchSpanProcessor(
+        # Add batch processor wrapped in a filter that only exports our app's spans.
+        # This prevents Docker SDK, gRPC, and other auto-instrumented libraries
+        # from leaking traces to the backend (e.g., moby.filesync, build traces).
+        batch_processor = BatchSpanProcessor(
             exporter,
             max_queue_size=settings.otel_batch_max_queue_size,
             schedule_delay_millis=settings.otel_batch_schedule_delay_ms,
         )
+        processor = ChatOnlySpanProcessor(batch_processor)
         _provider.add_span_processor(processor)
         logger.info(f"OTEL tracing initialized: endpoint={endpoint}, protocol={settings.otel_exporter_protocol}")
     else:

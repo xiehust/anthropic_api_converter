@@ -631,6 +631,100 @@ class TestStreamingSpanAccumulator:
         mock_turn_span.end.assert_called_once()
 
 
+class TestChatOnlySpanProcessor:
+    """Test ChatOnlySpanProcessor filters out non-app spans."""
+
+    def test_app_spans_are_exported(self):
+        from app.tracing.provider import ChatOnlySpanProcessor
+        exporter = InMemorySpanExporter()
+        delegate = SimpleSpanProcessor(exporter)
+        processor = ChatOnlySpanProcessor(delegate)
+
+        provider = TracerProvider()
+        provider.add_span_processor(processor)
+
+        # Tracer with app prefix — should be exported
+        tracer = provider.get_tracer("app.middleware.tracing")
+        with tracer.start_as_current_span("proxy.request") as span:
+            span.set_attribute("test", True)
+
+        spans = exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].name == "proxy.request"
+        provider.shutdown()
+
+    def test_default_tracer_spans_are_exported(self):
+        from app.tracing.provider import ChatOnlySpanProcessor
+        exporter = InMemorySpanExporter()
+        delegate = SimpleSpanProcessor(exporter)
+        processor = ChatOnlySpanProcessor(delegate)
+
+        provider = TracerProvider()
+        provider.add_span_processor(processor)
+
+        # Default tracer name — should be exported
+        tracer = provider.get_tracer("anthropic-bedrock-proxy")
+        with tracer.start_as_current_span("gen_ai.chat"):
+            pass
+
+        spans = exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].name == "gen_ai.chat"
+        provider.shutdown()
+
+    def test_third_party_spans_are_filtered(self):
+        from app.tracing.provider import ChatOnlySpanProcessor
+        exporter = InMemorySpanExporter()
+        delegate = SimpleSpanProcessor(exporter)
+        processor = ChatOnlySpanProcessor(delegate)
+
+        provider = TracerProvider()
+        provider.add_span_processor(processor)
+
+        # Third-party tracer (e.g., Docker SDK, gRPC) — should be filtered out
+        docker_tracer = provider.get_tracer("docker.api")
+        with docker_tracer.start_as_current_span("moby.filesync.v1.FileSync/DiffCopy"):
+            pass
+
+        grpc_tracer = provider.get_tracer("opentelemetry.instrumentation.grpc")
+        with grpc_tracer.start_as_current_span("grpc.client"):
+            pass
+
+        spans = exporter.get_finished_spans()
+        assert len(spans) == 0
+        provider.shutdown()
+
+    def test_mixed_spans_only_app_exported(self):
+        from app.tracing.provider import ChatOnlySpanProcessor
+        exporter = InMemorySpanExporter()
+        delegate = SimpleSpanProcessor(exporter)
+        processor = ChatOnlySpanProcessor(delegate)
+
+        provider = TracerProvider()
+        provider.add_span_processor(processor)
+
+        # App span
+        app_tracer = provider.get_tracer("app.middleware.tracing")
+        with app_tracer.start_as_current_span("trace_root"):
+            pass
+
+        # Third-party span
+        other_tracer = provider.get_tracer("some.other.library")
+        with other_tracer.start_as_current_span("build ."):
+            pass
+
+        # Another app span
+        proxy_tracer = provider.get_tracer("anthropic-bedrock-proxy")
+        with proxy_tracer.start_as_current_span("gen_ai.chat"):
+            pass
+
+        spans = exporter.get_finished_spans()
+        assert len(spans) == 2
+        names = {s.name for s in spans}
+        assert names == {"trace_root", "gen_ai.chat"}
+        provider.shutdown()
+
+
 class TestProviderInitShutdown:
     """Test provider initialization and shutdown."""
 

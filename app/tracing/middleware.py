@@ -1,32 +1,27 @@
 """
 FastAPI middleware for creating root request spans.
+
+Only POST /v1/messages is traced (whitelist approach).
+All other paths are passed through without tracing.
 """
-import hashlib
 import json
+import hashlib
 import logging
-from typing import Optional, Set
+from typing import Optional
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from opentelemetry import trace as trace_api
-from opentelemetry.trace import StatusCode, SpanContext, TraceFlags, NonRecordingSpan
+from opentelemetry.trace import SpanContext, TraceFlags, NonRecordingSpan
 
 from app.tracing.attributes import (
-    SPAN_PROXY_REQUEST,
     SPAN_TRACE_ROOT,
-    PROXY_API_KEY_HASH,
-    PROXY_SERVICE_TIER,
-    LANGFUSE_USER_ID,
     LANGFUSE_SESSION_ID,
 )
 from app.tracing.provider import get_tracer
 from app.tracing.session_store import get_session_store
 
 logger = logging.getLogger(__name__)
-
-# Paths to skip tracing
-SKIP_PATHS: Set[str] = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/favicon.ico"}
-SKIP_PATH_PREFIXES = ("/health/", "/v1/messages/count_tokens",)
 
 
 def _derive_session_from_body(body: bytes) -> Optional[str]:
@@ -64,20 +59,13 @@ class TracingMiddleware(BaseHTTPMiddleware):
     """Middleware that creates root request spans for API calls."""
 
     async def dispatch(self, request: Request, call_next):
-        path = request.url.path
-
-        # Skip non-API paths
-        if path in SKIP_PATHS or any(path.startswith(p) for p in SKIP_PATH_PREFIXES):
-            return await call_next(request)
-
-        tracer = get_tracer("app.middleware.tracing")
-
-        # For POST /v1/messages: use turn-based tracing structure
-        if request.method == "POST" and path == "/v1/messages":
+        # Whitelist: only trace POST /v1/messages (chat completions)
+        if request.method == "POST" and request.url.path == "/v1/messages":
+            tracer = get_tracer("app.middleware.tracing")
             return await self._dispatch_messages(request, call_next, tracer)
 
-        # For all other API paths: keep existing proxy.request span behavior
-        return await self._dispatch_generic(request, call_next, tracer)
+        # Everything else passes through without tracing
+        return await call_next(request)
 
     async def _dispatch_messages(self, request: Request, call_next, tracer):
         """Handle /v1/messages with turn-based trace structure."""
@@ -94,8 +82,24 @@ class TracingMiddleware(BaseHTTPMiddleware):
                 pass
 
         if not session_id:
-            # No session ID — fall back to generic span behavior
-            return await self._dispatch_generic(request, call_next, tracer)
+            # No session ID — still trace but as a standalone turn
+            # Create a one-off root span so the request still appears in Langfuse
+            root_span = tracer.start_span(SPAN_TRACE_ROOT)
+            parent_ctx = trace_api.set_span_in_context(root_span)
+
+            request.state.trace_session_id = None
+            request.state.trace_parent_ctx = parent_ctx
+            request.state.trace_turn_num = 1
+            request.state.trace_is_first_turn = True
+            request.state.trace_root_span = root_span
+
+            try:
+                response = await call_next(request)
+                return response
+            except Exception:
+                raise
+            finally:
+                root_span.end()
 
         # Look up or create trace context for this session
         existing = store.get(session_id)
@@ -144,68 +148,3 @@ class TracingMiddleware(BaseHTTPMiddleware):
         except Exception:
             raise
 
-    async def _dispatch_generic(self, request: Request, call_next, tracer):
-        """Handle non-messages API paths with standard proxy.request span."""
-        session_id = None
-        parent_ctx = None
-
-        if hasattr(request, "headers"):
-            session_id = request.headers.get("x-session-id")
-
-        if not session_id and request.method == "POST":
-            try:
-                body = await request.body()
-                if body:
-                    session_id = _derive_session_from_body(body)
-            except Exception:
-                pass
-
-        if session_id:
-            store = get_session_store()
-            existing = store.get(session_id)
-            if existing:
-                trace_id, span_id, turn_count, root_span = existing
-                parent_span_context = SpanContext(
-                    trace_id=trace_id,
-                    span_id=span_id,
-                    is_remote=True,
-                    trace_flags=TraceFlags(TraceFlags.SAMPLED),
-                )
-                parent_span = NonRecordingSpan(parent_span_context)
-                parent_ctx = trace_api.set_span_in_context(parent_span)
-
-        with tracer.start_as_current_span(SPAN_PROXY_REQUEST, context=parent_ctx) as span:
-            if session_id and parent_ctx is None:
-                span_context = span.get_span_context()
-                store = get_session_store()
-                store.put(session_id, span_context.trace_id, span_context.span_id)
-
-            span.set_attribute("http.method", request.method)
-            span.set_attribute("http.url", str(request.url))
-            span.set_attribute("http.route", request.url.path)
-
-            api_key = getattr(request.state, "api_key", None) if hasattr(request, "state") else None
-            if api_key:
-                key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:16]
-                span.set_attribute(PROXY_API_KEY_HASH, key_hash)
-
-            user_id = getattr(request.state, "user_id", None) if hasattr(request, "state") else None
-            if user_id:
-                span.set_attribute(LANGFUSE_USER_ID, user_id)
-
-            service_tier = getattr(request.state, "service_tier", None) if hasattr(request, "state") else None
-            if service_tier:
-                span.set_attribute(PROXY_SERVICE_TIER, service_tier)
-
-            request.state.trace_span = span
-
-            try:
-                response = await call_next(request)
-                span.set_attribute("http.status_code", response.status_code)
-                if response.status_code >= 400:
-                    span.set_status(StatusCode.ERROR, f"HTTP {response.status_code}")
-                return response
-            except Exception as e:
-                span.set_status(StatusCode.ERROR, str(e))
-                span.record_exception(e)
-                raise

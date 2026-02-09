@@ -8,8 +8,9 @@ from config import API_KEY, BASE_URL
 client = Anthropic(api_key=API_KEY, base_url=BASE_URL)
 
 text_long = ""
-with open("daming.txt", 'r', encoding='gbk') as f:
-    text_long = f.read()
+text_long = "思考如何突破广义相对论，实现超光速"
+# with open("daming.txt", 'r', encoding='gbk') as f:
+#     text_long = f.read()
 
 
 def print_stream_events(stream):
@@ -100,7 +101,7 @@ def test_stream():
     with client.beta.messages.stream(
         model="claude-opus-4-6",
         max_tokens=16000,
-        thinking={"type": "adaptive"},
+        thinking={"type": "enabled"},
         output_config={
             "effort": "low"
         },

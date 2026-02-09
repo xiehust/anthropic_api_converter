@@ -63,6 +63,15 @@ export interface EnvironmentConfig {
   bedrockThreadPoolSize: number;
   bedrockSemaphoreSize: number;
 
+  // OpenTelemetry Tracing Configuration
+  enableTracing: boolean;                    // Enable OTEL tracing
+  otelExporterEndpoint?: string;             // OTLP exporter endpoint (e.g., Langfuse, Jaeger)
+  otelExporterProtocol?: string;             // http/protobuf (default) or grpc
+  otelExporterHeaders?: string;              // Auth headers (format: key1=value1,key2=value2)
+  otelServiceName?: string;                  // Service name in tracing backend
+  otelTraceContent?: boolean;                // Record prompt/completion content (PII risk)
+  otelTraceSamplingRatio?: number;           // Sampling ratio 0.0-1.0
+
   // Admin Portal Configuration
   adminPortalEnabled: boolean;
   adminPortalCpu: number;           // CPU units (1024 = 1 vCPU)
@@ -137,6 +146,15 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     bedrockThreadPoolSize: 15,
     bedrockSemaphoreSize: 15,
 
+    // OpenTelemetry Tracing
+    enableTracing: false,
+    // otelExporterEndpoint: 'https://cloud.langfuse.com/api/public/otel',
+    // otelExporterProtocol: 'http/protobuf',
+    // otelExporterHeaders: 'Authorization=Basic <base64(publicKey:secretKey)>',
+    // otelServiceName: 'anthropic-bedrock-proxy-dev',
+    // otelTraceContent: false,
+    // otelTraceSamplingRatio: 1.0,
+
     // Admin Portal
     adminPortalEnabled: true,
     adminPortalCpu: 1024,          // 1 vCPU (Fargate: 1024 CPU requires 2048-8192 MB memory)
@@ -208,6 +226,15 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     // Bedrock Concurrency
     bedrockThreadPoolSize: 30,
     bedrockSemaphoreSize: 30,
+
+    // OpenTelemetry Tracing
+    enableTracing: false,
+    // otelExporterEndpoint: 'https://cloud.langfuse.com/api/public/otel',
+    // otelExporterProtocol: 'http/protobuf',
+    // otelExporterHeaders: 'Authorization=Basic <base64(publicKey:secretKey)>',
+    // otelServiceName: 'anthropic-bedrock-proxy-prod',
+    // otelTraceContent: false,
+    // otelTraceSamplingRatio: 0.1,
 
     // Admin Portal
     adminPortalEnabled: true,
@@ -291,11 +318,24 @@ export function getConfig(environmentName: string = 'dev'): EnvironmentConfig {
   // Enable PTC automatically when using EC2 launch type with Docker socket
   const enablePtc = launchType === 'ec2' && config.ec2EnableDockerSocket;
 
+  // Override OTEL tracing settings from environment variables
+  // This allows enabling tracing at deploy time without modifying config code
+  const enableTracing = process.env.ENABLE_TRACING
+    ? process.env.ENABLE_TRACING.toLowerCase() === 'true'
+    : config.enableTracing;
+
   return {
     ...config,
     platform,
     launchType,
     ec2InstanceType,
     enablePtc,
+    enableTracing,
+    ...(process.env.OTEL_EXPORTER_OTLP_ENDPOINT && { otelExporterEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT }),
+    ...(process.env.OTEL_EXPORTER_OTLP_PROTOCOL && { otelExporterProtocol: process.env.OTEL_EXPORTER_OTLP_PROTOCOL }),
+    ...(process.env.OTEL_EXPORTER_OTLP_HEADERS && { otelExporterHeaders: process.env.OTEL_EXPORTER_OTLP_HEADERS }),
+    ...(process.env.OTEL_SERVICE_NAME && { otelServiceName: process.env.OTEL_SERVICE_NAME }),
+    ...(process.env.OTEL_TRACE_CONTENT && { otelTraceContent: process.env.OTEL_TRACE_CONTENT.toLowerCase() === 'true' }),
+    ...(process.env.OTEL_TRACE_SAMPLING_RATIO && { otelTraceSamplingRatio: parseFloat(process.env.OTEL_TRACE_SAMPLING_RATIO) }),
   };
 }

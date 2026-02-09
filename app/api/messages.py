@@ -247,6 +247,100 @@ async def create_message(
         logger.info(f"Request {request_id}: Detected PTC request")
         print(f"[PTC] Detected Programmatic Tool Calling request")
 
+    # Initialize turn-based tracing
+    _turn_span = None
+    _turn_ctx = None
+    _trace_span = None  # LLM span (gen_ai.chat), child of Turn
+    _trace_root_span = None
+    _trace_is_first_turn = False
+    _trace_session_id = None
+    _tracer = None
+    if settings.enable_tracing:
+        from app.tracing.spans import start_llm_span, start_turn_span, set_llm_response_attributes
+        from app.tracing.provider import get_tracer
+        from app.tracing.context import get_session_id
+        from app.tracing.attributes import (
+            LANGFUSE_TRACE_NAME, LANGFUSE_TRACE_INPUT, LANGFUSE_TRACE_OUTPUT,
+            LANGFUSE_OBSERVATION_INPUT,
+        )
+        from opentelemetry import trace as trace_api
+
+        _tracer = get_tracer("app.api.messages")
+        _trace_session_id = get_session_id(request, request_data)
+
+        # Check if middleware set up turn-based tracing context
+        parent_ctx = getattr(request.state, "trace_parent_ctx", None) if hasattr(request, "state") else None
+        turn_num = getattr(request.state, "trace_turn_num", None) if hasattr(request, "state") else None
+        _trace_is_first_turn = getattr(request.state, "trace_is_first_turn", False) if hasattr(request, "state") else False
+        _trace_root_span = getattr(request.state, "trace_root_span", None) if hasattr(request, "state") else None
+
+        if parent_ctx and turn_num:
+            # Turn-based: create Turn span as child of root
+            _turn_span = start_turn_span(_tracer, turn_num, context=parent_ctx)
+            if _turn_span:
+                _turn_ctx = trace_api.set_span_in_context(_turn_span)
+
+                # Set Turn input from last user message
+                if settings.otel_trace_content and request_data.messages:
+                    try:
+                        user_input = _extract_last_user_text(request_data.messages)
+                        if user_input:
+                            _turn_span.set_attribute(LANGFUSE_OBSERVATION_INPUT, user_input)
+                    except Exception:
+                        pass
+
+                # Create gen_ai.chat as child of Turn
+                _trace_span = start_llm_span(
+                    _tracer, request_data, request_id,
+                    session_id=_trace_session_id,
+                    stream=request_data.stream,
+                    is_ptc=is_ptc,
+                    context=_turn_ctx,
+                )
+
+                # Set trace-level attributes on Turn span so Langfuse picks them up
+                # when Turn is exported (root span stays open until TTL expiry)
+                _turn_span.set_attribute(LANGFUSE_TRACE_NAME, f"chat {request_data.model}")
+
+                # Set trace input with system prompt, tools, and first user message (on first turn)
+                if _trace_is_first_turn and settings.otel_trace_content:
+                    try:
+                        trace_input = _extract_trace_input(request_data)
+                        if trace_input:
+                            _turn_span.set_attribute(LANGFUSE_TRACE_INPUT, trace_input)
+                            if _trace_root_span:
+                                _trace_root_span.set_attribute(LANGFUSE_TRACE_INPUT, trace_input)
+                    except Exception:
+                        pass
+
+                # Also set on root span for when it eventually exports
+                if _trace_root_span:
+                    _trace_root_span.set_attribute(LANGFUSE_TRACE_NAME, f"chat {request_data.model}")
+        else:
+            # Fallback: no turn context (e.g., no session ID)
+            _trace_span = start_llm_span(
+                _tracer, request_data, request_id,
+                session_id=_trace_session_id,
+                stream=request_data.stream,
+                is_ptc=is_ptc,
+            )
+
+    def _end_trace_spans(error=None):
+        """End any open tracing spans (Turn + LLM), optionally recording an error."""
+        if _trace_span is not None:
+            try:
+                if error is not None and settings.enable_tracing:
+                    from app.tracing.spans import set_error_on_span
+                    set_error_on_span(_trace_span, error)
+                _trace_span.end()
+            except Exception:
+                pass
+        if _turn_span is not None:
+            try:
+                _turn_span.end()
+            except Exception:
+                pass
+
     try:
         # Handle PTC requests
         if is_ptc:
@@ -268,6 +362,7 @@ async def create_message(
                         else:
                             logger.info(f"[PTC Streaming] Resuming sandbox execution for session {session_id}")
 
+                        _end_trace_spans()
                         return StreamingResponse(
                             ptc_service.handle_tool_result_continuation_streaming(
                                 session_id=session_id,
@@ -288,6 +383,7 @@ async def create_message(
                         )
                     else:
                         # New PTC request - streaming
+                        _end_trace_spans()
                         return StreamingResponse(
                             ptc_service.handle_ptc_request_streaming(
                                 request=request_data,
@@ -355,6 +451,7 @@ async def create_message(
                     response_dict["container"] = container_info.model_dump()
 
                 logger.debug(f"[PTC] Final response: {response_dict}")
+                _end_trace_spans()
                 return JSONResponse(content=response_dict)
 
             except DockerNotAvailableError as e:
@@ -391,6 +488,7 @@ async def create_message(
                 # Create session first to get container ID for headers
                 session = await standalone_service._get_or_create_session(container_id)
 
+                _end_trace_spans()
                 return StreamingResponse(
                     standalone_service.handle_request_streaming(
                         request=request_data,
@@ -439,6 +537,7 @@ async def create_message(
                     response_dict["container"] = container_info.model_dump()
 
                 logger.debug(f"[STANDALONE] Final response: {response_dict}")
+                _end_trace_spans()
                 return JSONResponse(content=response_dict)
 
             except DockerNotAvailableError as e:
@@ -463,16 +562,29 @@ async def create_message(
         # Check if streaming is requested
         if request_data.stream:
             # Return streaming response
+            generator = _handle_streaming_request(
+                request_data,
+                request_id,
+                api_key_info,
+                bedrock_service,
+                usage_tracker,
+                service_tier,
+                anthropic_beta,
+            )
+            # Wrap with tracing accumulator if tracing is enabled
+            if _trace_span is not None:
+                from app.tracing.streaming import StreamingSpanAccumulator
+                accumulator = StreamingSpanAccumulator(
+                    _trace_span, request_data, request_id,
+                    trace_content=settings.otel_trace_content,
+                    turn_span=_turn_span,
+                    turn_ctx=_turn_ctx,
+                    root_span=_trace_root_span,
+                    tracer=_tracer,
+                )
+                generator = accumulator.wrap_stream(generator)
             return StreamingResponse(
-                _handle_streaming_request(
-                    request_data,
-                    request_id,
-                    api_key_info,
-                    bedrock_service,
-                    usage_tracker,
-                    service_tier,
-                    anthropic_beta,
-                ),
+                generator,
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -485,6 +597,51 @@ async def create_message(
             response = await bedrock_service.invoke_model(
                 request_data, request_id, service_tier, anthropic_beta
             )
+
+            if _trace_span is not None:
+                from app.tracing.spans import set_llm_response_attributes, start_tool_span as _start_tool_span
+                set_llm_response_attributes(_trace_span, response)
+                _trace_span.end()
+
+                # Create tool spans as children of Turn span
+                if _turn_ctx and _tracer:
+                    try:
+                        for block in getattr(response, "content", []):
+                            btype = getattr(block, "type", None)
+                            if btype == "tool_use":
+                                tool_name = getattr(block, "name", "unknown")
+                                tool_id = getattr(block, "id", "")
+                                tool_span = _start_tool_span(_tracer, tool_name, tool_id, context=_turn_ctx)
+                                if tool_span:
+                                    if settings.otel_trace_content:
+                                        tool_input = getattr(block, "input", {})
+                                        tool_span.set_attribute(LANGFUSE_OBSERVATION_INPUT, str(tool_input))
+                                    tool_span.end()
+                    except Exception:
+                        pass
+
+                # Build response text for Turn output and trace output
+                response_text = _extract_response_text(response)
+
+                # Set Turn span output and trace output, then end Turn
+                if _turn_span:
+                    if settings.otel_trace_content and response_text:
+                        from app.tracing.attributes import LANGFUSE_OBSERVATION_OUTPUT
+                        _turn_span.set_attribute(LANGFUSE_OBSERVATION_OUTPUT, response_text)
+                        # Set trace-level output on Turn span (exported immediately)
+                        _turn_span.set_attribute(LANGFUSE_TRACE_OUTPUT, response_text)
+                    _turn_span.end()
+
+                # Also set on root span for when it eventually exports
+                if _trace_root_span and settings.otel_trace_content and response_text:
+                    try:
+                        _trace_root_span.set_attribute(LANGFUSE_TRACE_OUTPUT, response_text)
+                    except Exception:
+                        pass
+
+            elif _turn_span:
+                # No LLM span but Turn span exists — end it
+                _turn_span.end()
 
             # Record usage
             usage_tracker.record_usage(
@@ -505,6 +662,7 @@ async def create_message(
         print(f"\n[ERROR] HTTPException in request {request_id}")
         print(f"[ERROR] Status: {he.status_code}")
         print(f"[ERROR] Detail: {he.detail}\n")
+        _end_trace_spans(he)
         raise
 
     except BedrockAPIError as e:
@@ -525,7 +683,7 @@ async def create_message(
             error_message=f"[{e.error_code}] {e.error_message}",
         )
 
-        # Return error response with correct HTTP status
+        _end_trace_spans(e)
         raise HTTPException(
             status_code=e.http_status,
             detail={
@@ -552,7 +710,7 @@ async def create_message(
             error_message=str(e),
         )
 
-        # Return error response
+        _end_trace_spans(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
@@ -560,6 +718,113 @@ async def create_message(
                 "message": f"Failed to process request: {str(e)}",
             },
         )
+
+
+def _extract_last_user_text(messages) -> Optional[str]:
+    """Extract text from the last user message (for Turn input)."""
+    for msg in reversed(messages):
+        role = getattr(msg, "role", "")
+        if role != "user":
+            continue
+        content = getattr(msg, "content", "")
+        if isinstance(content, str) and content:
+            return content
+        elif isinstance(content, list):
+            texts = []
+            for block in content:
+                btype = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+                if btype == "text":
+                    texts.append(getattr(block, "text", "") if hasattr(block, "text") else block.get("text", ""))
+            if texts:
+                return " ".join(texts)
+    return None
+
+
+def _extract_trace_input(request_data) -> Optional[str]:
+    """Extract trace input as JSON object with system, tools, and user_message as separate keys.
+
+    Langfuse parses JSON strings in trace/observation input fields and renders
+    them as structured, expandable objects in the UI.
+    """
+    result = {}
+
+    # System prompt
+    system = getattr(request_data, "system", None)
+    if system:
+        if isinstance(system, str) and system:
+            result["system"] = system
+        elif isinstance(system, list):
+            sys_texts = []
+            for block in system:
+                text = getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else None)
+                if text:
+                    sys_texts.append(text)
+            if sys_texts:
+                result["system"] = "\n".join(sys_texts) if len(sys_texts) > 1 else sys_texts[0]
+
+    # Tools
+    tools = getattr(request_data, "tools", None)
+    if tools:
+        tool_list = []
+        for tool in tools:
+            name = getattr(tool, "name", None) or (tool.get("name") if isinstance(tool, dict) else None)
+            desc = getattr(tool, "description", None) or (tool.get("description") if isinstance(tool, dict) else None)
+            tool_type = getattr(tool, "type", None) or (tool.get("type") if isinstance(tool, dict) else None)
+            schema = getattr(tool, "input_schema", None) or (tool.get("input_schema") if isinstance(tool, dict) else None)
+            if name:
+                entry = {"name": name}
+                if desc:
+                    entry["description"] = desc
+                if schema:
+                    # Convert Pydantic model to dict if needed
+                    if hasattr(schema, "model_dump"):
+                        entry["input_schema"] = schema.model_dump()
+                    elif hasattr(schema, "dict"):
+                        entry["input_schema"] = schema.dict()
+                    elif isinstance(schema, dict):
+                        entry["input_schema"] = schema
+                tool_list.append(entry)
+            elif tool_type:
+                tool_list.append({"type": tool_type})
+        if tool_list:
+            result["tools"] = tool_list
+
+    # First user message
+    messages = getattr(request_data, "messages", [])
+    if messages:
+        for msg in messages:
+            role = getattr(msg, "role", "")
+            if role != "user":
+                continue
+            content = getattr(msg, "content", "")
+            if isinstance(content, str) and content:
+                result["user_message"] = content
+                break
+            elif isinstance(content, list):
+                texts = []
+                for block in content:
+                    btype = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+                    if btype == "text":
+                        texts.append(getattr(block, "text", "") if hasattr(block, "text") else block.get("text", ""))
+                if texts:
+                    result["user_message"] = " ".join(texts)
+                break
+
+    return json.dumps(result) if result else None
+
+
+def _extract_response_text(response) -> Optional[str]:
+    """Extract text from response content blocks."""
+    parts = []
+    for block in getattr(response, "content", []):
+        btype = getattr(block, "type", None)
+        if btype == "text":
+            parts.append(getattr(block, "text", ""))
+        elif btype == "tool_use":
+            name = getattr(block, "name", "")
+            tool_input = getattr(block, "input", {})
+            parts.append(f"[tool_use: {name}({str(tool_input)})]")
+    return "\n".join(parts) if parts else None
 
 
 async def _handle_streaming_request(

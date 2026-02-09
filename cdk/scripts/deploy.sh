@@ -61,6 +61,18 @@ LAUNCH TYPE COMPARISON:
     * Use 'fargate' (default) for most deployments
     * Use 'ec2' only if you need Programmatic Tool Calling (PTC) feature
 
+OTEL TRACING (via environment variables):
+    Enable OpenTelemetry tracing by setting env vars before running this script:
+
+    ENABLE_TRACING=true \\
+    OTEL_EXPORTER_OTLP_ENDPOINT=https://us.cloud.langfuse.com/api/public/otel \\
+    OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \\
+    OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic <base64>" \\
+    OTEL_SERVICE_NAME=anthropic-bedrock-proxy \\
+    OTEL_TRACE_CONTENT=true \\
+    OTEL_TRACE_SAMPLING_RATIO=1.0 \\
+    ./scripts/deploy.sh -e prod -p arm64
+
 PREREQUISITES:
     - AWS CLI configured with appropriate credentials
     - Node.js and npm installed

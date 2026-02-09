@@ -63,6 +63,11 @@
 - **速率限制**：每个 API 密钥的令牌桶算法
 - **使用跟踪**：全面的分析和令牌使用跟踪
 - **服务层级**：支持 Bedrock Service Tier 配置，平衡成本和延迟
+- **OpenTelemetry 分布式追踪**：支持将 LLM 调用追踪数据导出到任何 OTEL 兼容后端（Langfuse、Jaeger、Grafana Tempo 等）
+  - 遵循 [OTEL GenAI 语义规范](https://opentelemetry.io/docs/specs/semconv/gen-ai/)，记录模型、Token 用量、延迟等
+  - 支持会话级追踪，通过 `x-session-id` header 关联同一对话的所有请求
+  - 流式和非流式响应均支持完整的 Token 统计
+  - 零开销设计：未启用时所有追踪函数为 no-op
 - **Admin Portal**：Web 管理界面，支持 API 密钥管理、用量监控、预算控制
   - Cognito 认证保护，支持用户密码和 SRP 认证
   - 实时查看 API 密钥使用统计（输入/输出/缓存 Token）
@@ -70,10 +75,12 @@
   - 预算限制与自动停用功能
 
 ### 支持的模型
-- Claude 4.5/5 Sonnet
+- Claude 4.5/4.6
 - Claude 4.5 Haiku
 - Qwen3-coder-480b
 - Qwen3-235b-instruct
+- Kimi 2.5
+- minimax2.1
 - 任何其他支持 Converse API 的 Bedrock 模型
 
 ## 使用场景
@@ -266,6 +273,184 @@ message = client.messages.create(
 
 **为更多模型启用 beta header 映射：**
 将模型 ID 添加到 `BETA_HEADER_SUPPORTED_MODELS` 列表。
+
+## OpenTelemetry 分布式追踪（LLM Observability）
+
+代理服务内置 OpenTelemetry 追踪支持，可将 LLM 调用的详细信息导出到任何 OTEL 兼容的可观测性后端，实现：
+
+- **Token 用量追踪**：每次请求的 input/output/cache tokens 统计
+- **延迟分析**：端到端延迟、Bedrock API 调用延迟、流式响应持续时间
+- **会话关联**：通过 `x-session-id` header 将同一对话的多次请求关联在一起
+- **工具调用追踪**：记录每次工具调用的名称和 ID
+- **PTC 代码执行追踪**：记录 Programmatic Tool Calling 的执行过程
+- **错误诊断**：自动记录异常信息和错误状态
+
+### Span 层级结构（基于 Turn 的 Agent Loop 追踪）
+
+```
+Trace "chat claude-sonnet-4-5-20250929"
+  ├── Turn 1 (input=用户消息, output=助手回复)
+  │     ├── gen_ai.chat (模型, Token 用量, 延迟)
+  │     ├── Tool: Read (input=工具输入)
+  │     └── Tool: Edit (input=工具输入)
+  ├── Turn 2
+  │     ├── gen_ai.chat
+  │     └── Tool: Bash
+  └── Turn 3
+        └── gen_ai.chat (最终文本响应，无工具调用)
+```
+
+每个 Agent Loop 中的 HTTP 请求映射为一个 **Turn** span，包含：
+- `gen_ai.chat` 生成 span（记录模型、Token 用量、延迟）
+- 响应中每个 tool_use 块对应一个 Tool span
+- 结构化的 input/output 属性（Langfuse UI 自动渲染为 JSON 对象）
+
+### 记录的关键属性
+
+| 属性 | 说明 | 示例 |
+|------|------|------|
+| `gen_ai.request.model` | 请求模型 | `claude-sonnet-4-5-20250929` |
+| `gen_ai.usage.input_tokens` | 输入 Token 数 | `1500` |
+| `gen_ai.usage.output_tokens` | 输出 Token 数 | `350` |
+| `gen_ai.response.finish_reasons` | 停止原因 | `["end_turn"]` |
+| `gen_ai.conversation.id` | 会话 ID | `session-abc123` |
+| `langfuse.observation.usage_details` | 完整用量 JSON（含缓存 Token） | `{"input":1500,"output":350,"cache_read_input_tokens":800}` |
+| `proxy.api_key_hash` | API Key 哈希（隐私安全） | `a1b2c3d4...` |
+
+### 连接到 Langfuse Cloud
+
+[Langfuse](https://langfuse.com) 是一个开源的 LLM 可观测性平台，原生支持 OTEL 协议。以下是连接步骤：
+
+**1. 获取 Langfuse 凭证**
+
+登录 [Langfuse Cloud](https://us.cloud.langfuse.com)，在项目 Settings → API Keys 中获取 Public Key 和 Secret Key。
+
+**2. 生成 Base64 认证字符串**
+
+```bash
+echo -n "your-public-key:your-secret-key" | base64
+```
+
+**3. 配置环境变量**
+
+```bash
+ENABLE_TRACING=true
+OTEL_EXPORTER_OTLP_ENDPOINT=https://us.cloud.langfuse.com/api/public/otel
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <上一步生成的 base64 字符串>
+OTEL_SERVICE_NAME=anthropic-bedrock-proxy
+OTEL_TRACE_CONTENT=true
+```
+
+**4. 启动服务并发送请求**
+
+```bash
+# 启动服务
+uv run uvicorn app.main:app --reload
+
+# 发送请求（带 session ID 用于会话关联）
+curl http://localhost:8000/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: sk-your-key" \
+  -H "x-session-id: my-test-session" \
+  -d '{
+    "model": "claude-sonnet-4-5-20250929",
+    "max_tokens": 1024,
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+![alt text](image-12.png)
+**5. 在 Langfuse 中查看追踪**
+
+登录 Langfuse Cloud，在 Traces 页面即可看到追踪数据，包括：
+- 请求完整的 Span 层级和时间线
+- Token 用量和缓存命中情况
+- 按 Session ID 分组查看对话流程
+- 模型、延迟、成本等统计信息
+
+### 连接到其他 OTEL 后端
+
+**Jaeger（本地调试）：**
+
+```bash
+# 启动 Jaeger
+docker run -d -p 4318:4318 -p 16686:16686 jaegertracing/all-in-one
+
+# 配置代理
+ENABLE_TRACING=true
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_SERVICE_NAME=anthropic-bedrock-proxy
+
+# 查看追踪：http://localhost:16686
+```
+
+**Grafana Tempo：**
+
+```bash
+ENABLE_TRACING=true
+OTEL_EXPORTER_OTLP_ENDPOINT=https://your-tempo-endpoint
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <credentials>
+```
+
+### 内容追踪（可选）
+
+默认情况下，追踪**不记录**请求和响应的实际内容（因为可能包含敏感信息）。如需启用内容追踪用于调试：
+
+```bash
+# 启用内容追踪（会记录 prompt 和 completion 内容，注意 PII 风险）
+OTEL_TRACE_CONTENT=true
+```
+
+启用后，追踪数据中将包含：
+- Trace 级别 Input：结构化 JSON 对象（system prompt、tools 含 input_schema、用户消息）
+- Turn 级别 Input/Output：当前轮次的用户消息和助手回复
+- gen_ai.chat 的 prompt：仅包含当前轮次的消息（不包含历史消息）
+- 响应文本和工具调用详情
+
+### CDK 部署开启追踪
+
+通过 CDK 部署到 ECS 时，可以通过环境变量在部署时开启追踪，**无需修改代码**：
+
+```bash
+# 以 Langfuse 为例
+ENABLE_TRACING=true \
+OTEL_EXPORTER_OTLP_ENDPOINT=https://us.cloud.langfuse.com/api/public/otel \
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $(echo -n 'pk-xxx:sk-xxx' | base64)" \
+OTEL_SERVICE_NAME=anthropic-bedrock-proxy-prod \
+OTEL_TRACE_CONTENT=true \
+OTEL_TRACE_SAMPLING_RATIO=1.0 \
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64 -l ec2
+```
+
+| 环境变量 | 说明 | 默认值 |
+|---------|------|--------|
+| `ENABLE_TRACING` | 开启追踪 | `false` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP 导出端点 | 无 |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | 协议 (`http/protobuf` / `grpc`) | `http/protobuf` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | 认证 Headers | 无 |
+| `OTEL_SERVICE_NAME` | 服务名称 | 无 |
+| `OTEL_TRACE_CONTENT` | 记录 prompt/completion 内容 | `false` |
+| `OTEL_TRACE_SAMPLING_RATIO` | 采样率 (0.0-1.0) | `1.0` |
+
+> **优先级**：环境变量 > `cdk/config/config.ts` 中的配置 > 默认值
+
+### 采样配置
+
+对于高流量场景，可以通过采样率控制追踪数据量：
+
+```bash
+# 50% 采样（每 2 个请求采样 1 个）
+OTEL_TRACE_SAMPLING_RATIO=0.5
+
+# 10% 采样（适合高流量生产环境）
+OTEL_TRACE_SAMPLING_RATIO=0.1
+
+# 全量采样（默认，适合开发和低流量环境）
+OTEL_TRACE_SAMPLING_RATIO=1.0
+```
 
 ## 架构
 
@@ -730,6 +915,30 @@ DEFAULT_SERVICE_TIER=default
 - 如果指定的服务层级不被模型支持，系统会自动回退到 `default` 层级
 - 可以在创建 API 密钥时为每个密钥单独配置服务层级
 
+#### OpenTelemetry 分布式追踪
+```bash
+# 启用追踪（默认关闭）
+ENABLE_TRACING=true
+
+# OTLP 导出端点
+OTEL_EXPORTER_OTLP_ENDPOINT=https://your-otel-endpoint
+
+# 导出协议：http/protobuf（默认）或 grpc
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+
+# 导出认证 headers（格式：key1=value1,key2=value2）
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic xxxxx
+
+# 服务名称（用于区分不同环境的追踪数据）
+OTEL_SERVICE_NAME=anthropic-bedrock-proxy
+
+# 是否记录请求/响应内容（包含 PII，默认关闭）
+OTEL_TRACE_CONTENT=false
+
+# 采样率（0.0-1.0，默认 1.0 即全量采样）
+OTEL_TRACE_SAMPLING_RATIO=1.0
+```
+
 ## API 文档
 
 ### 端点
@@ -926,6 +1135,13 @@ anthropic_api_proxy/
 │   │   └── bedrock.py    # Bedrock API 模式
 │   ├── services/         # 业务逻辑
 │   │   └── bedrock_service.py
+│   ├── tracing/          # OpenTelemetry 分布式追踪
+│   │   ├── provider.py   # TracerProvider 初始化和导出器配置
+│   │   ├── middleware.py  # 请求根 Span 中间件
+│   │   ├── spans.py      # Span 创建辅助函数
+│   │   ├── streaming.py  # 流式响应 Token 累积器
+│   │   ├── attributes.py # OTEL GenAI 语义规范常量
+│   │   └── context.py    # 会话 ID 提取和线程上下文传播
 │   └── main.py           # 应用程序入口点
 ├── tests/
 │   ├── unit/             # 单元测试

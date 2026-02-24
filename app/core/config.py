@@ -109,6 +109,7 @@ class Settings(BaseSettings):
     default_model_mapping: Dict[str, str] = Field(
         default={
             # Anthropic model IDs -> Bedrock model ARNs
+            "claude-sonnet-4-6": "global.anthropic.claude-sonnet-4-6",
             "claude-opus-4-6": "global.anthropic.claude-opus-4-6-v1",
             "claude-opus-4-5-20251101": "global.anthropic.claude-opus-4-5-20251101-v1:0",
             "claude-sonnet-4-5-20250929": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
@@ -206,6 +207,8 @@ class Settings(BaseSettings):
             "global.anthropic.claude-opus-4-5-20251101-v1:0",
             "claude-opus-4-6",
             "global.anthropic.claude-opus-4-6-v1",
+            "claude-sonnet-4-6",
+            "global.anthropic.claude-sonnet-4-6"
         ],
         alias="BETA_HEADER_SUPPORTED_MODELS",
         description="List of model IDs that support beta header mapping",

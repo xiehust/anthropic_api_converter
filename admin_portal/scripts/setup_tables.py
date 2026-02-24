@@ -57,6 +57,16 @@ DEFAULT_PRICING = [
         "status": "active",
     },
     {
+        "model_id": "global.anthropic.claude-sonnet-4-6",
+        "provider": "Anthropic",
+        "display_name": "Claude Sonnet 4.6",
+        "input_price": Decimal("3.00"),
+        "output_price": Decimal("15.00"),
+        "cache_read_price": Decimal("0.30"),
+        "cache_write_price": Decimal("3.75"),
+        "status": "active",
+    },
+    {
         "model_id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
         "provider": "Anthropic",
         "display_name": "Claude Sonnet 4.5",

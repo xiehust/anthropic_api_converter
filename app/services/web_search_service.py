@@ -22,6 +22,7 @@ Streaming support:
 
 import json
 import logging
+import re
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 from uuid import uuid4
 
@@ -58,6 +59,19 @@ WEB_SEARCH_DYNAMIC_TYPE = "web_search_20260209"
 
 # Bash tool name used for dynamic filtering code execution
 BASH_TOOL_NAME = "bash_code_execution"
+
+# Citation marker regex: matches [1], [2], [1][3], etc.
+_CITATION_MARKER_RE = re.compile(r"\[(\d+)\]")
+
+# Instruction appended to search results so Claude outputs citation markers
+_CITATION_INSTRUCTION = (
+    "\n\n---\nIMPORTANT: When using information from the search results above, "
+    "you MUST cite the source by appending the result number in square brackets "
+    "immediately after the relevant claim. For example: 'The population is 10 million [1].' "
+    "Use the result numbers shown above (e.g., [1], [2], [3]). "
+    "Multiple citations can be combined: 'This fact [1][3].' "
+    "Every factual claim from search results must have at least one citation."
+)
 
 
 class WebSearchService:
@@ -474,16 +488,22 @@ class WebSearchService:
         messages: List[Any],
         response_content: list,
         tool_results: List[Dict[str, Any]],
+        result_registry: Optional[Dict[int, Dict[str, str]]] = None,
     ) -> List[Any]:
         """
         Build messages for the next iteration of the agentic loop.
 
         Appends the assistant response and user tool_result messages.
+        Numbers search results and appends citation instruction so Claude
+        outputs [N] markers in its final response.
 
         Args:
             messages: Current message history
             response_content: Assistant response content blocks
             tool_results: Tool result content blocks
+            result_registry: If provided, web search results are numbered and
+                registered here for post-processing citations.
+                Maps 1-based index → {"url", "title", "content", "encrypted_index"}
 
         Returns:
             Updated message list
@@ -522,6 +542,7 @@ class WebSearchService:
                 is_error = return_code != 0
             elif result_type == "web_search_tool_result":
                 # Web search result → convert to tool_result text
+                # Number each result and register for citation post-processing
                 is_error = False
                 if isinstance(result_content, list):
                     text_parts = []
@@ -533,8 +554,26 @@ class WebSearchService:
                             content = decode_content(enc) if enc else ""
                         except Exception:
                             content = enc
-                        text_parts.append(f"Title: {title}\nURL: {url}\nContent: {content}")
+
+                        if result_registry is not None:
+                            # Assign a 1-based index and register
+                            idx = len(result_registry) + 1
+                            result_registry[idx] = {
+                                "url": url,
+                                "title": title,
+                                "content": content,
+                                "encrypted_index": encode_content(str(idx)),
+                            }
+                            text_parts.append(
+                                f"[Result {idx}]\nTitle: {title}\nURL: {url}\nContent: {content}"
+                            )
+                        else:
+                            text_parts.append(f"Title: {title}\nURL: {url}\nContent: {content}")
+
                     result_text = "\n\n---\n\n".join(text_parts)
+                    # Append citation instruction if we're tracking results
+                    if result_registry is not None:
+                        result_text += _CITATION_INSTRUCTION
                 elif isinstance(result_content, dict):
                     result_text = f"Error: {result_content.get('error_code', 'unknown')}"
                     is_error = True
@@ -559,6 +598,108 @@ class WebSearchService:
         })
 
         return new_messages
+
+    @staticmethod
+    def _post_process_citations(
+        content_blocks: List[Any],
+        result_registry: Dict[int, Dict[str, str]],
+    ) -> List[Any]:
+        """
+        Post-process text blocks to convert [N] citation markers into
+        official Anthropic citations arrays.
+
+        Splits text at citation boundaries so each cited sentence gets a
+        citations array, matching the Anthropic API format.
+
+        Args:
+            content_blocks: List of content block dicts
+            result_registry: Mapping of 1-based result index to
+                             {"url": ..., "title": ..., "encrypted_content": ..., "encrypted_index": ...}
+
+        Returns:
+            New list of content blocks with citations injected into text blocks
+        """
+        if not result_registry:
+            return content_blocks
+
+        processed = []
+        for block in content_blocks:
+            block_dict = block if isinstance(block, dict) else (
+                block.model_dump() if hasattr(block, "model_dump") else {}
+            )
+
+            if block_dict.get("type") != "text":
+                processed.append(block_dict)
+                continue
+
+            text = block_dict.get("text", "")
+            if not text or not _CITATION_MARKER_RE.search(text):
+                processed.append(block_dict)
+                continue
+
+            # Split text into segments: alternating between plain text and cited text
+            # Strategy: split by sentences. Sentences ending with [N] get citations.
+            # We use a regex to find all citation markers with their positions.
+            segments = []
+            last_end = 0
+
+            # Find all citation marker groups (e.g., "[1][3]" as a unit)
+            for match in re.finditer(r"((?:\[\d+\])+)", text):
+                marker_start = match.start()
+                marker_end = match.end()
+                marker_text = match.group(0)
+
+                # Extract all cited indices from this marker group
+                cited_indices = [int(m) for m in re.findall(r"\[(\d+)\]", marker_text)]
+
+                # The cited text is from the last boundary up to (but not including) the marker
+                cited_segment = text[last_end:marker_start]
+                last_end = marker_end
+
+                if not cited_segment.strip():
+                    continue
+
+                # Build citations for this segment
+                citations = []
+                for idx in cited_indices:
+                    info = result_registry.get(idx)
+                    if not info:
+                        continue
+                    # Extract cited_text: first 150 chars of source content
+                    source_content = info.get("content", "")
+                    cited_text = source_content[:150] if source_content else ""
+                    citations.append({
+                        "type": "web_search_result_location",
+                        "url": info.get("url", ""),
+                        "title": info.get("title", ""),
+                        "encrypted_index": info.get("encrypted_index", ""),
+                        "cited_text": cited_text,
+                    })
+
+                if citations:
+                    segments.append({
+                        "type": "text",
+                        "text": cited_segment.rstrip(),
+                        "citations": citations,
+                    })
+                else:
+                    # No valid citations found, keep as plain text with markers
+                    segments.append({
+                        "type": "text",
+                        "text": cited_segment + marker_text,
+                    })
+
+            # Remaining text after the last marker
+            remaining = text[last_end:].strip()
+            if remaining:
+                segments.append({"type": "text", "text": remaining})
+
+            if segments:
+                processed.extend(segments)
+            else:
+                processed.append(block_dict)
+
+        return processed
 
     async def handle_request(
         self,
@@ -597,6 +738,9 @@ class WebSearchService:
         is_dynamic = config.type == WEB_SEARCH_DYNAMIC_TYPE
         max_uses = config.max_uses or settings.web_search_default_max_uses
         filtered_beta = self._filter_beta_header(anthropic_beta)
+
+        # Registry for citation post-processing: maps 1-based result index → metadata
+        result_registry: Dict[int, Dict[str, str]] = {}
 
         # For dynamic filtering, create a sandbox session
         sandbox_session = None
@@ -725,7 +869,8 @@ class WebSearchService:
 
                 # Build continuation messages (uses original toolu_ IDs for Bedrock)
                 messages = self._build_continuation_messages(
-                    messages, response_content, continuation_results
+                    messages, response_content, continuation_results,
+                    result_registry=result_registry,
                 )
 
             else:
@@ -742,6 +887,10 @@ class WebSearchService:
                     logger.info(f"[WebSearch] Cleaned up sandbox session {sandbox_session.session_id}")
                 except Exception as e:
                     logger.warning(f"[WebSearch] Failed to cleanup sandbox session: {e}")
+
+        # Post-process text blocks to inject citations from [N] markers
+        if result_registry:
+            all_content = self._post_process_citations(all_content, result_registry)
 
         # Assemble final response
         final_message = MessageResponse(
@@ -807,10 +956,15 @@ class WebSearchService:
             block_type = block_dict.get("type", "")
 
             if block_type == "text":
+                # Include citations in content_block_start if present
+                start_block: Dict[str, Any] = {"type": "text", "text": ""}
+                citations = block_dict.get("citations")
+                if citations:
+                    start_block["citations"] = citations
                 events.append(self._format_sse_event({
                     "type": "content_block_start",
                     "index": idx,
-                    "content_block": {"type": "text", "text": ""},
+                    "content_block": start_block,
                 }))
                 text = block_dict.get("text", "")
                 if text:
@@ -960,6 +1114,9 @@ class WebSearchService:
         max_uses = config.max_uses or settings.web_search_default_max_uses
         filtered_beta = self._filter_beta_header(anthropic_beta)
 
+        # Registry for citation post-processing
+        result_registry: Dict[int, Dict[str, str]] = {}
+
         # For dynamic filtering, create a sandbox session
         sandbox_session = None
         if is_dynamic:
@@ -1040,14 +1197,20 @@ class WebSearchService:
                 bash_uses = self._find_bash_tool_uses(response_content) if is_dynamic else []
                 all_tool_uses = web_search_uses + bash_uses
 
-                # Convert and emit content blocks
+                # Convert content blocks
                 converted_content = self._convert_to_server_tool_use(response_content)
+
+                # If this is the final iteration (no more tool calls), apply citation post-processing
+                is_final = not all_tool_uses or response.stop_reason != "tool_use"
+                if is_final and result_registry:
+                    converted_content = self._post_process_citations(converted_content, result_registry)
+
+                # Emit content blocks
                 events, global_index = self._emit_content_block_events(converted_content, global_index)
                 for event in events:
                     yield event
 
-                # If no intercepted tool calls, we're done
-                if not all_tool_uses or response.stop_reason != "tool_use":
+                if is_final:
                     final_stop_reason = response.stop_reason or "end_turn"
                     break
 
@@ -1094,7 +1257,8 @@ class WebSearchService:
 
                 # Build continuation messages (with original toolu_ IDs for Bedrock)
                 messages = self._build_continuation_messages(
-                    messages, response_content, continuation_results
+                    messages, response_content, continuation_results,
+                    result_registry=result_registry,
                 )
 
         except Exception as e:

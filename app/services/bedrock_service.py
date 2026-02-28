@@ -26,6 +26,7 @@ from botocore.exceptions import ClientError
 from app.converters.anthropic_to_bedrock import AnthropicToBedrockConverter
 from app.converters.bedrock_to_anthropic import BedrockToAnthropicConverter
 from app.core.config import settings
+from app.schemas.web_search import WEB_SEARCH_TOOL_TYPES
 from app.core.exceptions import BedrockAPIError, map_bedrock_error
 from app.schemas.anthropic import CountTokensRequest, MessageRequest, MessageResponse
 
@@ -252,6 +253,9 @@ class BedrockService:
                     # Skip PTC code_execution tools
                     if tool_type == "code_execution_20250825":
                         continue
+                    # Skip web search tools (handled by WebSearchService)
+                    if tool_type in WEB_SEARCH_TOOL_TYPES:
+                        continue
                     # Map versioned tool types to Bedrock-recognized types
                     mapped_type = tool_type_mapping.get(tool_type, tool_type)
                     # Pass through special tool types (beta features)
@@ -285,6 +289,9 @@ class BedrockService:
                     tool_type = getattr(tool, "type", None)
                     # Skip PTC code_execution tools
                     if tool_type == "code_execution_20250825":
+                        continue
+                    # Skip web search tools (handled by WebSearchService)
+                    if tool_type in WEB_SEARCH_TOOL_TYPES:
                         continue
                     # Map versioned tool types to Bedrock-recognized types
                     mapped_type = tool_type_mapping.get(tool_type, tool_type) if tool_type else None

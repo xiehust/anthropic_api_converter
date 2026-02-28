@@ -7,6 +7,8 @@ enabling validation, serialization, and documentation.
 from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.web_search import WebSearchToolResultContent
+
 
 # Content Block Types
 class TextContent(BaseModel):
@@ -194,6 +196,8 @@ ContentBlock = Union[
     # Standalone code execution result types
     BashCodeExecutionToolResult,
     TextEditorCodeExecutionToolResult,
+    # Web search result types
+    WebSearchToolResultContent,
 ]
 
 
@@ -314,6 +318,7 @@ class Usage(BaseModel):
     cache_creation_input_tokens: Optional[int] = None
     cache_read_input_tokens: Optional[int] = None
     iterations: Optional[List[Dict[str, Any]]] = None
+    server_tool_use: Optional[Dict[str, Any]] = None  # e.g., {"web_search_requests": 3}
 
 
 class MessageResponse(BaseModel):
@@ -324,7 +329,7 @@ class MessageResponse(BaseModel):
     content: List[ContentBlock]
     model: str
     stop_reason: Optional[Literal[
-        "end_turn", "max_tokens", "stop_sequence", "tool_use", "compaction"
+        "end_turn", "max_tokens", "stop_sequence", "tool_use", "compaction", "pause_turn"
     ]] = None
     stop_sequence: Optional[str] = None
     usage: Usage

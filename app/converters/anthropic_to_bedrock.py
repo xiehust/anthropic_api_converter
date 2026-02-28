@@ -31,6 +31,7 @@ from app.schemas.anthropic import (
     ServerToolResultContent,
     CodeExecutionResultContent,
 )
+from app.schemas.web_search import WEB_SEARCH_TOOL_TYPES
 
 
 class AnthropicToBedrockConverter:
@@ -660,6 +661,36 @@ class AnthropicToBedrockConverter:
                             }
                         }
                     )
+                elif block_type == "web_search_tool_result":
+                    # Handle web search results in multi-turn: convert to toolResult
+                    ws_content = block.get("content", [])
+                    if isinstance(ws_content, list):
+                        text_parts = []
+                        for sr in ws_content:
+                            if sr.get("type") == "web_search_result":
+                                from app.schemas.web_search import decode_content as _decode
+                                title = sr.get("title", "")
+                                url = sr.get("url", "")
+                                enc = sr.get("encrypted_content", "")
+                                try:
+                                    page_content = _decode(enc) if enc else ""
+                                except Exception:
+                                    page_content = enc
+                                text_parts.append(f"Title: {title}\nURL: {url}\nContent: {page_content}")
+                        result_text = "\n\n---\n\n".join(text_parts) if text_parts else "No results"
+                    elif isinstance(ws_content, dict) and ws_content.get("type") == "web_search_tool_result_error":
+                        result_text = f"Error: {ws_content.get('error_code', 'unknown')}"
+                    else:
+                        result_text = str(ws_content)
+                    bedrock_content.append(
+                        {
+                            "toolResult": {
+                                "toolUseId": block.get("tool_use_id", ""),
+                                "content": [{"text": result_text}],
+                                "status": "success",
+                            }
+                        }
+                    )
                 elif block_type == "tool_use":
                     bedrock_content.append(
                         {
@@ -776,6 +807,9 @@ class AnthropicToBedrockConverter:
                 # Skip PTC code_execution tools (they're handled separately)
                 if tool.get("type") == "code_execution_20250825":
                     continue
+                # Skip web search tools (handled by WebSearchService)
+                if tool.get("type") in WEB_SEARCH_TOOL_TYPES:
+                    continue
             else:
                 tool_name = tool.name
                 tool_desc = tool.description
@@ -786,6 +820,9 @@ class AnthropicToBedrockConverter:
                 tool_input_examples = getattr(tool, "input_examples", None)
                 # Skip PTC code_execution tools
                 if hasattr(tool, "type") and tool.type == "code_execution_20250825":
+                    continue
+                # Skip web search tools
+                if hasattr(tool, "type") and tool.type in WEB_SEARCH_TOOL_TYPES:
                     continue
 
             bedrock_tool = {

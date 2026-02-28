@@ -57,6 +57,14 @@
 - **提示词缓存**：映射缓存控制提示（在支持的情况下）
 - **Beta Header 映射**：自动将 Anthropic beta headers 映射到 Bedrock beta headers（如 `advanced-tool-use-2025-11-20` → `tool-examples-2025-10-29`）
 - **工具输入示例**：支持 `input_examples` 参数，为工具提供示例输入以帮助模型更好地理解工具用法
+- **Web 搜索工具**：支持 Anthropic 的 `web_search_20250305` 和 `web_search_20260209` 工具类型
+  - 代理端服务器工具实现（Bedrock 不原生支持 Web 搜索，由代理拦截并执行）
+  - 可插拔搜索提供商：支持 Tavily（推荐，专为 AI 优化）和 Brave Search
+  - 域名过滤：支持 `allowed_domains` 和 `blocked_domains` 配置
+  - 搜索次数限制：通过 `max_uses` 控制每次请求的最大搜索次数
+  - 用户位置本地化：支持基于地理位置的搜索结果优化
+  - 动态过滤（`web_search_20260209`）：Claude 可编写代码过滤搜索结果（利用现有代码执行基础设施）
+  - 支持流式和非流式响应
 
 ### 基础设施
 - **身份验证**：基于 API 密钥的身份验证，使用 DynamoDB 存储
@@ -875,6 +883,64 @@ ENABLE_EXTENDED_THINKING=True
 ENABLE_DOCUMENT_SUPPORT=True
 PROMPT_CACHING_ENABLED=False
 ENABLE_PROGRAMMATIC_TOOL_CALLING=True  # 需要 Docker
+ENABLE_WEB_SEARCH=True                # 需要搜索提供商 API 密钥
+```
+
+#### Web 搜索配置
+```bash
+# Web 搜索功能开关
+ENABLE_WEB_SEARCH=True
+
+# 搜索提供商：'tavily'（推荐）或 'brave'
+WEB_SEARCH_PROVIDER=tavily
+
+# 搜索提供商 API 密钥（Tavily 或 Brave）
+WEB_SEARCH_API_KEY=tvly-your-api-key
+
+# 每次搜索返回的最大结果数（默认 5）
+WEB_SEARCH_MAX_RESULTS=5
+
+# 每次请求的默认最大搜索次数（默认 10）
+WEB_SEARCH_DEFAULT_MAX_USES=10
+```
+
+**使用示例：**
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-your-api-key",
+    base_url="http://localhost:8000"
+)
+
+# 使用 web_search 工具
+message = client.messages.create(
+    model="claude-sonnet-4-5-20250929",
+    max_tokens=4096,
+    tools=[
+        {
+            "type": "web_search_20250305",
+            "name": "web_search",
+            "max_uses": 5,
+            "allowed_domains": ["python.org", "docs.python.org"],
+        }
+    ],
+    messages=[{"role": "user", "content": "Python 3.13 有哪些新特性？"}]
+)
+```
+
+**搜索提供商对比：**
+
+| 提供商 | 特点 | API 密钥获取 |
+|--------|------|-------------|
+| **Tavily**（推荐） | 专为 AI 优化，返回结构化内容 | [tavily.com](https://tavily.com) |
+| **Brave Search** | 通用搜索 API | [brave.com/search/api](https://brave.com/search/api/) |
+
+**健康检查：**
+```bash
+curl http://localhost:8000/health/web-search
+# 返回: {"status": "healthy", "provider": "tavily", "enabled": true, ...}
 ```
 
 #### Programmatic Tool Calling (PTC) 配置
@@ -1132,9 +1198,14 @@ anthropic_api_proxy/
 │   │   └── rate_limit.py # 速率限制
 │   ├── schemas/          # Pydantic 模型
 │   │   ├── anthropic.py  # Anthropic API 模式
-│   │   └── bedrock.py    # Bedrock API 模式
+│   │   ├── bedrock.py    # Bedrock API 模式
+│   │   └── web_search.py # Web 搜索工具模型
 │   ├── services/         # 业务逻辑
-│   │   └── bedrock_service.py
+│   │   ├── bedrock_service.py
+│   │   ├── web_search_service.py  # Web 搜索编排服务
+│   │   └── web_search/            # 搜索提供商模块
+│   │       ├── providers.py       # Tavily/Brave 搜索实现
+│   │       └── domain_filter.py   # 域名过滤
 │   ├── tracing/          # OpenTelemetry 分布式追踪
 │   │   ├── provider.py   # TracerProvider 初始化和导出器配置
 │   │   ├── middleware.py  # 请求根 Span 中间件

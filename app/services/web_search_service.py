@@ -290,6 +290,12 @@ class WebSearchService:
         Returns:
             List of SearchResult objects
         """
+        logger.info(f"[WebSearch] Executing search: query={query!r}")
+        if config.allowed_domains:
+            logger.info(f"[WebSearch]   allowed_domains={config.allowed_domains}")
+        if config.blocked_domains:
+            logger.info(f"[WebSearch]   blocked_domains={config.blocked_domains}")
+
         # Execute search via provider
         results = await self.search_provider.search(
             query=query,
@@ -305,6 +311,14 @@ class WebSearchService:
             blocked_domains=config.blocked_domains,
         )
         results = domain_filter.filter_results(results)
+
+        # Log search results
+        logger.info(f"[WebSearch] Search results ({len(results)} total):")
+        for i, r in enumerate(results):
+            content_preview = (r.content or "")[:150]
+            logger.info(f"[WebSearch]   [{i+1}] {r.title}")
+            logger.info(f"[WebSearch]       URL: {r.url}")
+            logger.info(f"[WebSearch]       Content: {content_preview}...")
 
         return results
 
@@ -412,12 +426,22 @@ class WebSearchService:
         command = tool_input.get("command", "")
         restart = tool_input.get("restart", False)
 
-        logger.info(f"[WebSearch/CodeExec] Executing bash: {command[:100]}...")
+        logger.info(f"[WebSearch/CodeExec] ── Bash Execution ──")
+        logger.info(f"[WebSearch/CodeExec] Command ({len(command)} chars): {command[:200]}{'...' if len(command) > 200 else ''}")
+        logger.debug(f"[WebSearch/CodeExec] Full command:\n{command}")
+        if restart:
+            logger.info(f"[WebSearch/CodeExec] (restart=True)")
 
         try:
             result = await self.standalone_service.sandbox_executor.execute_bash(
                 sandbox_session, command, restart=restart
             )
+            logger.info(f"[WebSearch/CodeExec] ── Result (return_code={result.return_code}) ──")
+            if result.stdout:
+                stdout_preview = result.stdout[:500]
+                logger.info(f"[WebSearch/CodeExec] stdout:\n{stdout_preview}{'...(truncated)' if len(result.stdout) > 500 else ''}")
+            if result.stderr:
+                logger.info(f"[WebSearch/CodeExec] stderr:\n{result.stderr[:300]}")
             return {
                 "type": "bash_code_execution_tool_result",
                 "tool_use_id": tool_id,
@@ -429,7 +453,7 @@ class WebSearchService:
                 },
             }
         except Exception as e:
-            logger.error(f"[WebSearch/CodeExec] Bash error: {e}")
+            logger.error(f"[WebSearch/CodeExec] Bash execution error: {e}")
             return {
                 "type": "bash_code_execution_tool_result",
                 "tool_use_id": tool_id,
@@ -808,14 +832,44 @@ class WebSearchService:
 
                 response_content = response.content if hasattr(response, "content") else []
 
+                # Log Claude's response details
+                usage_str = (
+                    f"in:{response.usage.input_tokens}/out:{response.usage.output_tokens}"
+                    if response.usage else "N/A"
+                )
+                logger.info(
+                    f"[WebSearch] Bedrock response: stop_reason={response.stop_reason}, tokens={usage_str}"
+                )
+                for i, block in enumerate(response_content):
+                    bd = block if isinstance(block, dict) else (
+                        block.model_dump() if hasattr(block, "model_dump") else {}
+                    )
+                    bt = bd.get("type", "?")
+                    if bt == "text":
+                        text_preview = bd.get("text", "")[:200]
+                        logger.info(f"[WebSearch]   content[{i}] text: {text_preview!r}")
+                    elif bt == "tool_use":
+                        name = bd.get("name", "")
+                        inp = bd.get("input", {})
+                        if name == "web_search":
+                            logger.info(f"[WebSearch]   content[{i}] tool_use: web_search(query={inp.get('query', '')!r})")
+                        elif name == BASH_TOOL_NAME:
+                            cmd = inp.get("command", "")
+                            logger.info(f"[WebSearch]   content[{i}] tool_use: bash_code_execution")
+                            logger.info(f"[WebSearch]     command: {cmd[:200]}")
+                        else:
+                            logger.info(f"[WebSearch]   content[{i}] tool_use: {name}")
+                    else:
+                        logger.info(f"[WebSearch]   content[{i}] {bt}")
+
                 # Find all intercepted tool calls (web_search + bash_code_execution)
                 web_search_uses = self._find_web_search_tool_uses(response_content)
                 bash_uses = self._find_bash_tool_uses(response_content) if is_dynamic else []
                 all_tool_uses = web_search_uses + bash_uses
 
                 logger.info(
-                    f"[WebSearch] Found {len(web_search_uses)} web_search + "
-                    f"{len(bash_uses)} bash tool_use blocks"
+                    f"[WebSearch] Intercepted tool calls: "
+                    f"{len(web_search_uses)} web_search + {len(bash_uses)} bash"
                 )
 
                 # Convert intercepted tool_use → server_tool_use for output
@@ -890,7 +944,19 @@ class WebSearchService:
 
         # Post-process text blocks to inject citations from [N] markers
         if result_registry:
+            pre_count = len(all_content)
             all_content = self._post_process_citations(all_content, result_registry)
+            cited_blocks = sum(1 for b in all_content if isinstance(b, dict) and "citations" in b)
+            logger.info(
+                f"[WebSearch] Citation post-processing: {pre_count} blocks → {len(all_content)} blocks, "
+                f"{cited_blocks} with citations, registry has {len(result_registry)} sources"
+            )
+
+        logger.info(
+            f"[WebSearch] Final response: {len(all_content)} content blocks, "
+            f"tokens=in:{total_input_tokens}/out:{total_output_tokens}, "
+            f"searches={search_count}"
+        )
 
         # Assemble final response
         final_message = MessageResponse(
@@ -1192,10 +1258,45 @@ class WebSearchService:
 
                 response_content = response.content if hasattr(response, "content") else []
 
+                # Log Claude's response details
+                usage_str = (
+                    f"in:{response.usage.input_tokens}/out:{response.usage.output_tokens}"
+                    if response.usage else "N/A"
+                )
+                logger.info(
+                    f"[WebSearch Streaming] Bedrock response: stop_reason={response.stop_reason}, tokens={usage_str}"
+                )
+                for i, block in enumerate(response_content):
+                    bd = block if isinstance(block, dict) else (
+                        block.model_dump() if hasattr(block, "model_dump") else {}
+                    )
+                    bt = bd.get("type", "?")
+                    if bt == "text":
+                        text_preview = bd.get("text", "")[:200]
+                        logger.info(f"[WebSearch Streaming]   content[{i}] text: {text_preview!r}")
+                    elif bt == "tool_use":
+                        name = bd.get("name", "")
+                        inp = bd.get("input", {})
+                        if name == "web_search":
+                            logger.info(f"[WebSearch Streaming]   content[{i}] tool_use: web_search(query={inp.get('query', '')!r})")
+                        elif name == BASH_TOOL_NAME:
+                            cmd = inp.get("command", "")
+                            logger.info(f"[WebSearch Streaming]   content[{i}] tool_use: bash_code_execution")
+                            logger.info(f"[WebSearch Streaming]     command: {cmd[:200]}")
+                        else:
+                            logger.info(f"[WebSearch Streaming]   content[{i}] tool_use: {name}")
+                    else:
+                        logger.info(f"[WebSearch Streaming]   content[{i}] {bt}")
+
                 # Find all intercepted tool calls
                 web_search_uses = self._find_web_search_tool_uses(response_content)
                 bash_uses = self._find_bash_tool_uses(response_content) if is_dynamic else []
                 all_tool_uses = web_search_uses + bash_uses
+
+                logger.info(
+                    f"[WebSearch Streaming] Intercepted tool calls: "
+                    f"{len(web_search_uses)} web_search + {len(bash_uses)} bash"
+                )
 
                 # Convert content blocks
                 converted_content = self._convert_to_server_tool_use(response_content)

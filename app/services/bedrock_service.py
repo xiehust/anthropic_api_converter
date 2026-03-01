@@ -26,7 +26,7 @@ from botocore.exceptions import ClientError
 from app.converters.anthropic_to_bedrock import AnthropicToBedrockConverter
 from app.converters.bedrock_to_anthropic import BedrockToAnthropicConverter
 from app.core.config import settings
-from app.schemas.web_search import WEB_SEARCH_TOOL_TYPES
+from app.schemas.web_search import WEB_SEARCH_TOOL_TYPES, decode_content as _ws_decode
 from app.core.exceptions import BedrockAPIError, map_bedrock_error
 from app.schemas.anthropic import CountTokensRequest, MessageRequest, MessageResponse
 
@@ -184,6 +184,52 @@ class BedrockService:
                     # This is a PTC extension that's only valid in Anthropic API responses
                     if block_dict.get("type") == "tool_use" and "caller" in block_dict:
                         block_dict = {k: v for k, v in block_dict.items() if k != "caller"}
+
+                    # Convert web search / server tool content types for Bedrock compatibility.
+                    # In multi-turn, the client sends back the proxy's response as history.
+                    # Bedrock doesn't understand server_tool_use, web_search_tool_result, etc.
+                    block_type = block_dict.get("type", "")
+
+                    # Web search server blocks in assistant messages: skip entirely.
+                    # The text blocks already contain Claude's answer with full context.
+                    # Keeping server_tool_use without matching tool_result would also error.
+                    if msg.role == "assistant" and block_type in (
+                        "server_tool_use", "web_search_tool_result",
+                        "bash_code_execution_tool_result",
+                    ):
+                        continue
+
+                    # web_search_tool_result in user messages → tool_result
+                    if block_type == "web_search_tool_result":
+                        ws_id = block_dict.get("tool_use_id", "")
+                        bedrock_id = ws_id.replace("srvtoolu_", "toolu_", 1) if ws_id.startswith("srvtoolu_") else ws_id
+                        ws_content = block_dict.get("content", [])
+                        if isinstance(ws_content, list):
+                            parts = []
+                            for sr in ws_content:
+                                if isinstance(sr, dict) and sr.get("type") == "web_search_result":
+                                    title = sr.get("title", "")
+                                    url = sr.get("url", "")
+                                    enc = sr.get("encrypted_content", "")
+                                    try:
+                                        page = _ws_decode(enc) if enc else ""
+                                    except Exception:
+                                        page = enc
+                                    parts.append(f"Title: {title}\nURL: {url}\nContent: {page}")
+                            result_text = "\n\n---\n\n".join(parts) if parts else "No results"
+                        elif isinstance(ws_content, dict):
+                            result_text = f"Error: {ws_content.get('error_code', 'unknown')}"
+                        else:
+                            result_text = str(ws_content)
+                        block_dict = {
+                            "type": "tool_result",
+                            "tool_use_id": bedrock_id,
+                            "content": result_text,
+                        }
+                    elif block_type == "text" and "citations" in block_dict:
+                        # Strip citations from text blocks - Bedrock doesn't support them
+                        block_dict = {k: v for k, v in block_dict.items() if k != "citations"}
+
                     content_list.append(block_dict)
                 message_dict["content"] = content_list
 

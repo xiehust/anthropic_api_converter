@@ -63,14 +63,22 @@ BASH_TOOL_NAME = "bash_code_execution"
 # Citation marker regex: matches [1], [2], [1][3], etc.
 _CITATION_MARKER_RE = re.compile(r"\[(\d+)\]")
 
-# Instruction appended to search results so Claude outputs citation markers
-_CITATION_INSTRUCTION = (
-    "\n\n---\nIMPORTANT: When using information from the search results above, "
-    "you MUST cite the source by appending the result number in square brackets "
-    "immediately after the relevant claim. For example: 'The population is 10 million [1].' "
-    "Use the result numbers shown above (e.g., [1], [2], [3]). "
-    "Multiple citations can be combined: 'This fact [1][3].' "
-    "Every factual claim from search results must have at least one citation."
+# System prompt for citation formatting — injected into system messages
+# so Claude reliably outputs [N] markers in its response text
+_CITATION_SYSTEM_PROMPT = (
+    "When you use web search results to answer questions, you MUST cite sources "
+    "using numbered references in square brackets. The search results are numbered "
+    "[Result 1], [Result 2], etc. After each factual claim based on a search result, "
+    "append the result number like this: 'Python 3.13 was released in October 2024 [1].' "
+    "Multiple sources can be combined: 'This is widely used [1][3].' "
+    "Every claim from search results MUST have at least one [N] citation. "
+    "Do NOT omit citations."
+)
+
+# Brief reminder appended to search results in tool_result
+_CITATION_REMINDER = (
+    "\n\n[Remember: cite every claim from these results using [N] notation, "
+    "where N is the Result number shown above.]"
 )
 
 
@@ -276,6 +284,43 @@ class WebSearchService:
         if not filtered:
             return None
         return ",".join(filtered)
+
+    @staticmethod
+    def _inject_citation_system_prompt(
+        system: Optional[Any],
+    ) -> Optional[Any]:
+        """
+        Inject citation instruction into the system prompt.
+
+        Appends the citation system prompt to the existing system messages
+        so Claude reliably outputs [N] markers.
+
+        Args:
+            system: Original system prompt (str, list of SystemMessage, or None)
+
+        Returns:
+            Augmented system prompt
+        """
+        citation_block = {"type": "text", "text": _CITATION_SYSTEM_PROMPT}
+
+        if system is None:
+            return [citation_block]
+        elif isinstance(system, str):
+            return [{"type": "text", "text": system}, citation_block]
+        elif isinstance(system, list):
+            # Append to existing system message list
+            augmented = []
+            for item in system:
+                if hasattr(item, "model_dump"):
+                    augmented.append(item.model_dump(exclude_none=True))
+                elif isinstance(item, dict):
+                    augmented.append(item)
+                else:
+                    augmented.append({"type": "text", "text": str(item)})
+            augmented.append(citation_block)
+            return augmented
+        else:
+            return [{"type": "text", "text": str(system)}, citation_block]
 
     async def _execute_search(
         self, query: str, config: WebSearchToolDefinition
@@ -597,7 +642,7 @@ class WebSearchService:
                     result_text = "\n\n---\n\n".join(text_parts)
                     # Append citation instruction if we're tracking results
                     if result_registry is not None:
-                        result_text += _CITATION_INSTRUCTION
+                        result_text += _CITATION_REMINDER
                 elif isinstance(result_content, dict):
                     result_text = f"Error: {result_content.get('error_code', 'unknown')}"
                     is_error = True
@@ -797,11 +842,14 @@ class WebSearchService:
                 # Build request with web_search replaced by custom tool (+ bash for dynamic)
                 ws_tools = self._build_tools_for_request(request.tools, config)
 
+                # Inject citation system prompt so Claude outputs [N] markers
+                augmented_system = self._inject_citation_system_prompt(request.system)
+
                 iter_request = MessageRequest(
                     model=request.model,
                     messages=messages,  # type: ignore[arg-type]
                     max_tokens=request.max_tokens,
-                    system=request.system,
+                    system=augmented_system,
                     temperature=request.temperature,
                     top_p=request.top_p,
                     top_k=request.top_k,
@@ -1215,12 +1263,13 @@ class WebSearchService:
                 )
 
                 ws_tools = self._build_tools_for_request(request.tools, config)
+                augmented_system = self._inject_citation_system_prompt(request.system)
 
                 iter_request = MessageRequest(
                     model=request.model,
                     messages=messages,  # type: ignore[arg-type]
                     max_tokens=request.max_tokens,
-                    system=request.system,
+                    system=augmented_system,
                     temperature=request.temperature,
                     top_p=request.top_p,
                     top_k=request.top_k,

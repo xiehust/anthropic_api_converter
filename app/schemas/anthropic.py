@@ -15,7 +15,15 @@ class TextContent(BaseModel):
     """Text content block."""
     type: Literal["text"] = "text"
     text: str
+    citations: Optional[List[Any]] = None
     cache_control: Optional["CacheControl"] = None
+
+    def model_dump(self, **kwargs):
+        d = super().model_dump(**kwargs)
+        # Only include citations when present (avoid "citations": null)
+        if d.get("citations") is None:
+            d.pop("citations", None)
+        return d
 
 
 class ImageSource(BaseModel):

@@ -14,10 +14,13 @@ from fastapi.responses import JSONResponse
 
 from app.api import health, messages, models
 from app.core.config import settings
+from app.core.logging import setup_logging
 from app.db.dynamodb import DynamoDBClient
 from app.middleware.auth import AuthMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 
+# Configure logging BEFORE anything else
+setup_logging()
 
 # Initialize DynamoDB client globally (needed for middleware)
 dynamodb_client = DynamoDBClient()

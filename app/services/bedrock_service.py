@@ -425,6 +425,40 @@ class BedrockService:
 
         return native_request
 
+    def _apply_cache_ttl(self, body: dict, api_key_cache_ttl: Optional[str] = None) -> None:
+        """
+        Apply cache TTL to all cache_control blocks in the native Anthropic request body.
+
+        Priority: api_key_cache_ttl > existing client TTL > settings.default_cache_ttl
+        """
+        effective_default = settings.default_cache_ttl
+
+        def _update_block(block: dict) -> None:
+            cc = block.get("cache_control")
+            if not cc or not isinstance(cc, dict):
+                return
+            if api_key_cache_ttl:
+                cc["ttl"] = api_key_cache_ttl
+            elif "ttl" not in cc and effective_default:
+                cc["ttl"] = effective_default
+
+        system = body.get("system")
+        if isinstance(system, list):
+            for part in system:
+                if isinstance(part, dict):
+                    _update_block(part)
+
+        for msg in body.get("messages", []):
+            content = msg.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        _update_block(block)
+
+        for tool in body.get("tools", []):
+            if isinstance(tool, dict):
+                _update_block(tool)
+
     async def invoke_model(
         self, request: MessageRequest, request_id: Optional[str] = None,
         service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None

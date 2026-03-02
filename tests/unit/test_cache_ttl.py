@@ -105,3 +105,81 @@ class TestAPIKeyManagerCacheTTL:
         result = manager.validate_api_key(api_key)
         assert result is not None
         assert result["cache_ttl"] == "1h"
+
+
+from app.services.bedrock_service import BedrockService
+
+
+class TestApplyCacheTTL:
+    def _get_service(self):
+        return BedrockService()
+
+    def test_api_key_ttl_overrides_all(self):
+        service = self._get_service()
+        body = {
+            "system": [
+                {"type": "text", "text": "You are helpful", "cache_control": {"type": "ephemeral", "ttl": "5m"}}
+            ],
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "text", "text": "Hello", "cache_control": {"type": "ephemeral", "ttl": "5m"}}
+                ]}
+            ],
+        }
+        service._apply_cache_ttl(body, api_key_cache_ttl="1h")
+        assert body["system"][0]["cache_control"]["ttl"] == "1h"
+        assert body["messages"][0]["content"][0]["cache_control"]["ttl"] == "1h"
+
+    def test_no_override_keeps_client_ttl(self):
+        service = self._get_service()
+        body = {
+            "system": [
+                {"type": "text", "text": "You are helpful", "cache_control": {"type": "ephemeral", "ttl": "5m"}}
+            ],
+            "messages": [],
+        }
+        service._apply_cache_ttl(body, api_key_cache_ttl=None)
+        assert body["system"][0]["cache_control"]["ttl"] == "5m"
+
+    def test_default_ttl_fills_missing(self):
+        service = self._get_service()
+        body = {
+            "system": [
+                {"type": "text", "text": "Hello", "cache_control": {"type": "ephemeral"}}
+            ],
+            "messages": [],
+        }
+        from app.core.config import settings
+        original = settings.default_cache_ttl
+        settings.default_cache_ttl = "1h"
+        try:
+            service._apply_cache_ttl(body, api_key_cache_ttl=None)
+            assert body["system"][0]["cache_control"]["ttl"] == "1h"
+        finally:
+            settings.default_cache_ttl = original
+
+    def test_no_cache_control_untouched(self):
+        service = self._get_service()
+        body = {
+            "system": "Just a string",
+            "messages": [
+                {"role": "user", "content": "Hello"}
+            ],
+        }
+        service._apply_cache_ttl(body, api_key_cache_ttl="1h")
+        assert body["system"] == "Just a string"
+        assert body["messages"][0]["content"] == "Hello"
+
+    def test_tools_cache_control_updated(self):
+        service = self._get_service()
+        body = {
+            "system": [],
+            "messages": [],
+            "tools": [
+                {"name": "tool1", "cache_control": {"type": "ephemeral"}},
+                {"name": "tool2"},
+            ],
+        }
+        service._apply_cache_ttl(body, api_key_cache_ttl="1h")
+        assert body["tools"][0]["cache_control"]["ttl"] == "1h"
+        assert "cache_control" not in body["tools"][1]

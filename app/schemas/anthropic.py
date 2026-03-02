@@ -213,6 +213,7 @@ ContentBlock = Union[
 class CacheControl(BaseModel):
     """Cache control for prompt caching."""
     type: Literal["ephemeral"] = "ephemeral"
+    ttl: Optional[Literal["5m", "1h"]] = None
 
 
 # Message Structure

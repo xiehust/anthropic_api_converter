@@ -38,6 +38,54 @@ from app.services.web_search_service import (
 logger = logging.getLogger(__name__)
 
 
+def _get_effective_cache_ttl(
+    api_key_cache_ttl: Optional[str],
+    request_data: MessageRequest,
+) -> Optional[str]:
+    """
+    Determine the effective cache TTL for billing purposes.
+
+    Priority: api_key override > client request TTL > proxy DEFAULT_CACHE_TTL > None
+
+    NOTE: This logic must stay in sync with BedrockService._apply_cache_ttl()
+    which applies the same priority chain to the actual Bedrock request body.
+    """
+    if api_key_cache_ttl:
+        return api_key_cache_ttl
+
+    # Check client-specified TTL in cache_control blocks (system, messages, tools)
+    if request_data.system and isinstance(request_data.system, list):
+        for part in request_data.system:
+            cc = getattr(part, "cache_control", None)
+            if cc and getattr(cc, "ttl", None):
+                return cc.ttl
+
+    if request_data.messages:
+        for msg in request_data.messages:
+            content = msg.content if hasattr(msg, "content") else []
+            if isinstance(content, list):
+                for block in content:
+                    cc = getattr(block, "cache_control", None)
+                    if cc and getattr(cc, "ttl", None):
+                        return cc.ttl
+
+    if request_data.tools:
+        for tool in request_data.tools:
+            if isinstance(tool, dict):
+                cc = tool.get("cache_control")
+                if isinstance(cc, dict) and cc.get("ttl"):
+                    return cc["ttl"]
+            else:
+                cc = getattr(tool, "cache_control", None)
+                if cc and getattr(cc, "ttl", None):
+                    return cc.ttl
+
+    if settings.default_cache_ttl:
+        return settings.default_cache_ttl
+
+    return None
+
+
 def _extract_ptc_tool_result(request: MessageRequest, container_id: Optional[str], ptc_service: PTCService) -> Optional[tuple]:
     """
     Check if request is a tool_result continuation for a pending PTC execution.
@@ -257,6 +305,9 @@ async def create_message(
     if cache_ttl:
         print(f"[REQUEST] Cache TTL Override: {cache_ttl}")
 
+    # Compute effective cache TTL for billing (api_key > client > proxy default)
+    effective_cache_ttl = _get_effective_cache_ttl(cache_ttl, request_data)
+
     # Check if this is a PTC request
     is_ptc = PTCService.is_ptc_request(request_data, anthropic_beta)
     if is_ptc:
@@ -459,6 +510,7 @@ async def create_message(
                     cached_tokens=getattr(response.usage, 'cache_read_input_tokens', 0) or 0,
                     cache_write_input_tokens=getattr(response.usage, 'cache_creation_input_tokens', 0) or 0,
                     success=True,
+                    cache_ttl=effective_cache_ttl,
                 )
 
                 # Add container info to response
@@ -545,6 +597,7 @@ async def create_message(
                     cached_tokens=getattr(response.usage, 'cache_read_input_tokens', 0) or 0,
                     cache_write_input_tokens=getattr(response.usage, 'cache_creation_input_tokens', 0) or 0,
                     success=True,
+                    cache_ttl=effective_cache_ttl,
                 )
 
                 # Add container info to response
@@ -658,6 +711,7 @@ async def create_message(
                     cached_tokens=getattr(response.usage, 'cache_read_input_tokens', 0) or 0,
                     cache_write_input_tokens=getattr(response.usage, 'cache_creation_input_tokens', 0) or 0,
                     success=True,
+                    cache_ttl=effective_cache_ttl,
                 )
 
                 _end_trace_spans()
@@ -685,6 +739,7 @@ async def create_message(
                 service_tier,
                 anthropic_beta,
                 cache_ttl=cache_ttl,
+                effective_cache_ttl=effective_cache_ttl,
             )
             # Wrap with tracing accumulator if tracing is enabled
             if _trace_span is not None:
@@ -768,6 +823,7 @@ async def create_message(
                 cached_tokens=response.usage.cache_read_input_tokens or 0,
                 cache_write_input_tokens=response.usage.cache_creation_input_tokens or 0,
                 success=True,
+                cache_ttl=effective_cache_ttl,
             )
 
             return response
@@ -796,6 +852,7 @@ async def create_message(
             output_tokens=0,
             success=False,
             error_message=f"[{e.error_code}] {e.error_message}",
+            cache_ttl=effective_cache_ttl,
         )
 
         _end_trace_spans(e)
@@ -823,6 +880,7 @@ async def create_message(
             output_tokens=0,
             success=False,
             error_message=str(e),
+            cache_ttl=effective_cache_ttl,
         )
 
         _end_trace_spans(e)
@@ -951,6 +1009,7 @@ async def _handle_streaming_request(
     service_tier: str = "default",
     anthropic_beta: Optional[str] = None,
     cache_ttl: Optional[str] = None,
+    effective_cache_ttl: Optional[str] = None,
 ):
     """
     Handle streaming request and yield SSE events.
@@ -1049,6 +1108,7 @@ async def _handle_streaming_request(
             cache_write_input_tokens=accumulated_tokens["cache_write"],
             success=success,
             error_message=error_message,
+            cache_ttl=effective_cache_ttl,
         )
 
 

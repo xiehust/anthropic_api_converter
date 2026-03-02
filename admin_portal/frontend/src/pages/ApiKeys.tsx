@@ -179,7 +179,7 @@ function ApiKeyForm({
         </label>
         <select
           value={formData.cache_ttl}
-          onChange={(e) => setFormData({ ...formData, cache_ttl: e.target.value || null })}
+          onChange={(e) => setFormData({ ...formData, cache_ttl: e.target.value })}
           className="w-full px-3 py-2 bg-input-bg border border-border-dark rounded-lg text-white focus:border-primary focus:ring-1 focus:ring-primary"
         >
           <option value="">{t('apiKeys.cacheTtlOptions.default')}</option>

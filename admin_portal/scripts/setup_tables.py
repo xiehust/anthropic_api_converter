@@ -15,6 +15,9 @@ from app.db.dynamodb import DynamoDBClient, ModelPricingManager
 
 
 # Default model pricing data (prices per 1M tokens in USD)
+# Note: cache_write_price is the 5m TTL rate (1.25x input_price).
+# The 1h TTL rate (2x input_price) is derived during aggregation in
+# UsageStatsManager.aggregate_usage_for_key() based on the cache_ttl field.
 DEFAULT_PRICING = [
     {
         "model_id": "anthropic.claude-3-5-haiku-20241022-v1:0",

@@ -733,6 +733,7 @@ class UsageTracker:
         success: bool = True,
         error_message: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        cache_ttl: Optional[str] = None,
     ):
         """
         Record API usage.
@@ -748,6 +749,7 @@ class UsageTracker:
             success: Whether request was successful
             error_message: Error message if failed
             metadata: Optional metadata
+            cache_ttl: Effective cache TTL used ("5m" or "1h"), for billing differentiation
         """
         # Use string timestamp to match CDK table schema (STRING type)
         current_time = int(time.time())
@@ -767,6 +769,9 @@ class UsageTracker:
             "error_message": error_message,
             "metadata": metadata or {},
         }
+
+        if cache_ttl:
+            item["cache_ttl"] = cache_ttl
 
         # Add TTL if enabled (usage_ttl_days > 0)
         if settings.usage_ttl_days > 0:
@@ -1390,12 +1395,21 @@ class UsageStatsManager:
                             cache_read_price = float(pricing.get("cache_read_price", 0) or 0)
                             cache_write_price = float(pricing.get("cache_write_price", 0) or 0)
 
+                            # Cache write pricing depends on TTL duration:
+                            #   5m (default): 1.25x input price (stored as cache_write_price)
+                            #   1h: 2.0x input price (derived from input_price)
+                            record_cache_ttl = item.get("cache_ttl")
+                            if record_cache_ttl == "1h":
+                                effective_cache_write_price = input_price * 2.0
+                            else:
+                                effective_cache_write_price = cache_write_price
+
                             # Prices are per 1M tokens
                             cost = (
                                 (input_tokens * input_price / 1_000_000)
                                 + (output_tokens * output_price / 1_000_000)
                                 + (cached_tokens * cache_read_price / 1_000_000)
-                                + (cache_write_tokens * cache_write_price / 1_000_000)
+                                + (cache_write_tokens * effective_cache_write_price / 1_000_000)
                             )
                             total_cost += cost
 

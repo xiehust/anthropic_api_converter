@@ -67,7 +67,7 @@ This lightweight API convertion service enables you to use various large languag
   - Domain filtering: `allowed_domains` and `blocked_domains` support
   - Search limit: Control max searches per request via `max_uses`
   - User location: Localized search results based on geography
-  - Dynamic filtering (`web_search_20260209`): Claude can write code to filter search results (leverages existing code execution infrastructure)
+  - Dynamic filtering (`web_search_20260209`): Claude can write code to filter search results (requires Docker sandbox, **ECS deployment needs EC2 launch type**)
   - Supports both streaming and non-streaming responses
 
 ### Infrastructure
@@ -644,17 +644,16 @@ npm install
 **Enable Web Search and Cache TTL (via environment variables):**
 
 ```bash
-# Deploy with Web Search enabled (using Tavily search engine)
+# Fargate mode with Web Search (supports web_search_20250305 only)
 ENABLE_WEB_SEARCH=true \
 WEB_SEARCH_PROVIDER=tavily \
 WEB_SEARCH_API_KEY=tvly-your-api-key \
 ./scripts/deploy.sh -e prod -r us-west-2 -p arm64
 
-# Enable both Web Search and 1-hour Cache TTL
+# Enable web_search_20260209 dynamic filtering (requires EC2 launch type for Docker code execution)
 ENABLE_WEB_SEARCH=true \
 WEB_SEARCH_PROVIDER=tavily \
 WEB_SEARCH_API_KEY=tvly-your-api-key \
-DEFAULT_CACHE_TTL=1h \
 ./scripts/deploy.sh -e prod -r us-west-2 -p arm64 -l ec2
 ```
 
@@ -998,6 +997,13 @@ message = client.messages.create(
 |----------|----------|---------|
 | **Tavily** (recommended) | AI-optimized, returns structured content | [tavily.com](https://tavily.com) |
 | **Brave Search** | General-purpose search API | [brave.com/search/api](https://brave.com/search/api/) |
+
+**Tool Type Comparison:**
+
+| Tool Type | Description | Requires Docker |
+|-----------|-------------|----------------|
+| `web_search_20250305` | Basic web search | No |
+| `web_search_20260209` | Dynamic filtering (Claude can write code to filter search results) | **Yes** (requires Docker sandbox for code execution, ECS needs EC2 launch type) |
 
 **Health Check:**
 ```bash

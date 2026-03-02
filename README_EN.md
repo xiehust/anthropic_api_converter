@@ -57,6 +57,14 @@ This lightweight API convertion service enables you to use various large languag
 - **Prompt Caching**: Map cache control hints (where supported)
 - **Beta Header Mapping**: Automatically map Anthropic beta headers to Bedrock beta headers (e.g., `advanced-tool-use-2025-11-20` → `tool-examples-2025-10-29`)
 - **Tool Input Examples**: Support for `input_examples` parameter to provide example inputs for tools, helping models better understand tool usage
+- **Web Search Tool**: Support for Anthropic's `web_search_20250305` and `web_search_20260209` tool types
+  - Proxy-side server tool implementation (Bedrock doesn't natively support web search, so the proxy intercepts and executes searches)
+  - Pluggable search providers: Tavily (recommended, AI-optimized) and Brave Search
+  - Domain filtering: `allowed_domains` and `blocked_domains` support
+  - Search limit: Control max searches per request via `max_uses`
+  - User location: Localized search results based on geography
+  - Dynamic filtering (`web_search_20260209`): Claude can write code to filter search results (leverages existing code execution infrastructure)
+  - Supports both streaming and non-streaming responses
 
 ### Infrastructure
 - **Authentication**: API key-based authentication with DynamoDB storage
@@ -856,6 +864,64 @@ ENABLE_EXTENDED_THINKING=True
 ENABLE_DOCUMENT_SUPPORT=True
 PROMPT_CACHING_ENABLED=False
 ENABLE_PROGRAMMATIC_TOOL_CALLING=True  # Requires Docker
+ENABLE_WEB_SEARCH=True                # Requires search provider API key
+```
+
+#### Web Search Configuration
+```bash
+# Web search feature toggle
+ENABLE_WEB_SEARCH=True
+
+# Search provider: 'tavily' (recommended) or 'brave'
+WEB_SEARCH_PROVIDER=tavily
+
+# Search provider API key (Tavily or Brave)
+WEB_SEARCH_API_KEY=tvly-your-api-key
+
+# Max results per search query (default: 5)
+WEB_SEARCH_MAX_RESULTS=5
+
+# Default max searches per request (default: 10)
+WEB_SEARCH_DEFAULT_MAX_USES=10
+```
+
+**Usage Example:**
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-your-api-key",
+    base_url="http://localhost:8000"
+)
+
+# Use web_search tool
+message = client.messages.create(
+    model="claude-sonnet-4-5-20250929",
+    max_tokens=4096,
+    tools=[
+        {
+            "type": "web_search_20250305",
+            "name": "web_search",
+            "max_uses": 5,
+            "allowed_domains": ["python.org", "docs.python.org"],
+        }
+    ],
+    messages=[{"role": "user", "content": "What are the new features in Python 3.13?"}]
+)
+```
+
+**Search Provider Comparison:**
+
+| Provider | Features | API Key |
+|----------|----------|---------|
+| **Tavily** (recommended) | AI-optimized, returns structured content | [tavily.com](https://tavily.com) |
+| **Brave Search** | General-purpose search API | [brave.com/search/api](https://brave.com/search/api/) |
+
+**Health Check:**
+```bash
+curl http://localhost:8000/health/web-search
+# Returns: {"status": "healthy", "provider": "tavily", "enabled": true, ...}
 ```
 
 #### Programmatic Tool Calling (PTC) Configuration
@@ -1114,8 +1180,13 @@ anthropic_api_proxy/
    --- schemas/          # Pydantic models
        --- anthropic.py  # Anthropic API schemas
        --- bedrock.py    # Bedrock API schemas
+       --- web_search.py # Web search tool models
    --- services/         # Business logic
        --- bedrock_service.py
+       --- web_search_service.py  # Web search orchestration service
+       --- web_search/            # Search provider module
+           --- providers.py       # Tavily/Brave search implementations
+           --- domain_filter.py   # Domain filtering
    --- tracing/          # OpenTelemetry distributed tracing
        --- provider.py   # TracerProvider initialization and exporter config
        --- middleware.py  # Turn-based request tracing middleware

@@ -61,6 +61,7 @@ async def health_check():
             "document_support": settings.enable_document_support,
             "prompt_caching": settings.prompt_caching_enabled,
             "programmatic_tool_calling": settings.enable_programmatic_tool_calling,
+            "web_search": settings.enable_web_search,
         },
     }
 
@@ -200,6 +201,41 @@ async def ptc_health_check():
         result["status"] = "unhealthy"
         result["error"] = str(e)
         return JSONResponse(status_code=503, content=result)
+
+
+@router.get(
+    "/health/web-search",
+    status_code=status.HTTP_200_OK,
+    summary="Web search health check",
+    description="Check web search subsystem health.",
+    tags=["monitoring"],
+)
+async def web_search_health_check():
+    """
+    Web search health check endpoint.
+
+    Checks if web search is enabled and the provider is configured.
+    """
+    result = {
+        "enabled": settings.enable_web_search,
+        "provider": settings.web_search_provider,
+        "max_results": settings.web_search_max_results,
+        "default_max_uses": settings.web_search_default_max_uses,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+    if not settings.enable_web_search:
+        result["status"] = "disabled"
+        return result
+
+    if not settings.web_search_api_key:
+        result["status"] = "unhealthy"
+        result["error"] = "WEB_SEARCH_API_KEY not configured"
+        return JSONResponse(status_code=503, content=result)
+
+    result["status"] = "healthy"
+    result["api_key_configured"] = True
+    return result
 
 
 @router.post(

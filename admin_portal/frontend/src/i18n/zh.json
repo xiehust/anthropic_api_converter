@@ -131,7 +131,8 @@
       "rpmLimit": "RPM 限制",
       "tpmLimit": "TPM 限制",
       "rateLimit": "速率限制",
-      "serviceTier": "服务等级"
+      "serviceTier": "服务等级",
+      "cacheTtl": "缓存 TTL"
     },
     "roles": {
       "admin": "管理员",
@@ -148,6 +149,16 @@
       "flexDesc": "令牌成本 50% 折扣",
       "priorityDesc": "优先处理，令牌成本加价 75%",
       "reservedDesc": "预留容量，保证吞吐量"
+    },
+    "cacheTtlOptions": {
+      "default": "使用代理默认值",
+      "5m": "5 分钟",
+      "1h": "1 小时"
+    },
+    "cacheTtlDesc": {
+      "default": "继承代理 DEFAULT_CACHE_TTL 设置",
+      "5m": "标准 5 分钟缓存时长",
+      "1h": "扩展 1 小时缓存（缓存写入费用翻倍）"
     },
     "confirmRevoke": "您确定要撤销此 API 密钥吗？",
     "confirmDelete": "您确定要永久删除此 API 密钥吗？此操作无法撤销。",

@@ -26,6 +26,7 @@ from botocore.exceptions import ClientError
 from app.converters.anthropic_to_bedrock import AnthropicToBedrockConverter
 from app.converters.bedrock_to_anthropic import BedrockToAnthropicConverter
 from app.core.config import settings
+from app.schemas.web_search import WEB_SEARCH_TOOL_TYPES, decode_content as _ws_decode
 from app.core.exceptions import BedrockAPIError, map_bedrock_error
 from app.schemas.anthropic import CountTokensRequest, MessageRequest, MessageResponse
 
@@ -183,6 +184,52 @@ class BedrockService:
                     # This is a PTC extension that's only valid in Anthropic API responses
                     if block_dict.get("type") == "tool_use" and "caller" in block_dict:
                         block_dict = {k: v for k, v in block_dict.items() if k != "caller"}
+
+                    # Convert web search / server tool content types for Bedrock compatibility.
+                    # In multi-turn, the client sends back the proxy's response as history.
+                    # Bedrock doesn't understand server_tool_use, web_search_tool_result, etc.
+                    block_type = block_dict.get("type", "")
+
+                    # Web search server blocks in assistant messages: skip entirely.
+                    # The text blocks already contain Claude's answer with full context.
+                    # Keeping server_tool_use without matching tool_result would also error.
+                    if msg.role == "assistant" and block_type in (
+                        "server_tool_use", "web_search_tool_result",
+                        "bash_code_execution_tool_result",
+                    ):
+                        continue
+
+                    # web_search_tool_result in user messages → tool_result
+                    if block_type == "web_search_tool_result":
+                        ws_id = block_dict.get("tool_use_id", "")
+                        bedrock_id = ws_id.replace("srvtoolu_", "toolu_", 1) if ws_id.startswith("srvtoolu_") else ws_id
+                        ws_content = block_dict.get("content", [])
+                        if isinstance(ws_content, list):
+                            parts = []
+                            for sr in ws_content:
+                                if isinstance(sr, dict) and sr.get("type") == "web_search_result":
+                                    title = sr.get("title", "")
+                                    url = sr.get("url", "")
+                                    enc = sr.get("encrypted_content", "")
+                                    try:
+                                        page = _ws_decode(enc) if enc else ""
+                                    except Exception:
+                                        page = enc
+                                    parts.append(f"Title: {title}\nURL: {url}\nContent: {page}")
+                            result_text = "\n\n---\n\n".join(parts) if parts else "No results"
+                        elif isinstance(ws_content, dict):
+                            result_text = f"Error: {ws_content.get('error_code', 'unknown')}"
+                        else:
+                            result_text = str(ws_content)
+                        block_dict = {
+                            "type": "tool_result",
+                            "tool_use_id": bedrock_id,
+                            "content": result_text,
+                        }
+                    elif block_type == "text" and "citations" in block_dict:
+                        # Strip citations from text blocks - Bedrock doesn't support them
+                        block_dict = {k: v for k, v in block_dict.items() if k != "citations"}
+
                     content_list.append(block_dict)
                 message_dict["content"] = content_list
 
@@ -252,6 +299,9 @@ class BedrockService:
                     # Skip PTC code_execution tools
                     if tool_type == "code_execution_20250825":
                         continue
+                    # Skip web search tools (handled by WebSearchService)
+                    if tool_type in WEB_SEARCH_TOOL_TYPES:
+                        continue
                     # Map versioned tool types to Bedrock-recognized types
                     mapped_type = tool_type_mapping.get(tool_type, tool_type)
                     # Pass through special tool types (beta features)
@@ -285,6 +335,9 @@ class BedrockService:
                     tool_type = getattr(tool, "type", None)
                     # Skip PTC code_execution tools
                     if tool_type == "code_execution_20250825":
+                        continue
+                    # Skip web search tools (handled by WebSearchService)
+                    if tool_type in WEB_SEARCH_TOOL_TYPES:
                         continue
                     # Map versioned tool types to Bedrock-recognized types
                     mapped_type = tool_type_mapping.get(tool_type, tool_type) if tool_type else None
@@ -372,9 +425,44 @@ class BedrockService:
 
         return native_request
 
+    def _apply_cache_ttl(self, body: dict, api_key_cache_ttl: Optional[str] = None) -> None:
+        """
+        Apply cache TTL to all cache_control blocks in the native Anthropic request body.
+
+        Priority: api_key_cache_ttl > existing client TTL > settings.default_cache_ttl
+        """
+        effective_default = settings.default_cache_ttl
+
+        def _update_block(block: dict) -> None:
+            cc = block.get("cache_control")
+            if not cc or not isinstance(cc, dict):
+                return
+            if api_key_cache_ttl:
+                cc["ttl"] = api_key_cache_ttl
+            elif "ttl" not in cc and effective_default:
+                cc["ttl"] = effective_default
+
+        system = body.get("system")
+        if isinstance(system, list):
+            for part in system:
+                if isinstance(part, dict):
+                    _update_block(part)
+
+        for msg in body.get("messages", []):
+            content = msg.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        _update_block(block)
+
+        for tool in body.get("tools", []):
+            if isinstance(tool, dict):
+                _update_block(tool)
+
     async def invoke_model(
         self, request: MessageRequest, request_id: Optional[str] = None,
-        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None
+        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None,
+        cache_ttl: Optional[str] = None
     ) -> MessageResponse:
         """
         Invoke Bedrock model (non-streaming) asynchronously.
@@ -412,13 +500,14 @@ class BedrockService:
                 request_id,
                 service_tier,
                 anthropic_beta,
-                _otel_ctx
+                _otel_ctx,
+                cache_ttl
             )
 
     def _invoke_model_sync(
         self, request: MessageRequest, request_id: Optional[str] = None,
         service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None,
-        otel_ctx=None
+        otel_ctx=None, cache_ttl: Optional[str] = None
     ) -> MessageResponse:
         """
         Synchronous Bedrock model invocation (runs in thread pool).
@@ -445,7 +534,7 @@ class BedrockService:
             _otel_token = attach_context_in_thread(otel_ctx)
 
         try:
-            return self._invoke_model_sync_inner(request, request_id, service_tier, anthropic_beta)
+            return self._invoke_model_sync_inner(request, request_id, service_tier, anthropic_beta, cache_ttl=cache_ttl)
         finally:
             if _otel_token is not None:
                 from app.tracing.context import detach_context_in_thread
@@ -453,13 +542,14 @@ class BedrockService:
 
     def _invoke_model_sync_inner(
         self, request: MessageRequest, request_id: Optional[str] = None,
-        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None
+        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None,
+        cache_ttl: Optional[str] = None
     ) -> MessageResponse:
         """Inner sync invocation after OTEL context is attached."""
         # Route Claude models to InvokeModel API for better feature support
         if self._is_claude_model(request.model):
             print(f"[BEDROCK] Using InvokeModel API for Claude model: {request.model}")
-            return self._invoke_model_native_sync(request, request_id, anthropic_beta)
+            return self._invoke_model_native_sync(request, request_id, anthropic_beta, cache_ttl=cache_ttl)
 
         print(f"[BEDROCK] Converting request to Bedrock format for request {request_id}")
 
@@ -561,7 +651,7 @@ class BedrockService:
 
     def _invoke_model_native_sync(
         self, request: MessageRequest, request_id: Optional[str] = None,
-        anthropic_beta: Optional[str] = None
+        anthropic_beta: Optional[str] = None, cache_ttl: Optional[str] = None
     ) -> MessageResponse:
         """
         Invoke Bedrock InvokeModel API for Claude models (native Anthropic format).
@@ -573,6 +663,7 @@ class BedrockService:
             request: Anthropic MessageRequest
             request_id: Optional request ID
             anthropic_beta: Optional beta header from Anthropic client
+            cache_ttl: Optional cache TTL override from API key
 
         Returns:
             Anthropic MessageResponse
@@ -585,6 +676,9 @@ class BedrockService:
 
         # Convert request to native Anthropic format
         native_request = self._convert_to_anthropic_native_request(request, anthropic_beta)
+
+        # Apply cache TTL with priority: API key > client > proxy default
+        self._apply_cache_ttl(native_request, api_key_cache_ttl=cache_ttl)
 
         print(f"[BEDROCK NATIVE] InvokeModel request for {request_id}:")
         print(f"  - Model ID: {bedrock_model_id}")
@@ -734,7 +828,8 @@ class BedrockService:
 
     async def invoke_model_stream(
         self, request: MessageRequest, request_id: Optional[str] = None,
-        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None
+        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None,
+        cache_ttl: Optional[str] = None
     ) -> AsyncGenerator[str, None]:
         """
         Invoke Bedrock model with streaming (Server-Sent Events format).
@@ -781,6 +876,9 @@ class BedrockService:
 
                 # Convert request to native Anthropic format
                 native_request = self._convert_to_anthropic_native_request(request, anthropic_beta)
+
+                # Apply cache TTL with priority: API key > client > proxy default
+                self._apply_cache_ttl(native_request, api_key_cache_ttl=cache_ttl)
 
                 print(f"[BEDROCK STREAM NATIVE] Request params:")
                 print(f"  - Model ID: {bedrock_model_id}")

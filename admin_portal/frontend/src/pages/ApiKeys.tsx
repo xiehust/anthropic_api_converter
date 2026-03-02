@@ -70,6 +70,7 @@ function ApiKeyForm({
     monthly_budget: initialData?.monthly_budget || 0,
     rate_limit: initialData?.rate_limit || 1000,
     service_tier: initialData?.service_tier || 'default',
+    cache_ttl: initialData?.cache_ttl || '',
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -172,6 +173,26 @@ function ApiKeyForm({
         </p>
       </div>
 
+      <div>
+        <label className="block text-sm font-medium text-slate-300 mb-1">
+          {t('apiKeys.form.cacheTtl')}
+        </label>
+        <select
+          value={formData.cache_ttl}
+          onChange={(e) => setFormData({ ...formData, cache_ttl: e.target.value || null })}
+          className="w-full px-3 py-2 bg-input-bg border border-border-dark rounded-lg text-white focus:border-primary focus:ring-1 focus:ring-primary"
+        >
+          <option value="">{t('apiKeys.cacheTtlOptions.default')}</option>
+          <option value="5m">{t('apiKeys.cacheTtlOptions.5m')}</option>
+          <option value="1h">{t('apiKeys.cacheTtlOptions.1h')}</option>
+        </select>
+        <p className="mt-1 text-xs text-slate-500">
+          {!formData.cache_ttl && t('apiKeys.cacheTtlDesc.default')}
+          {formData.cache_ttl === '5m' && t('apiKeys.cacheTtlDesc.5m')}
+          {formData.cache_ttl === '1h' && t('apiKeys.cacheTtlDesc.1h')}
+        </p>
+      </div>
+
       <div className="flex gap-3 mt-4">
         <button
           type="button"
@@ -247,7 +268,7 @@ export default function ApiKeys() {
       return;
     }
 
-    const headers = ['API Key', 'Name', 'Owner', 'User ID', 'Status', 'Monthly Budget', 'Budget Used (MTD)', 'Budget Used (Total)', 'Rate Limit', 'Service Tier', 'Created At', 'Total Requests', 'Total Input Tokens', 'Total Output Tokens', 'Total Cached Tokens'];
+    const headers = ['API Key', 'Name', 'Owner', 'User ID', 'Status', 'Monthly Budget', 'Budget Used (MTD)', 'Budget Used (Total)', 'Rate Limit', 'Service Tier', 'Cache TTL', 'Created At', 'Total Requests', 'Total Input Tokens', 'Total Output Tokens', 'Total Cached Tokens'];
     
     const rows = apiKeys.map((key) => [
       key.api_key,
@@ -260,6 +281,7 @@ export default function ApiKeys() {
       key.budget_used || 0,
       key.rate_limit || 0,
       key.service_tier || 'default',
+      key.cache_ttl || 'default',
       new Date((key.created_at as number) * 1000).toISOString(),
       key.total_requests || 0,
       key.total_input_tokens || 0,
@@ -544,6 +566,9 @@ export default function ApiKeys() {
                 <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider hidden lg:table-cell">
                   {t('apiKeys.form.serviceTier')}
                 </th>
+                <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider hidden lg:table-cell">
+                  {t('apiKeys.form.cacheTtl')}
+                </th>
                 <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">
                   {t('common.status')}
                 </th>
@@ -555,7 +580,7 @@ export default function ApiKeys() {
             <tbody className="divide-y divide-border-dark">
               {isLoading ? (
                 <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center">
+                  <td colSpan={10} className="px-6 py-12 text-center">
                     <span className="material-symbols-outlined animate-spin text-4xl text-primary">
                       progress_activity
                     </span>
@@ -563,7 +588,7 @@ export default function ApiKeys() {
                 </tr>
               ) : data?.items.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan={10} className="px-6 py-12 text-center text-slate-400">
                     No API keys found
                   </td>
                 </tr>
@@ -731,6 +756,19 @@ export default function ApiKeys() {
                             : 'bg-slate-800 text-slate-400 border border-slate-700'
                         }`}>
                           {t(`apiKeys.serviceTiers.${key.service_tier || 'default'}`)}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap hidden lg:table-cell">
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          key.cache_ttl === '1h'
+                            ? 'bg-blue-900/30 text-blue-400 border border-blue-800'
+                            : key.cache_ttl === '5m'
+                            ? 'bg-slate-800 text-slate-400 border border-slate-700'
+                            : 'text-slate-500'
+                        }`}>
+                          {key.cache_ttl
+                            ? t(`apiKeys.cacheTtlOptions.${key.cache_ttl}`)
+                            : t('apiKeys.cacheTtlOptions.default')}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">

@@ -7,13 +7,23 @@ enabling validation, serialization, and documentation.
 from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.web_search import WebSearchToolResultContent
+
 
 # Content Block Types
 class TextContent(BaseModel):
     """Text content block."""
     type: Literal["text"] = "text"
     text: str
+    citations: Optional[List[Any]] = None
     cache_control: Optional["CacheControl"] = None
+
+    def model_dump(self, **kwargs):
+        d = super().model_dump(**kwargs)
+        # Only include citations when present (avoid "citations": null)
+        if d.get("citations") is None:
+            d.pop("citations", None)
+        return d
 
 
 class ImageSource(BaseModel):
@@ -194,6 +204,8 @@ ContentBlock = Union[
     # Standalone code execution result types
     BashCodeExecutionToolResult,
     TextEditorCodeExecutionToolResult,
+    # Web search result types
+    WebSearchToolResultContent,
 ]
 
 
@@ -201,6 +213,7 @@ ContentBlock = Union[
 class CacheControl(BaseModel):
     """Cache control for prompt caching."""
     type: Literal["ephemeral"] = "ephemeral"
+    ttl: Optional[Literal["5m", "1h"]] = None
 
 
 # Message Structure
@@ -314,6 +327,7 @@ class Usage(BaseModel):
     cache_creation_input_tokens: Optional[int] = None
     cache_read_input_tokens: Optional[int] = None
     iterations: Optional[List[Dict[str, Any]]] = None
+    server_tool_use: Optional[Dict[str, Any]] = None  # e.g., {"web_search_requests": 3}
 
 
 class MessageResponse(BaseModel):
@@ -324,7 +338,7 @@ class MessageResponse(BaseModel):
     content: List[ContentBlock]
     model: str
     stop_reason: Optional[Literal[
-        "end_turn", "max_tokens", "stop_sequence", "tool_use", "compaction"
+        "end_turn", "max_tokens", "stop_sequence", "tool_use", "compaction", "pause_turn"
     ]] = None
     stop_sequence: Optional[str] = None
     usage: Usage

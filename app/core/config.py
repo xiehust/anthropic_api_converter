@@ -105,6 +105,11 @@ class Settings(BaseSettings):
         default=True, alias="PROMPT_CACHING_ENABLED"
     )  # Bedrock prompt caching (uses cachePoint in requests)
 
+    # Default Cache TTL for prompt caching
+    default_cache_ttl: Optional[str] = Field(
+        default=None, alias="DEFAULT_CACHE_TTL"
+    )  # "5m" or "1h", None = don't inject TTL (use Anthropic default)
+
     # Model Mapping
     default_model_mapping: Dict[str, str] = Field(
         default={
@@ -288,6 +293,33 @@ class Settings(BaseSettings):
         default="/workspace",
         alias="STANDALONE_WORKSPACE_DIR",
         description="Working directory inside the sandbox container"
+    )
+
+    # Web Search Settings
+    enable_web_search: bool = Field(
+        default=True,
+        alias="ENABLE_WEB_SEARCH",
+        description="Enable web search tool support (proxy-side server tool)"
+    )
+    web_search_provider: str = Field(
+        default="tavily",
+        alias="WEB_SEARCH_PROVIDER",
+        description="Search provider: 'tavily' or 'brave'"
+    )
+    web_search_api_key: Optional[str] = Field(
+        default=None,
+        alias="WEB_SEARCH_API_KEY",
+        description="API key for the search provider (Tavily or Brave)"
+    )
+    web_search_max_results: int = Field(
+        default=5,
+        alias="WEB_SEARCH_MAX_RESULTS",
+        description="Maximum number of search results per query"
+    )
+    web_search_default_max_uses: int = Field(
+        default=10,
+        alias="WEB_SEARCH_DEFAULT_MAX_USES",
+        description="Default maximum number of web searches per request"
     )
 
     @field_validator("cors_origins", "cors_allow_methods", "cors_allow_headers", mode="before")

@@ -30,6 +30,10 @@ from app.services.standalone_code_execution_service import (
     StandaloneCodeExecutionService,
     get_standalone_service,
 )
+from app.services.web_search_service import (
+    WebSearchService,
+    get_web_search_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +171,12 @@ def get_standalone_service_dep() -> StandaloneCodeExecutionService:
     return get_standalone_service()
 
 
+# Dependency to get web search service
+def get_web_search_service_dep() -> WebSearchService:
+    """Get web search service instance."""
+    return get_web_search_service()
+
+
 @router.post(
     "/messages",
     response_model=MessageResponse,
@@ -190,6 +200,7 @@ async def create_message(
     usage_tracker: UsageTracker = Depends(get_usage_tracker),
     ptc_service: PTCService = Depends(get_ptc_service_dep),
     standalone_service: StandaloneCodeExecutionService = Depends(get_standalone_service_dep),
+    web_search_service: WebSearchService = Depends(get_web_search_service_dep),
 ):
     """
     Create a message (Anthropic-compatible endpoint).
@@ -240,6 +251,11 @@ async def create_message(
     # Get service_tier from API key info (defaults to 'default' if not set)
     service_tier = api_key_info.get("service_tier", "default")
     print(f"[REQUEST] Service Tier: {service_tier}")
+
+    # Get cache_ttl override from API key info (None = use client/proxy default)
+    cache_ttl = api_key_info.get("cache_ttl") if api_key_info else None
+    if cache_ttl:
+        print(f"[REQUEST] Cache TTL Override: {cache_ttl}")
 
     # Check if this is a PTC request
     is_ptc = PTCService.is_ptc_request(request_data, anthropic_beta)
@@ -559,6 +575,104 @@ async def create_message(
                     },
                 )
 
+        # Check if this is a web search request
+        # Web search tools are handled proxy-side since Bedrock doesn't support them
+        is_web_search = WebSearchService.is_web_search_request(request_data)
+        if is_web_search:
+            logger.info(f"Request {request_id}: Detected web search request")
+
+            if request_data.stream:
+                _end_trace_spans()
+
+                async def _web_search_stream_with_usage():
+                    """Wrap web search streaming with usage tracking."""
+                    accumulated = {"input": 0, "output": 0}
+                    ws_success = True
+                    ws_error = None
+                    try:
+                        async for sse_event in web_search_service.handle_request_streaming(
+                            request=request_data,
+                            bedrock_service=bedrock_service,
+                            request_id=request_id,
+                            service_tier=service_tier,
+                            anthropic_beta=anthropic_beta,
+                        ):
+                            # Parse usage from SSE events
+                            if "data:" in sse_event:
+                                try:
+                                    data_line = [l for l in sse_event.split("\n") if l.startswith("data:")]
+                                    if data_line:
+                                        evt = json.loads(data_line[0][5:].strip())
+                                        if evt.get("type") == "message_start":
+                                            msg = evt.get("message", {})
+                                            u = msg.get("usage", {})
+                                            accumulated["input"] = u.get("input_tokens", 0)
+                                        elif evt.get("type") == "message_delta":
+                                            u = evt.get("usage", {})
+                                            if "output_tokens" in u:
+                                                accumulated["output"] = u["output_tokens"]
+                                except (json.JSONDecodeError, IndexError, KeyError):
+                                    pass
+                            yield sse_event
+                    except Exception as e:
+                        ws_success = False
+                        ws_error = str(e)
+                        raise
+                    finally:
+                        usage_tracker.record_usage(
+                            api_key=api_key_info.get("api_key"),
+                            request_id=request_id,
+                            model=request_data.model,
+                            input_tokens=accumulated["input"],
+                            output_tokens=accumulated["output"],
+                            success=ws_success,
+                            error_message=ws_error,
+                        )
+
+                return StreamingResponse(
+                    _web_search_stream_with_usage(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Request-ID": request_id,
+                    },
+                )
+
+            try:
+                response = await web_search_service.handle_request(
+                    request=request_data,
+                    bedrock_service=bedrock_service,
+                    request_id=request_id,
+                    service_tier=service_tier,
+                    anthropic_beta=anthropic_beta,
+                )
+
+                # Record usage
+                usage_tracker.record_usage(
+                    api_key=api_key_info.get("api_key"),
+                    request_id=request_id,
+                    model=request_data.model,
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                    cached_tokens=getattr(response.usage, 'cache_read_input_tokens', 0) or 0,
+                    cache_write_input_tokens=getattr(response.usage, 'cache_creation_input_tokens', 0) or 0,
+                    success=True,
+                )
+
+                _end_trace_spans()
+                return JSONResponse(content=response.model_dump())
+
+            except ValueError as e:
+                logger.error(f"Request {request_id}: Web search config error: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"type": "invalid_request_error", "message": str(e)},
+                )
+            except Exception as e:
+                logger.error(f"Request {request_id}: Web search error: {e}")
+                raise
+
         # Check if streaming is requested
         if request_data.stream:
             # Return streaming response
@@ -595,7 +709,7 @@ async def create_message(
         else:
             # Handle non-streaming request (async to not block event loop)
             response = await bedrock_service.invoke_model(
-                request_data, request_id, service_tier, anthropic_beta
+                request_data, request_id, service_tier, anthropic_beta, cache_ttl=cache_ttl
             )
 
             if _trace_span is not None:
@@ -861,7 +975,7 @@ async def _handle_streaming_request(
     try:
         # Stream events from Bedrock (with beta header mapping)
         async for sse_event in bedrock_service.invoke_model_stream(
-            request_data, request_id, service_tier, anthropic_beta
+            request_data, request_id, service_tier, anthropic_beta, cache_ttl=cache_ttl
         ):
             # Parse event to track usage from message_delta and message_start events
             # SSE format: "event: <type>\ndata: <json>\n\n"

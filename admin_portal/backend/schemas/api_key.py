@@ -14,6 +14,7 @@ class ApiKeyCreate(BaseModel):
     monthly_budget: Optional[float] = Field(0, description="Monthly budget limit in USD")
     rate_limit: Optional[int] = Field(None, description="Custom rate limit")
     service_tier: Optional[str] = Field(None, description="Bedrock service tier")
+    cache_ttl: Optional[str] = Field(None, description="Cache TTL override ('5m' or '1h')")
 
 
 class ApiKeyUpdate(BaseModel):
@@ -27,6 +28,7 @@ class ApiKeyUpdate(BaseModel):
     rate_limit: Optional[int] = None
     service_tier: Optional[str] = None
     is_active: Optional[bool] = None
+    cache_ttl: Optional[str] = None  # "5m", "1h", or "none" to clear
 
 
 class ApiKeyResponse(BaseModel):
@@ -49,6 +51,7 @@ class ApiKeyResponse(BaseModel):
     tpm_limit: Optional[int] = 100000
     updated_at: Optional[Union[int, str]] = None  # Accept both formats
     deactivated_reason: Optional[str] = None  # Reason for deactivation
+    cache_ttl: Optional[str] = None  # Per-key cache TTL override
     metadata: Optional[Dict[str, Any]] = None
     # Usage stats (aggregated from usage_stats table)
     total_input_tokens: Optional[int] = 0

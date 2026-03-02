@@ -131,7 +131,8 @@
       "rpmLimit": "RPM Limit",
       "tpmLimit": "TPM Limit",
       "rateLimit": "Rate Limit",
-      "serviceTier": "Service Tier"
+      "serviceTier": "Service Tier",
+      "cacheTtl": "Cache TTL"
     },
     "roles": {
       "admin": "Admin",
@@ -148,6 +149,16 @@
       "flexDesc": "50% discount on token costs",
       "priorityDesc": "75% markup on token costs for priority processing",
       "reservedDesc": "Reserved capacity with guaranteed throughput"
+    },
+    "cacheTtlOptions": {
+      "default": "Proxy Default",
+      "5m": "5 Minutes",
+      "1h": "1 Hour"
+    },
+    "cacheTtlDesc": {
+      "default": "Inherits from proxy DEFAULT_CACHE_TTL setting",
+      "5m": "Standard 5-minute cache duration",
+      "1h": "Extended 1-hour cache (2x cache write cost)"
     },
     "confirmRevoke": "Are you sure you want to revoke this API key?",
     "confirmDelete": "Are you sure you want to permanently delete this API key? This action cannot be undone.",

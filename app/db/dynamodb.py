@@ -205,6 +205,7 @@ class APIKeyManager:
         role: Optional[str] = None,
         monthly_budget: Optional[float] = None,
         tpm_limit: Optional[int] = None,
+        cache_ttl: Optional[str] = None,
     ) -> str:
         """
         Create a new API key.
@@ -220,6 +221,7 @@ class APIKeyManager:
             role: Role type (e.g., "Admin", "Write Only", "Read Only", "Full Access")
             monthly_budget: Monthly budget limit in USD
             tpm_limit: Tokens per minute limit
+            cache_ttl: Optional prompt cache TTL duration (e.g., '5m', '1h')
 
         Returns:
             Generated API key
@@ -249,6 +251,7 @@ class APIKeyManager:
             "budget_history": "{}",  # Monthly budget history as JSON string (e.g., {"2025-11": 32.11})
             "deactivated_reason": None,  # Reason for deactivation (e.g., "budget_exceeded")
             "tpm_limit": tpm_limit or 100000,
+            "cache_ttl": cache_ttl,
         }
 
         self.table.put_item(Item=item)
@@ -476,6 +479,7 @@ class APIKeyManager:
         service_tier: Optional[str] = None,
         is_active: Optional[bool] = None,
         deactivated_reason: Optional[str] = None,
+        cache_ttl: Optional[str] = None,
     ) -> bool:
         """
         Update API key fields.
@@ -555,6 +559,14 @@ class APIKeyManager:
         if deactivated_reason is not None:
             update_parts.append("deactivated_reason = :deactivated_reason")
             expression_values[":deactivated_reason"] = deactivated_reason
+
+        if cache_ttl is not None:
+            if cache_ttl == "none":
+                update_parts.append("cache_ttl = :cache_ttl")
+                expression_values[":cache_ttl"] = None
+            else:
+                update_parts.append("cache_ttl = :cache_ttl")
+                expression_values[":cache_ttl"] = cache_ttl
 
         if not update_parts:
             return False

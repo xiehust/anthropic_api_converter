@@ -684,6 +684,7 @@ async def create_message(
                 usage_tracker,
                 service_tier,
                 anthropic_beta,
+                cache_ttl=cache_ttl,
             )
             # Wrap with tracing accumulator if tracing is enabled
             if _trace_span is not None:
@@ -949,6 +950,7 @@ async def _handle_streaming_request(
     usage_tracker: UsageTracker,
     service_tier: str = "default",
     anthropic_beta: Optional[str] = None,
+    cache_ttl: Optional[str] = None,
 ):
     """
     Handle streaming request and yield SSE events.

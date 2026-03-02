@@ -14,6 +14,7 @@ export interface ApiKey {
   service_tier?: string;
   is_active: boolean;
   deactivated_reason?: string;  // Reason for deactivation (e.g., "budget_exceeded")
+  cache_ttl?: string | null;  // Per-key cache TTL override ("5m", "1h", or null)
   created_at: number;
   updated_at?: number;
   // Usage stats (aggregated from usage_stats table)
@@ -32,6 +33,7 @@ export interface ApiKeyCreate {
   monthly_budget?: number;
   rate_limit?: number;
   service_tier?: string;
+  cache_ttl?: string | null;
 }
 
 export interface ApiKeyUpdate {
@@ -42,6 +44,7 @@ export interface ApiKeyUpdate {
   rate_limit?: number;
   service_tier?: string;
   is_active?: boolean;
+  cache_ttl?: string | null;
 }
 
 export interface ApiKeyListResponse {

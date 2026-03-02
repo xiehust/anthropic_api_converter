@@ -54,7 +54,11 @@ This lightweight API convertion service enables you to use various large languag
   - Session management with container reuse for improved performance
 - **Extended Thinking**: Support for thinking blocks in responses
 - **Multi-Modal Content**: Text, images, and document support
-- **Prompt Caching**: Map cache control hints (where supported)
+- **Prompt Caching with 1-Hour TTL**: Support for Anthropic `cache_control` prompt caching with configurable TTL (`5m` / `1h`)
+  - 1-hour cache TTL (`ttl: "1h"`) to reduce costs for frequently repeated requests
+  - Three-level priority: API key forced override > client request > proxy default (`DEFAULT_CACHE_TTL`)
+  - Per-API-key `cache_ttl` configuration, manageable via Admin Portal
+  - TTL-aware billing: 5m writes at 1.25x input price, 1h writes at 2x input price
 - **Beta Header Mapping**: Automatically map Anthropic beta headers to Bedrock beta headers (e.g., `advanced-tool-use-2025-11-20` → `tool-examples-2025-10-29`)
 - **Tool Input Examples**: Support for `input_examples` parameter to provide example inputs for tools, helping models better understand tool usage
 - **Web Search Tool**: Support for Anthropic's `web_search_20250305` and `web_search_20260209` tool types
@@ -281,6 +285,65 @@ Modify `BETA_HEADER_MAPPING` in `.env` or `app/core/config.py`.
 
 **Enable beta header mapping for more models:**
 Add model IDs to the `BETA_HEADER_SUPPORTED_MODELS` list.
+
+## Prompt Cache TTL (1-Hour Caching)
+
+The proxy supports Anthropic's `cache_control` prompt caching and extends it with configurable TTL (Time-To-Live). Claude models on Bedrock default to 5-minute cache TTL — this proxy supports extending it to **1 hour**, significantly reducing costs for high-frequency repeated requests.
+
+### TTL Priority
+
+| Priority | Source | Description |
+|----------|--------|-------------|
+| 1 (Highest) | API Key `cache_ttl` | Forced override configured in DynamoDB, rewrites ALL `cache_control` blocks |
+| 2 | Client request `cache_control.ttl` | TTL specified by client in request, preserved when no API key override |
+| 3 | `DEFAULT_CACHE_TTL` env var | Proxy-level default, fills blocks with `cache_control` but no TTL |
+| 4 (Lowest) | No TTL | Uses Anthropic/Bedrock default (5 minutes) |
+
+### Usage Example
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-your-api-key",
+    base_url="http://localhost:8000"
+)
+
+# Client specifies 1-hour cache TTL
+message = client.messages.create(
+    model="claude-sonnet-4-5-20250929",
+    max_tokens=1024,
+    system=[
+        {
+            "type": "text",
+            "text": "You are a professional software engineer...",  # Long system prompt
+            "cache_control": {"type": "ephemeral", "ttl": "1h"}
+        }
+    ],
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+### Configuration
+
+```bash
+# Proxy-level default cache TTL (optional, defaults to Anthropic's 5m if not set)
+DEFAULT_CACHE_TTL=1h
+
+# Per-API-key cache_ttl can be configured in Admin Portal or DynamoDB
+# Values: '5m' or '1h' — when set, forcefully overrides all request cache TTLs
+```
+
+### Billing
+
+Cache write pricing varies by TTL duration:
+
+| TTL | Cache Write Price | Description |
+|-----|------------------|-------------|
+| 5m (default) | 1.25x input price | Standard cache write rate |
+| 1h | 2.0x input price | Extended caching requires higher write cost |
+
+The system automatically calculates the correct cache write cost based on each request's actual TTL.
 
 ## OpenTelemetry Distributed Tracing (LLM Observability)
 
@@ -578,6 +641,23 @@ npm install
 | prod + ARM64 | t4g.large | No | Mounted |
 | prod + AMD64 | t3.large | No | Mounted |
 
+**Enable Web Search and Cache TTL (via environment variables):**
+
+```bash
+# Deploy with Web Search enabled (using Tavily search engine)
+ENABLE_WEB_SEARCH=true \
+WEB_SEARCH_PROVIDER=tavily \
+WEB_SEARCH_API_KEY=tvly-your-api-key \
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64
+
+# Enable both Web Search and 1-hour Cache TTL
+ENABLE_WEB_SEARCH=true \
+WEB_SEARCH_PROVIDER=tavily \
+WEB_SEARCH_API_KEY=tvly-your-api-key \
+DEFAULT_CACHE_TTL=1h \
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64 -l ec2
+```
+
 This will deploy:
 - DynamoDB tables
 - VPC with NAT gateways
@@ -865,6 +945,7 @@ ENABLE_DOCUMENT_SUPPORT=True
 PROMPT_CACHING_ENABLED=False
 ENABLE_PROGRAMMATIC_TOOL_CALLING=True  # Requires Docker
 ENABLE_WEB_SEARCH=True                # Requires search provider API key
+DEFAULT_CACHE_TTL=1h                  # Proxy default cache TTL (optional: '5m' or '1h')
 ```
 
 #### Web Search Configuration

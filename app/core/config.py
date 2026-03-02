@@ -105,6 +105,11 @@ class Settings(BaseSettings):
         default=True, alias="PROMPT_CACHING_ENABLED"
     )  # Bedrock prompt caching (uses cachePoint in requests)
 
+    # Default Cache TTL for prompt caching
+    default_cache_ttl: Optional[str] = Field(
+        default=None, alias="DEFAULT_CACHE_TTL"
+    )  # "5m" or "1h", None = don't inject TTL (use Anthropic default)
+
     # Model Mapping
     default_model_mapping: Dict[str, str] = Field(
         default={

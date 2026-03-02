@@ -54,7 +54,11 @@
   - 会话管理与容器复用，提升性能
 - **扩展思考**：支持响应中的思考块
 - **多模态内容**：支持文本、图像和文档
-- **提示词缓存**：映射缓存控制提示（在支持的情况下）
+- **提示词缓存与 1 小时 TTL**：支持 Anthropic `cache_control` 提示词缓存，可配置缓存 TTL（`5m` / `1h`）
+  - 支持 1 小时缓存 TTL（`ttl: "1h"`），降低高频重复请求成本
+  - 三级优先级：API Key 强制覆盖 > 客户端请求 > 代理默认值（`DEFAULT_CACHE_TTL`）
+  - 每个 API Key 可单独配置 `cache_ttl`，在 Admin Portal 中管理
+  - TTL 感知计费：5m 写入按 1.25x 输入价格计费，1h 写入按 2x 输入价格计费
 - **Beta Header 映射**：自动将 Anthropic beta headers 映射到 Bedrock beta headers（如 `advanced-tool-use-2025-11-20` → `tool-examples-2025-10-29`）
 - **工具输入示例**：支持 `input_examples` 参数，为工具提供示例输入以帮助模型更好地理解工具用法
 - **Web 搜索工具**：支持 Anthropic 的 `web_search_20250305` 和 `web_search_20260209` 工具类型
@@ -281,6 +285,65 @@ message = client.messages.create(
 
 **为更多模型启用 beta header 映射：**
 将模型 ID 添加到 `BETA_HEADER_SUPPORTED_MODELS` 列表。
+
+## 提示词缓存 TTL（1 小时缓存）
+
+代理服务支持 Anthropic 的 `cache_control` 提示词缓存特性，并扩展了 TTL（缓存生存时间）配置能力。Bedrock 上的 Claude 模型默认缓存 TTL 为 5 分钟，本代理支持将其延长至 **1 小时**，显著降低高频重复请求的成本。
+
+### TTL 优先级
+
+| 优先级 | 来源 | 说明 |
+|--------|------|------|
+| 1（最高） | API Key `cache_ttl` | DynamoDB 中为 API Key 配置的强制覆盖值，所有 `cache_control` 块都会被重写 |
+| 2 | 客户端请求 `cache_control.ttl` | 客户端在请求中指定的 TTL，无 API Key 覆盖时保留 |
+| 3 | `DEFAULT_CACHE_TTL` 环境变量 | 代理级默认值，填充有 `cache_control` 但未指定 TTL 的块 |
+| 4（最低） | 无 TTL | 使用 Anthropic/Bedrock 默认值（5 分钟） |
+
+### 使用示例
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-your-api-key",
+    base_url="http://localhost:8000"
+)
+
+# 客户端指定 1 小时缓存 TTL
+message = client.messages.create(
+    model="claude-sonnet-4-5-20250929",
+    max_tokens=1024,
+    system=[
+        {
+            "type": "text",
+            "text": "你是一个专业的软件工程师...",  # 长系统提示
+            "cache_control": {"type": "ephemeral", "ttl": "1h"}
+        }
+    ],
+    messages=[{"role": "user", "content": "你好！"}]
+)
+```
+
+### 配置
+
+```bash
+# 代理级默认缓存 TTL（可选，不设置则使用 Anthropic 默认 5m）
+DEFAULT_CACHE_TTL=1h
+
+# 每个 API Key 可在 Admin Portal 或 DynamoDB 中配置 cache_ttl
+# 值：'5m' 或 '1h'，设置后会强制覆盖所有请求的缓存 TTL
+```
+
+### 计费说明
+
+缓存写入价格因 TTL 不同而异：
+
+| TTL | 缓存写入价格 | 说明 |
+|-----|------------|------|
+| 5m（默认） | 1.25x 输入价格 | 标准缓存写入费率 |
+| 1h | 2.0x 输入价格 | 延长缓存需要更高写入成本 |
+
+系统会自动根据每次请求的实际 TTL 计算正确的缓存写入费用。
 
 ## OpenTelemetry 分布式追踪（LLM Observability）
 
@@ -884,6 +947,7 @@ ENABLE_DOCUMENT_SUPPORT=True
 PROMPT_CACHING_ENABLED=False
 ENABLE_PROGRAMMATIC_TOOL_CALLING=True  # 需要 Docker
 ENABLE_WEB_SEARCH=True                # 需要搜索提供商 API 密钥
+DEFAULT_CACHE_TTL=1h                  # 代理默认缓存 TTL（可选：'5m' 或 '1h'）
 ```
 
 #### Web 搜索配置

@@ -183,3 +183,59 @@ class TestApplyCacheTTL:
         service._apply_cache_ttl(body, api_key_cache_ttl="1h")
         assert body["tools"][0]["cache_control"]["ttl"] == "1h"
         assert "cache_control" not in body["tools"][1]
+
+
+class TestCacheTTLPriorityIntegration:
+    """Test the full priority chain: API key > client > proxy default."""
+
+    def test_full_priority_api_key_wins(self):
+        """API key TTL should override client TTL and proxy default."""
+        from app.core.config import settings
+        service = BedrockService()
+
+        original = settings.default_cache_ttl
+        settings.default_cache_ttl = "5m"
+        try:
+            body = {
+                "system": [{"type": "text", "text": "sys", "cache_control": {"type": "ephemeral", "ttl": "5m"}}],
+                "messages": [{"role": "user", "content": [{"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}}]}],
+            }
+            service._apply_cache_ttl(body, api_key_cache_ttl="1h")
+            assert body["system"][0]["cache_control"]["ttl"] == "1h"
+            assert body["messages"][0]["content"][0]["cache_control"]["ttl"] == "1h"
+        finally:
+            settings.default_cache_ttl = original
+
+    def test_full_priority_client_preserved(self):
+        """Without API key override, client TTL should be preserved."""
+        from app.core.config import settings
+        service = BedrockService()
+
+        original = settings.default_cache_ttl
+        settings.default_cache_ttl = "5m"
+        try:
+            body = {
+                "system": [{"type": "text", "text": "sys", "cache_control": {"type": "ephemeral", "ttl": "1h"}}],
+                "messages": [],
+            }
+            service._apply_cache_ttl(body, api_key_cache_ttl=None)
+            assert body["system"][0]["cache_control"]["ttl"] == "1h"
+        finally:
+            settings.default_cache_ttl = original
+
+    def test_full_priority_default_fills_gap(self):
+        """Proxy default fills blocks with cache_control but no TTL."""
+        from app.core.config import settings
+        service = BedrockService()
+
+        original = settings.default_cache_ttl
+        settings.default_cache_ttl = "1h"
+        try:
+            body = {
+                "system": [{"type": "text", "text": "sys", "cache_control": {"type": "ephemeral"}}],
+                "messages": [],
+            }
+            service._apply_cache_ttl(body, api_key_cache_ttl=None)
+            assert body["system"][0]["cache_control"]["ttl"] == "1h"
+        finally:
+            settings.default_cache_ttl = original

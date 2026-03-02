@@ -252,6 +252,11 @@ async def create_message(
     service_tier = api_key_info.get("service_tier", "default")
     print(f"[REQUEST] Service Tier: {service_tier}")
 
+    # Get cache_ttl override from API key info (None = use client/proxy default)
+    cache_ttl = api_key_info.get("cache_ttl") if api_key_info else None
+    if cache_ttl:
+        print(f"[REQUEST] Cache TTL Override: {cache_ttl}")
+
     # Check if this is a PTC request
     is_ptc = PTCService.is_ptc_request(request_data, anthropic_beta)
     if is_ptc:
@@ -704,7 +709,7 @@ async def create_message(
         else:
             # Handle non-streaming request (async to not block event loop)
             response = await bedrock_service.invoke_model(
-                request_data, request_id, service_tier, anthropic_beta
+                request_data, request_id, service_tier, anthropic_beta, cache_ttl=cache_ttl
             )
 
             if _trace_span is not None:
@@ -970,7 +975,7 @@ async def _handle_streaming_request(
     try:
         # Stream events from Bedrock (with beta header mapping)
         async for sse_event in bedrock_service.invoke_model_stream(
-            request_data, request_id, service_tier, anthropic_beta
+            request_data, request_id, service_tier, anthropic_beta, cache_ttl=cache_ttl
         ):
             # Parse event to track usage from message_delta and message_start events
             # SSE format: "event: <type>\ndata: <json>\n\n"

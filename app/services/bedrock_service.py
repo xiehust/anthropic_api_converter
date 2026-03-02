@@ -461,7 +461,8 @@ class BedrockService:
 
     async def invoke_model(
         self, request: MessageRequest, request_id: Optional[str] = None,
-        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None
+        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None,
+        cache_ttl: Optional[str] = None
     ) -> MessageResponse:
         """
         Invoke Bedrock model (non-streaming) asynchronously.
@@ -499,13 +500,14 @@ class BedrockService:
                 request_id,
                 service_tier,
                 anthropic_beta,
-                _otel_ctx
+                _otel_ctx,
+                cache_ttl
             )
 
     def _invoke_model_sync(
         self, request: MessageRequest, request_id: Optional[str] = None,
         service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None,
-        otel_ctx=None
+        otel_ctx=None, cache_ttl: Optional[str] = None
     ) -> MessageResponse:
         """
         Synchronous Bedrock model invocation (runs in thread pool).
@@ -532,7 +534,7 @@ class BedrockService:
             _otel_token = attach_context_in_thread(otel_ctx)
 
         try:
-            return self._invoke_model_sync_inner(request, request_id, service_tier, anthropic_beta)
+            return self._invoke_model_sync_inner(request, request_id, service_tier, anthropic_beta, cache_ttl=cache_ttl)
         finally:
             if _otel_token is not None:
                 from app.tracing.context import detach_context_in_thread
@@ -540,13 +542,14 @@ class BedrockService:
 
     def _invoke_model_sync_inner(
         self, request: MessageRequest, request_id: Optional[str] = None,
-        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None
+        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None,
+        cache_ttl: Optional[str] = None
     ) -> MessageResponse:
         """Inner sync invocation after OTEL context is attached."""
         # Route Claude models to InvokeModel API for better feature support
         if self._is_claude_model(request.model):
             print(f"[BEDROCK] Using InvokeModel API for Claude model: {request.model}")
-            return self._invoke_model_native_sync(request, request_id, anthropic_beta)
+            return self._invoke_model_native_sync(request, request_id, anthropic_beta, cache_ttl=cache_ttl)
 
         print(f"[BEDROCK] Converting request to Bedrock format for request {request_id}")
 
@@ -648,7 +651,7 @@ class BedrockService:
 
     def _invoke_model_native_sync(
         self, request: MessageRequest, request_id: Optional[str] = None,
-        anthropic_beta: Optional[str] = None
+        anthropic_beta: Optional[str] = None, cache_ttl: Optional[str] = None
     ) -> MessageResponse:
         """
         Invoke Bedrock InvokeModel API for Claude models (native Anthropic format).
@@ -660,6 +663,7 @@ class BedrockService:
             request: Anthropic MessageRequest
             request_id: Optional request ID
             anthropic_beta: Optional beta header from Anthropic client
+            cache_ttl: Optional cache TTL override from API key
 
         Returns:
             Anthropic MessageResponse
@@ -672,6 +676,9 @@ class BedrockService:
 
         # Convert request to native Anthropic format
         native_request = self._convert_to_anthropic_native_request(request, anthropic_beta)
+
+        # Apply cache TTL with priority: API key > client > proxy default
+        self._apply_cache_ttl(native_request, api_key_cache_ttl=cache_ttl)
 
         print(f"[BEDROCK NATIVE] InvokeModel request for {request_id}:")
         print(f"  - Model ID: {bedrock_model_id}")
@@ -821,7 +828,8 @@ class BedrockService:
 
     async def invoke_model_stream(
         self, request: MessageRequest, request_id: Optional[str] = None,
-        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None
+        service_tier: Optional[str] = None, anthropic_beta: Optional[str] = None,
+        cache_ttl: Optional[str] = None
     ) -> AsyncGenerator[str, None]:
         """
         Invoke Bedrock model with streaming (Server-Sent Events format).
@@ -868,6 +876,9 @@ class BedrockService:
 
                 # Convert request to native Anthropic format
                 native_request = self._convert_to_anthropic_native_request(request, anthropic_beta)
+
+                # Apply cache TTL with priority: API key > client > proxy default
+                self._apply_cache_ttl(native_request, api_key_cache_ttl=cache_ttl)
 
                 print(f"[BEDROCK STREAM NATIVE] Request params:")
                 print(f"  - Model ID: {bedrock_model_id}")

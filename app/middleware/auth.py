@@ -82,6 +82,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 "user_id": "master",
                 "is_master": True,
                 "rate_limit": None,  # No rate limit for master key
+                "cache_ttl": None,
             }
             return await call_next(request)
 

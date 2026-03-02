@@ -67,7 +67,7 @@
   - 域名过滤：支持 `allowed_domains` 和 `blocked_domains` 配置
   - 搜索次数限制：通过 `max_uses` 控制每次请求的最大搜索次数
   - 用户位置本地化：支持基于地理位置的搜索结果优化
-  - 动态过滤（`web_search_20260209`）：Claude 可编写代码过滤搜索结果（利用现有代码执行基础设施）
+  - 动态过滤（`web_search_20260209`）：Claude 可编写代码过滤搜索结果（依赖 Docker sandbox 代码执行，**ECS 部署需使用 EC2 启动类型**）
   - 支持流式和非流式响应
 
 ### 基础设施
@@ -644,17 +644,16 @@ npm install
 **启用 Web Search 和 Cache TTL（通过环境变量）：**
 
 ```bash
-# 部署时开启 Web Search（使用 Tavily 搜索引擎）
+# Fargate 模式开启 Web Search（仅支持 web_search_20250305）
 ENABLE_WEB_SEARCH=true \
 WEB_SEARCH_PROVIDER=tavily \
 WEB_SEARCH_API_KEY=tvly-your-api-key \
 ./scripts/deploy.sh -e prod -r us-west-2 -p arm64
 
-# 同时开启 Web Search 和 1 小时缓存 TTL
+# 启用 web_search_20260209 动态过滤（需要 EC2 启动类型以支持 Docker 代码执行）
 ENABLE_WEB_SEARCH=true \
 WEB_SEARCH_PROVIDER=tavily \
 WEB_SEARCH_API_KEY=tvly-your-api-key \
-DEFAULT_CACHE_TTL=1h \
 ./scripts/deploy.sh -e prod -r us-west-2 -p arm64 -l ec2
 ```
 
@@ -1017,6 +1016,13 @@ message = client.messages.create(
 |--------|------|-------------|
 | **Tavily**（推荐） | 专为 AI 优化，返回结构化内容 | [tavily.com](https://tavily.com) |
 | **Brave Search** | 通用搜索 API | [brave.com/search/api](https://brave.com/search/api/) |
+
+**工具类型对比：**
+
+| 工具类型 | 说明 | 需要 Docker |
+|---------|------|------------|
+| `web_search_20250305` | 基础 Web 搜索 | 否 |
+| `web_search_20260209` | 动态过滤（Claude 可编写代码过滤搜索结果） | **是**（依赖 Docker sandbox 执行代码，ECS 需使用 EC2 启动类型） |
 
 **健康检查：**
 ```bash

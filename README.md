@@ -641,6 +641,23 @@ npm install
 | prod + ARM64 | t4g.large | 否 | 已挂载 |
 | prod + AMD64 | t3.large | 否 | 已挂载 |
 
+**启用 Web Search 和 Cache TTL（通过环境变量）：**
+
+```bash
+# 部署时开启 Web Search（使用 Tavily 搜索引擎）
+ENABLE_WEB_SEARCH=true \
+WEB_SEARCH_PROVIDER=tavily \
+WEB_SEARCH_API_KEY=tvly-your-api-key \
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64
+
+# 同时开启 Web Search 和 1 小时缓存 TTL
+ENABLE_WEB_SEARCH=true \
+WEB_SEARCH_PROVIDER=tavily \
+WEB_SEARCH_API_KEY=tvly-your-api-key \
+DEFAULT_CACHE_TTL=1h \
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64 -l ec2
+```
+
 这将部署：
 - DynamoDB 表
 - 带有 NAT 网关的 VPC

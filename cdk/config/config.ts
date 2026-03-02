@@ -59,6 +59,16 @@ export interface EnvironmentConfig {
   ptcExecutionTimeout: number;       // Code execution timeout in seconds
   ptcMemoryLimit: string;            // Container memory limit (e.g., '256m')
 
+  // Web Search Configuration
+  enableWebSearch: boolean;
+  webSearchProvider?: string;              // 'tavily' or 'brave'
+  webSearchApiKey?: string;                // Search provider API key
+  webSearchMaxResults?: number;            // Max results per search (default: 5)
+  webSearchDefaultMaxUses?: number;        // Max searches per request (default: 10)
+
+  // Cache TTL Configuration
+  defaultCacheTtl?: string;                // Proxy-level default cache TTL ('5m' or '1h')
+
   // Bedrock Concurrency Settings
   bedrockThreadPoolSize: number;
   bedrockSemaphoreSize: number;
@@ -142,6 +152,16 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     ptcExecutionTimeout: 60,
     ptcMemoryLimit: '256m',
 
+    // Web Search (set via env vars: ENABLE_WEB_SEARCH, WEB_SEARCH_PROVIDER, WEB_SEARCH_API_KEY)
+    enableWebSearch: false,
+    // webSearchProvider: 'tavily',
+    // webSearchApiKey: 'tvly-xxx',
+    // webSearchMaxResults: 5,
+    // webSearchDefaultMaxUses: 10,
+
+    // Cache TTL (set via env var: DEFAULT_CACHE_TTL)
+    // defaultCacheTtl: '1h',
+
     // Bedrock Concurrency
     bedrockThreadPoolSize: 15,
     bedrockSemaphoreSize: 15,
@@ -222,6 +242,16 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     ptcSessionTimeout: 270,               // 4.5 minutes
     ptcExecutionTimeout: 60,
     ptcMemoryLimit: '256m',
+
+    // Web Search (set via env vars: ENABLE_WEB_SEARCH, WEB_SEARCH_PROVIDER, WEB_SEARCH_API_KEY)
+    enableWebSearch: false,
+    // webSearchProvider: 'tavily',
+    // webSearchApiKey: 'tvly-xxx',
+    // webSearchMaxResults: 5,
+    // webSearchDefaultMaxUses: 10,
+
+    // Cache TTL (set via env var: DEFAULT_CACHE_TTL)
+    // defaultCacheTtl: '1h',
 
     // Bedrock Concurrency
     bedrockThreadPoolSize: 30,
@@ -324,6 +354,11 @@ export function getConfig(environmentName: string = 'dev'): EnvironmentConfig {
     ? process.env.ENABLE_TRACING.toLowerCase() === 'true'
     : config.enableTracing;
 
+  // Override Web Search settings from environment variables
+  const enableWebSearch = process.env.ENABLE_WEB_SEARCH
+    ? process.env.ENABLE_WEB_SEARCH.toLowerCase() === 'true'
+    : config.enableWebSearch;
+
   return {
     ...config,
     platform,
@@ -331,11 +366,17 @@ export function getConfig(environmentName: string = 'dev'): EnvironmentConfig {
     ec2InstanceType,
     enablePtc,
     enableTracing,
+    enableWebSearch,
     ...(process.env.OTEL_EXPORTER_OTLP_ENDPOINT && { otelExporterEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT }),
     ...(process.env.OTEL_EXPORTER_OTLP_PROTOCOL && { otelExporterProtocol: process.env.OTEL_EXPORTER_OTLP_PROTOCOL }),
     ...(process.env.OTEL_EXPORTER_OTLP_HEADERS && { otelExporterHeaders: process.env.OTEL_EXPORTER_OTLP_HEADERS }),
     ...(process.env.OTEL_SERVICE_NAME && { otelServiceName: process.env.OTEL_SERVICE_NAME }),
     ...(process.env.OTEL_TRACE_CONTENT && { otelTraceContent: process.env.OTEL_TRACE_CONTENT.toLowerCase() === 'true' }),
     ...(process.env.OTEL_TRACE_SAMPLING_RATIO && { otelTraceSamplingRatio: parseFloat(process.env.OTEL_TRACE_SAMPLING_RATIO) }),
+    ...(process.env.WEB_SEARCH_PROVIDER && { webSearchProvider: process.env.WEB_SEARCH_PROVIDER }),
+    ...(process.env.WEB_SEARCH_API_KEY && { webSearchApiKey: process.env.WEB_SEARCH_API_KEY }),
+    ...(process.env.WEB_SEARCH_MAX_RESULTS && { webSearchMaxResults: parseInt(process.env.WEB_SEARCH_MAX_RESULTS) }),
+    ...(process.env.WEB_SEARCH_DEFAULT_MAX_USES && { webSearchDefaultMaxUses: parseInt(process.env.WEB_SEARCH_DEFAULT_MAX_USES) }),
+    ...(process.env.DEFAULT_CACHE_TTL && { defaultCacheTtl: process.env.DEFAULT_CACHE_TTL }),
   };
 }

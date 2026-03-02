@@ -641,6 +641,23 @@ npm install
 | prod + ARM64 | t4g.large | No | Mounted |
 | prod + AMD64 | t3.large | No | Mounted |
 
+**Enable Web Search and Cache TTL (via environment variables):**
+
+```bash
+# Deploy with Web Search enabled (using Tavily search engine)
+ENABLE_WEB_SEARCH=true \
+WEB_SEARCH_PROVIDER=tavily \
+WEB_SEARCH_API_KEY=tvly-your-api-key \
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64
+
+# Enable both Web Search and 1-hour Cache TTL
+ENABLE_WEB_SEARCH=true \
+WEB_SEARCH_PROVIDER=tavily \
+WEB_SEARCH_API_KEY=tvly-your-api-key \
+DEFAULT_CACHE_TTL=1h \
+./scripts/deploy.sh -e prod -r us-west-2 -p arm64 -l ec2
+```
+
 This will deploy:
 - DynamoDB tables
 - VPC with NAT gateways

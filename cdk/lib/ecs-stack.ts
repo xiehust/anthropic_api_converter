@@ -244,6 +244,16 @@ export class ECSStack extends cdk.Stack {
       ...(config.otelTraceContent !== undefined && { OTEL_TRACE_CONTENT: config.otelTraceContent.toString() }),
       ...(config.otelTraceSamplingRatio !== undefined && { OTEL_TRACE_SAMPLING_RATIO: config.otelTraceSamplingRatio.toString() }),
 
+      // Web Search
+      ENABLE_WEB_SEARCH: config.enableWebSearch.toString(),
+      ...(config.webSearchProvider && { WEB_SEARCH_PROVIDER: config.webSearchProvider }),
+      ...(config.webSearchApiKey && { WEB_SEARCH_API_KEY: config.webSearchApiKey }),
+      ...(config.webSearchMaxResults && { WEB_SEARCH_MAX_RESULTS: config.webSearchMaxResults.toString() }),
+      ...(config.webSearchDefaultMaxUses && { WEB_SEARCH_DEFAULT_MAX_USES: config.webSearchDefaultMaxUses.toString() }),
+
+      // Cache TTL
+      ...(config.defaultCacheTtl && { DEFAULT_CACHE_TTL: config.defaultCacheTtl }),
+
       // Streaming
       STREAMING_TIMEOUT: '300',
 

@@ -61,6 +61,20 @@ LAUNCH TYPE COMPARISON:
     * Use 'fargate' (default) for most deployments
     * Use 'ec2' only if you need Programmatic Tool Calling (PTC) feature
 
+WEB SEARCH (via environment variables):
+    Enable web search by setting env vars before running this script:
+
+    ENABLE_WEB_SEARCH=true \\
+    WEB_SEARCH_PROVIDER=tavily \\
+    WEB_SEARCH_API_KEY=tvly-your-api-key \\
+    ./scripts/deploy.sh -e prod -p arm64
+
+CACHE TTL (via environment variables):
+    Set proxy-level default cache TTL:
+
+    DEFAULT_CACHE_TTL=1h \\
+    ./scripts/deploy.sh -e prod -p arm64
+
 OTEL TRACING (via environment variables):
     Enable OpenTelemetry tracing by setting env vars before running this script:
 

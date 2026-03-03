@@ -1,6 +1,10 @@
-# Web Search Tool 架构设计说明
+# Server-Managed Tools 架构设计说明
 
-> 本文档详细介绍 Anthropic-Bedrock API Proxy 中 Web Search 工具的实现架构。
+> 本文档详细介绍 Anthropic-Bedrock API Proxy 中 Server-Managed Tools（Web Search、Web Fetch）的实现架构。
+
+---
+
+# Part 1: Web Search Tool
 
 ## 1. 背景与动机
 
@@ -777,3 +781,374 @@ elif block_type == "web_search_tool_result":
 3. **非流式 Bedrock 调用**: 内部始终使用非流式调用，在多次迭代的场景下第一个 token 的延迟较高
 4. **沙箱依赖 Docker**: Dynamic filtering 需要 Docker 运行环境，ECS Fargate 不支持
 5. **MAX_ITERATIONS 硬限制**: 25 次迭代上限，极端复杂的搜索场景可能不够
+
+---
+---
+
+# Part 2: Web Fetch Tool
+
+## 13. 概述
+
+Web Fetch 是 Anthropic API 提供的另一种 server-managed tool，允许 Claude 主动抓取指定 URL 的完整页面内容。与 Web Search（搜索关键词获取摘要列表）不同，Web Fetch 针对单个 URL 获取完整文档。
+
+| 对比维度 | Web Search | Web Fetch |
+|---------|-----------|-----------|
+| **输入** | 搜索关键词（query） | 具体 URL |
+| **输出** | 多条搜索结果摘要 | 单个 URL 的完整页面内容 |
+| **结果格式** | `web_search_tool_result` + `web_search_result[]` | `web_fetch_tool_result` + `web_fetch_result` |
+| **内容编码** | `encrypted_content`（Base64） | `source.data`（纯文本或 Base64） |
+| **引用类型** | `web_search_result_location` | `char_location` |
+| **典型场景** | "搜索 Python 最新版本" | "读取 https://docs.python.org/3/whatsnew.html 的内容" |
+
+### 13.1 支持的工具版本
+
+| 工具类型 | Beta Header | 特性 |
+|---------|-------------|------|
+| `web_fetch_20250910` | `web-fetch-2025-09-10` | 标准 URL 抓取 + 引用 |
+| `web_fetch_20260209` | `web-fetch-2026-02-09` | URL 抓取 + **Dynamic Filtering**（bash 代码执行） |
+
+---
+
+## 14. 源码结构
+
+```
+app/
+├── schemas/
+│   └── web_fetch.py                   # Pydantic 数据模型（86 行）
+└── services/
+    ├── web_fetch_service.py           # 核心服务：Agentic Loop 编排（~1,500 行）
+    └── web_fetch/
+        ├── __init__.py                # 模块导出
+        └── providers.py               # Fetch 提供商：Httpx / Tavily（313 行）
+```
+
+复用了 Web Search 的以下模块：
+- `app/services/web_search/domain_filter.py` — 域名过滤
+- `app/services/standalone_code_execution_service.py` — Dynamic filtering 沙箱执行
+
+---
+
+## 15. 与 Web Search 的架构关系
+
+Web Fetch 的实现**完全遵循 Web Search 的 Agentic Loop 模式**，核心架构一致：
+
+```
+               共享模式                         差异点
+  ┌───────────────────────────┐    ┌─────────────────────────────┐
+  │ • Agentic Loop 编排       │    │ • 工具名: web_fetch vs       │
+  │ • Tool Substitution       │    │   web_search                │
+  │ • ID 转换 (srvtoolu_)    │    │ • 输入: url vs query        │
+  │ • Beta Header 过滤        │    │ • Provider: HTTP fetch vs   │
+  │ • Citation 系统           │    │   Search API                │
+  │ • Dynamic Filtering       │    │ • 结果格式: document block  │
+  │ • 混合流式架构            │    │   vs result array           │
+  │ • 错误处理模式            │    │ • 引用类型: char_location   │
+  │ • 多轮对话转换            │    │   vs web_search_result_     │
+  └───────────────────────────┘    │   location                  │
+                                   │ • 额外字段: retrieved_at,   │
+                                   │   media_type, max_content_  │
+                                   │   tokens                    │
+                                   └─────────────────────────────┘
+```
+
+---
+
+## 16. Fetch 提供商
+
+### 16.1 提供商架构
+
+```
+                FetchProvider (ABC)
+                       │
+           ┌───────────┴───────────┐
+           │                       │
+  HttpxFetchProvider        TavilyFetchProvider
+  (默认，无需 API Key)     (需要 Tavily 付费计划)
+```
+
+### 16.2 HttpxFetchProvider（默认）
+
+直接通过 `httpx.AsyncClient` 抓取 URL，内置 HTML → 纯文本转换：
+
+```python
+class HttpxFetchProvider(FetchProvider):
+    async def fetch(self, url: str, max_content_tokens: int = None) -> FetchResult:
+        # 1. 验证 URL
+        _validate_url(url)  # http(s)://, 长度 < 250
+
+        # 2. HTTP GET 请求（支持重定向）
+        response = await self.client.get(url)  # follow_redirects=True
+
+        # 3. 根据 Content-Type 处理
+        if is_pdf:
+            content = base64.b64encode(response.content)  # PDF → base64
+        elif is_html:
+            title = _extract_title(raw_html)     # 提取 <title>
+            content = _html_to_text(raw_html)    # HTML → 纯文本
+        elif is_text:
+            content = raw_text                   # JSON/CSV/plain → 直接返回
+        else:
+            raise FetchError("unsupported_content_type")
+
+        # 4. Token 限制截断
+        content = _apply_token_limit(content, max_content_tokens)
+
+        return FetchResult(url=final_url, title=title, content=content, media_type=...)
+```
+
+**HTML → 纯文本转换**（`_html_to_text()`）：
+- 移除 `<script>`, `<style>`, HTML 注释
+- 将块级元素 (`<p>`, `<div>`, `<h1-6>`, `<li>`) 转换为换行
+- 移除所有 HTML 标签
+- 解码 HTML 实体（`&amp;` → `&`）
+- 折叠多余空白
+
+**优势**：无需任何外部 API Key，零依赖。
+
+### 16.3 TavilyFetchProvider
+
+使用 Tavily Extract API，需要付费 Tavily 计划：
+
+```python
+class TavilyFetchProvider(FetchProvider):
+    async def fetch(self, url, max_content_tokens=None) -> FetchResult:
+        response = await loop.run_in_executor(
+            None, lambda: self.client.extract(urls=[url])
+        )
+        content = response["results"][0]["raw_content"]
+        return FetchResult(url=url, title=title, content=content, ...)
+```
+
+### 16.4 工厂函数
+
+```python
+def create_fetch_provider(provider=None) -> FetchProvider:
+    provider = provider or getattr(settings, 'web_fetch_provider', 'httpx')
+    if provider == "tavily":
+        return TavilyFetchProvider(api_key=settings.web_search_api_key)
+    return HttpxFetchProvider()  # 默认
+```
+
+---
+
+## 17. 数据模型
+
+### 17.1 工具定义（客户端请求）
+
+```json
+{
+  "type": "web_fetch_20250910",
+  "name": "web_fetch",
+  "max_uses": 5,
+  "allowed_domains": ["docs.python.org"],
+  "blocked_domains": ["spam.com"],
+  "citations": {"enabled": true},
+  "max_content_tokens": 100000
+}
+```
+
+与 Web Search 的区别：
+- 新增 `citations`：明确控制是否启用引用（Web Search 默认启用）
+- 新增 `max_content_tokens`：限制单次抓取的最大内容量
+- 无 `user_location` 字段（URL 抓取无需地理位置）
+
+### 17.2 结果格式（`web_fetch_tool_result`）
+
+```json
+{
+  "type": "web_fetch_tool_result",
+  "tool_use_id": "srvtoolu_bdrk_01Abc...",
+  "content": {
+    "type": "web_fetch_result",
+    "url": "https://docs.python.org/3/whatsnew/3.13.html",
+    "retrieved_at": "2026-03-03T08:30:00Z",
+    "content": {
+      "type": "document",
+      "source": {
+        "type": "text",
+        "media_type": "text/plain",
+        "data": "What's New In Python 3.13\n..."
+      },
+      "title": "What's New in Python 3.13"
+    }
+  }
+}
+```
+
+**与 Web Search 结果格式的关键差异**：
+
+| 特性 | Web Search | Web Fetch |
+|------|-----------|-----------|
+| **content 类型** | `List[web_search_result]` （数组） | `web_fetch_result`（单个对象） |
+| **内容字段** | `encrypted_content`（Base64） | `source.data`（纯文本或 Base64） |
+| **额外元数据** | `page_age` | `retrieved_at`, `source.media_type` |
+| **文档嵌套** | 扁平结构 | `content.source` 嵌套结构（document block） |
+
+### 17.3 错误格式
+
+```json
+{
+  "type": "web_fetch_tool_result",
+  "tool_use_id": "srvtoolu_bdrk_01Abc...",
+  "content": {
+    "type": "web_fetch_tool_error",
+    "error_code": "url_not_accessible"
+  }
+}
+```
+
+错误码：
+
+| 错误码 | 说明 |
+|--------|------|
+| `invalid_input` | URL 格式无效 |
+| `url_too_long` | URL 超过 250 字符 |
+| `url_not_allowed` | URL 被 `blocked_domains` 拦截 |
+| `url_not_accessible` | HTTP 请求失败（404/500/超时等） |
+| `too_many_requests` | 目标站点限流（429） |
+| `unsupported_content_type` | 不支持的内容类型（如视频） |
+| `max_uses_exceeded` | 抓取次数超过 `max_uses` |
+
+---
+
+## 18. Agentic Loop 流程差异
+
+Web Fetch 的 Agentic Loop 与 Web Search 完全相同（见 [5.4 节](#54-agentic-loop代理循环)），仅在工具执行步骤有差异：
+
+### Web Search 的工具执行
+```
+Claude 调用: tool_use(web_search, input={query: "Python 3.13"})
+Proxy 执行:  search_provider.search(query="Python 3.13")
+返回结果:    web_search_tool_result → content: [result1, result2, ...]  (多条)
+```
+
+### Web Fetch 的工具执行
+```
+Claude 调用: tool_use(web_fetch, input={url: "https://..."})
+Proxy 执行:
+  1. 域名检查: _check_domain_allowed(url, config)
+  2. 内容抓取: fetch_provider.fetch(url, max_content_tokens)
+  3. 构建结果: web_fetch_tool_result → content: {web_fetch_result}  (单条)
+返回结果:    含 document block（source + title + retrieved_at）
+```
+
+### 域名检查
+
+Web Fetch 在执行抓取前额外检查 URL 域名：
+
+```python
+def _check_domain_allowed(self, url: str, config: WebFetchToolDefinition) -> Optional[str]:
+    """Check URL against allowed/blocked domain lists.
+    Returns error_code if blocked, None if allowed."""
+    domain = urlparse(url).netloc.lower()
+
+    if config.blocked_domains:
+        if DomainFilter._matches_any(domain, config.blocked_domains):
+            return "url_not_allowed"
+
+    if config.allowed_domains:
+        if not DomainFilter._matches_any(domain, config.allowed_domains):
+            return "url_not_allowed"
+
+    return None  # URL is allowed
+```
+
+这比 Web Search 多了一层**前置域名检查**（Web Search 只在搜索后做后处理过滤），因为 Web Fetch 是直接访问用户指定的 URL。
+
+---
+
+## 19. 引用系统差异
+
+### Web Search 引用
+```json
+{
+  "type": "web_search_result_location",
+  "url": "https://...",
+  "title": "...",
+  "encrypted_index": "MQ==",
+  "cited_text": "first 150 chars..."
+}
+```
+
+### Web Fetch 引用
+```json
+{
+  "type": "char_location",
+  "document_index": 0,
+  "start_char_index": 42,
+  "end_char_index": 180,
+  "document_title": "What's New in Python 3.13"
+}
+```
+
+两者都使用相同的 **提示注入 + `[N]` 标记后处理** 机制，但最终输出的 citation 对象格式不同。
+
+> 注：当前实现中，Web Fetch 的引用后处理复用了 `web_search_result_location` 格式，与官方 `char_location` 格式有细微差异。这是已知的兼容性 trade-off。
+
+---
+
+## 20. 多轮对话中的 `web_fetch_tool_result` 转换
+
+当客户端在后续轮次发送包含 `web_fetch_tool_result` 的对话历史时，converter 需要将其转换为 Bedrock 的 `toolResult` 格式：
+
+```python
+# app/converters/anthropic_to_bedrock.py
+elif block_type == "web_fetch_tool_result":
+    wf_content = block.get("content", {})
+    if isinstance(wf_content, dict):
+        wf_type = wf_content.get("type", "")
+        if wf_type == "web_fetch_result":
+            doc = wf_content.get("content", {})     # document block
+            source = doc.get("source", {})
+            data = source.get("data", "")            # 文本内容
+            title = doc.get("title", "")
+            url = wf_content.get("url", "")
+            result_text = f"Title: {title}\nURL: {url}\nContent: {data}"
+        elif wf_type == "web_fetch_tool_error":
+            result_text = f"Error: {wf_content.get('error_code', 'unknown')}"
+
+    # → Bedrock toolResult 格式
+    bedrock_block = {
+        "toolResult": {
+            "toolUseId": tool_use_id,
+            "content": [{"text": result_text}],
+            "status": "success"
+        }
+    }
+```
+
+核心逻辑：从嵌套的 `content.source.data` 中提取文本内容，拼接为纯文本传给 Bedrock。
+
+---
+
+## 21. 配置项
+
+| 变量 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `ENABLE_WEB_FETCH` | bool | `True` | Web fetch 功能总开关 |
+| `WEB_FETCH_DEFAULT_MAX_USES` | int | `20` | 默认最大抓取次数 |
+| `WEB_FETCH_DEFAULT_MAX_CONTENT_TOKENS` | int | `100000` | 默认最大内容 token 数 |
+
+> Web Fetch 默认使用 HttpxFetchProvider，**无需额外 API Key**。如需使用 Tavily，设置 `web_fetch_provider=tavily` 并配置 `WEB_SEARCH_API_KEY`。
+
+---
+
+## 22. Web Search vs Web Fetch 完整对比
+
+| 维度 | Web Search | Web Fetch |
+|------|-----------|-----------|
+| **工具类型** | `web_search_20250305`, `web_search_20260209` | `web_fetch_20250910`, `web_fetch_20260209` |
+| **Beta Header** | `web-search-2025-03-05`, `web-search-2026-02-09` | `web-fetch-2025-09-10`, `web-fetch-2026-02-09` |
+| **输入参数** | `query`（搜索关键词） | `url`（具体 URL） |
+| **Provider** | Tavily Search / Brave Search（需 API Key） | HttpxFetchProvider（默认，无需 Key）/ Tavily Extract |
+| **结果数量** | 每次搜索 5 条（可配置） | 每次抓取 1 条 |
+| **结果格式** | `web_search_tool_result` + `[web_search_result, ...]` | `web_fetch_tool_result` + `web_fetch_result` |
+| **内容编码** | `encrypted_content`（Base64） | `source.data`（纯文本 / Base64 PDF） |
+| **引用类型** | `web_search_result_location` | `char_location` |
+| **额外元数据** | `page_age` | `retrieved_at`, `media_type`, `title` |
+| **域名检查** | 后处理过滤 | 前置域名检查 + 后处理过滤 |
+| **PDF 支持** | 无 | 有（base64 传递） |
+| **默认 max_uses** | 10 | 20 |
+| **Dynamic Filtering** | `web_search_20260209` | `web_fetch_20260209` |
+| **源码行数** | ~1,836 行 | ~1,900 行 |
+| **Agentic Loop** | 完全相同的编排模式 | 完全相同的编排模式 |

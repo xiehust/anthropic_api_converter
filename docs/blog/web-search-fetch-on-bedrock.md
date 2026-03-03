@@ -857,3 +857,110 @@ Token 差异不到 0.2%，几乎可以忽略不计。差异来源于 `retrieved_
 | 功能完整性 | web_search + web_fetch + Dynamic Filtering 全部正常 |
 
 Proxy 实现与 Anthropic 官方 API 在功能和格式上完全等价，差异仅体现在搜索结果的自然随机性和模型措辞的细微变化上。
+
+---
+
+## 七、部署与配置
+
+本节介绍 Proxy 的 Web Search / Web Fetch 功能在实际部署中的关键配置项、搜索提供商选择、Docker 沙箱要求以及客户端集成方式。
+
+### 7.1 环境变量
+
+以下环境变量控制 Web Search 和 Web Fetch 功能的运行行为，可通过 `.env` 文件或系统环境变量设置：
+
+| 变量 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `ENABLE_WEB_SEARCH` | bool | `True` | Web Search 功能总开关 |
+| `WEB_SEARCH_PROVIDER` | str | `"tavily"` | 搜索提供商：`tavily` 或 `brave` |
+| `WEB_SEARCH_API_KEY` | str | （必填） | 搜索提供商 API Key |
+| `WEB_SEARCH_MAX_RESULTS` | int | `5` | 每次搜索返回结果数 |
+| `WEB_SEARCH_DEFAULT_MAX_USES` | int | `10` | 默认最大搜索次数 |
+| `ENABLE_WEB_FETCH` | bool | `True` | Web Fetch 功能总开关 |
+| `WEB_FETCH_DEFAULT_MAX_USES` | int | `20` | 默认最大抓取次数 |
+| `WEB_FETCH_DEFAULT_MAX_CONTENT_TOKENS` | int | `100000` | 单次抓取最大内容 Token 数 |
+
+> **注意**：Web Fetch 默认使用 `HttpxFetchProvider`，无需额外 API Key。仅当切换为 `TavilyFetchProvider` 时才需要配置 Tavily API Key。
+
+### 7.2 搜索提供商选择
+
+Proxy 目前支持两家搜索提供商，可通过 `WEB_SEARCH_PROVIDER` 环境变量切换：
+
+- **Tavily（推荐）**：专为 AI 应用设计的搜索引擎，返回内容经过清洗和结构化处理，原生支持域名过滤参数（`include_domains` / `exclude_domains`），设置 `search_depth: "advanced"` 可返回更丰富的页面内容。适合作为生产环境的首选方案。
+
+- **Brave**：基于独立搜索索引（非 Google/Bing）的搜索引擎，提供差异化的搜索结果来源。Brave Search API 不直接支持域名过滤参数，需通过 `site:` 前缀注入查询字符串来实现白名单过滤，黑名单过滤则由 Proxy 的 `DomainFilter` 在结果返回后二次处理。
+
+两者在 Proxy 层通过统一的 `SearchProvider` 抽象接口封装，上层 Agentic Loop 代码无需感知具体实现差异。
+
+### 7.3 Docker 沙箱要求
+
+Dynamic Filtering（增强版工具 `web_search_20260209` / `web_fetch_20260209`）需要在代码沙箱中执行 Claude 生成的 Python 脚本，因此对运行环境有以下要求：
+
+- **Docker 运行环境**：服务器上必须安装并运行 Docker daemon，沙箱容器默认使用 `python:3.11-slim` 镜像
+- **ECS 部署须使用 EC2 launch type**：AWS Fargate 不提供 Docker daemon 访问权限，无法创建沙箱容器。EC2 launch type 通过挂载 Docker socket（`/var/run/docker.sock`）实现容器内创建容器的能力
+- **部署命令**：`./scripts/deploy.sh -e dev -p arm64 -l ec2`
+
+关于 Docker 沙箱的完整部署细节（包括容器创建、文件注入、Docker-in-Docker 绑定挂载问题的解决方案等），请参考本系列的上一篇博客：[《使用 Amazon Bedrock + 自建 ECS Docker Sandbox 实现 Agent 程序化工具调用 Programmatic Tool Calling》](https://aws.amazon.com/cn/blogs/china/programmatic-tool-calling-agent-using-bedrock-and-ecs-docker-sandbox/)。
+
+> **重要提示**：如果仅使用标准版工具（`web_search_20250305` / `web_fetch_20250910`），则**不需要** Docker 运行环境。标准版的 Agentic Loop 仅涉及搜索/抓取提供商的 API 调用，无代码执行环节。
+
+### 7.4 客户端使用示例
+
+Proxy 对外暴露与 Anthropic 官方 API 完全相同的端点和响应格式，因此客户端代码**无需任何修改**——仅需将 `base_url` 指向 Proxy 地址即可。以下是使用 Anthropic Python SDK 通过 Proxy 调用 Web Search 的示例：
+
+```python
+import anthropic
+
+# 仅需修改 base_url 指向 Proxy，其余代码与调用 Anthropic 官方 API 完全相同
+client = anthropic.Anthropic(
+    base_url="https://your-proxy-endpoint.com",
+    api_key="your-proxy-api-key",
+)
+
+response = client.messages.create(
+    model="claude-sonnet-4-6",
+    max_tokens=4096,
+    tools=[{
+        "type": "web_search_20250305",
+        "name": "web_search",
+        "max_uses": 5,
+    }],
+    messages=[{"role": "user", "content": "2026年 AWS re:Invent 有哪些重要发布？"}],
+)
+
+# 响应格式与 Anthropic 官方 API 完全一致
+for block in response.content:
+    if block.type == "text":
+        print(block.text)
+```
+
+这种设计使得团队在从 Anthropic 官方 API 迁移至 Bedrock 时，只需在客户端配置中替换一行 `base_url`，即可无缝切换，无需修改任何业务逻辑代码。
+
+---
+
+## 八、总结与展望
+
+### 回顾
+
+本文详细介绍了如何在 Amazon Bedrock 上通过自建 Proxy 实现 Anthropic 的 Web Search 和 Web Fetch 两个 Server-Managed Tools。核心方案包括：**Agentic Loop 多轮编排**驱动搜索/抓取与推理的交替执行，**工具替换策略**将 Bedrock 无法识别的 server-managed tool 声明转换为标准 tool definition，**第三方搜索/抓取提供商**（Tavily、Brave、Httpx）提供实际的搜索和网页抓取能力，**三步引用系统**在 Proxy 层还原 Anthropic 的 citation 格式，以及 **Docker 沙箱**支撑 Dynamic Filtering 的代码执行过滤。
+
+### 系列回顾
+
+结合本系列的上一篇博客（Programmatic Tool Calling），Proxy 目前已完整实现了 Anthropic API 的三大服务端特性：
+
+1. **Programmatic Tool Calling（程序化工具调用）**：Claude 生成 Python 代码编排工具调用，降低 Token 消耗，提升推理准确率
+2. **Web Search（实时搜索）**：Claude 自主搜索互联网获取实时信息，生成带来源引用的回答
+3. **Web Fetch（网页抓取）**：Claude 直接抓取指定 URL 的完整页面内容，支持文档级精确引用
+
+这使得通过 Amazon Bedrock 使用 Claude 的客户端，能够获得与 Anthropic 官方 API 几乎完全一致的能力体验——客户端代码无需任何修改，仅需将 `base_url` 指向 Proxy 即可。
+
+### 已知限制
+
+- **搜索结果质量依赖第三方提供商**：Tavily 和 Brave 的搜索结果可能与 Anthropic 自有搜索引擎存在差异，尤其在特定领域的覆盖深度和结果排序上
+- **引用系统基于提示工程**：通过 system prompt 注入引用指令并后处理 `[N]` 标记，极少数情况下引用标记可能缺失或格式偏差
+- **Dynamic Filtering 依赖 Docker 环境**：增强版工具需要 Docker 运行环境，增加了部署复杂度，且 ECS 部署必须使用 EC2 launch type
+
+### 展望
+
+- **流式 Agentic Loop 优化**：当前 Agentic Loop 内部使用非流式调用，最终结果通过 SSE 流式输出。未来将探索在 Loop 执行过程中即时流式传输中间结果，进一步减少首 Token 延迟
+- **支持更多搜索提供商**：扩展 `SearchProvider` 抽象接口，接入 Google Custom Search、Bing Web Search 等更多搜索后端，为用户提供更多选择
+- **引用准确率持续优化**：通过更精细的提示工程和后处理算法，提升引用标记的覆盖率和格式稳定性

@@ -322,6 +322,23 @@ class Settings(BaseSettings):
         description="Default maximum number of web searches per request"
     )
 
+    # Web Fetch Settings
+    enable_web_fetch: bool = Field(
+        default=True,
+        alias="ENABLE_WEB_FETCH",
+        description="Enable web fetch tool support (proxy-side server tool)"
+    )
+    web_fetch_default_max_uses: int = Field(
+        default=20,
+        alias="WEB_FETCH_DEFAULT_MAX_USES",
+        description="Default maximum number of web fetches per request"
+    )
+    web_fetch_default_max_content_tokens: int = Field(
+        default=100000,
+        alias="WEB_FETCH_DEFAULT_MAX_CONTENT_TOKENS",
+        description="Default maximum content tokens per fetch"
+    )
+
     @field_validator("cors_origins", "cors_allow_methods", "cors_allow_headers", mode="before")
     @classmethod
     def parse_list_fields(cls, v: Any) -> List[str]:

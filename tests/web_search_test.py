@@ -31,9 +31,9 @@ import sys
 from anthropic import Anthropic
 
 # Import test configuration
-from config import API_KEY, BASE_URL, MODEL_ID
+from config import API_KEY, BASE_URL, MODEL_ID,ANTHROPIC_API_KEY
 
-client = Anthropic(api_key=API_KEY, base_url=BASE_URL)
+client=None
 
 # ==================== Pretty-print helpers ====================
 
@@ -496,7 +496,8 @@ def test_dynamic_filtering_non_stream():
             {
                 "role": "user",
                 "content": (
-                    "Search the web for the top 3 most popular Python web frameworks in 2025. "
+                    "Search for the current prices of AAPL and GOOGL, then calculate which has a better P/E ratio."
+                    # "Search the web for the top 3 most popular Python web frameworks in 2025. "
                     # "For each framework, find its latest version number and a one-sentence description. "
                     # "Present the results as a numbered list."
                     # "search when Claude Shannon was born?"
@@ -540,7 +541,7 @@ def test_dynamic_filtering_stream():
         messages=[
             {
                 "role": "user",
-                "content": "Search for the current population of the 3 largest cities in Japan and present them in a table.",
+                "content": "Search for the current prices of AAPL and GOOGL, then calculate which has a better P/E ratio.",
             }
         ],
     ) as stream:
@@ -729,7 +730,16 @@ if __name__ == "__main__":
     parser.add_argument("--dynamic-location", action="store_true", help="Run dynamic filtering + user_location test")
     parser.add_argument("--multi-turn-dynamic", action="store_true", help="Run multi-turn dynamic filtering test")
     parser.add_argument("--all", action="store_true", help="Run all tests")
+    parser.add_argument("--official", action="store_false", help="Run all tests")
     args = parser.parse_args()
+
+
+    if args.official:
+        print("===========use proxy api===========")
+        client = Anthropic(api_key=API_KEY, base_url=BASE_URL)
+    else:
+        print("===========use anthropic official api===========")
+        client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
     # If no specific flag, run basic non-stream + stream
     any_specific = (

@@ -69,6 +69,14 @@ This lightweight API convertion service enables you to use various large languag
   - User location: Localized search results based on geography
   - Dynamic filtering (`web_search_20260209`): Claude can write code to filter search results (requires Docker sandbox, **ECS deployment needs EC2 launch type**)
   - Supports both streaming and non-streaming responses
+- **Web Fetch Tool**: Support for Anthropic's `web_fetch_20250910` and `web_fetch_20260209` tool types
+  - Proxy-side server tool implementation (Bedrock doesn't natively support web fetch, so the proxy intercepts and fetches URLs)
+  - Default provider uses httpx for direct HTTP fetch (**no API key required**), with built-in HTML-to-text conversion
+  - PDF document support (base64 passthrough)
+  - Domain filtering: `allowed_domains` and `blocked_domains` support
+  - Fetch limit via `max_uses`; content length limit via `max_content_tokens`
+  - Dynamic filtering (`web_fetch_20260209`): Claude can write code to process fetched content (requires Docker sandbox, **ECS deployment needs EC2 launch type**)
+  - Supports both streaming and non-streaming responses
 
 ### Infrastructure
 - **Authentication**: API key-based authentication with DynamoDB storage
@@ -655,6 +663,9 @@ ENABLE_WEB_SEARCH=true \
 WEB_SEARCH_PROVIDER=tavily \
 WEB_SEARCH_API_KEY=tvly-your-api-key \
 ./scripts/deploy.sh -e prod -r us-west-2 -p arm64 -l ec2
+
+# Web Fetch is enabled by default, no additional API key required (uses httpx direct fetch)
+# To disable: ENABLE_WEB_FETCH=false
 ```
 
 This will deploy:
@@ -1011,6 +1022,65 @@ curl http://localhost:8000/health/web-search
 # Returns: {"status": "healthy", "provider": "tavily", "enabled": true, ...}
 ```
 
+#### Web Fetch Configuration
+
+The Web Fetch tool allows Claude to fetch the full content of a specific URL (unlike Web Search which searches by keywords).
+
+```bash
+# Web Fetch is enabled by default, uses httpx direct fetch (no API key needed)
+ENABLE_WEB_FETCH=True
+
+# Default max fetches per request (default: 20)
+WEB_FETCH_DEFAULT_MAX_USES=20
+
+# Default max content tokens per fetch (default: 100000)
+WEB_FETCH_DEFAULT_MAX_CONTENT_TOKENS=100000
+```
+
+**Usage Example:**
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-your-api-key",
+    base_url="http://localhost:8000"
+)
+
+# Use web_fetch tool
+message = client.messages.create(
+    model="claude-sonnet-4-5-20250929",
+    max_tokens=4096,
+    tools=[
+        {
+            "type": "web_fetch_20250910",
+            "name": "web_fetch",
+            "max_uses": 5,
+            "max_content_tokens": 50000,
+        }
+    ],
+    messages=[{"role": "user", "content": "Fetch https://docs.python.org/3/whatsnew/3.13.html and summarize the key new features"}],
+    extra_headers={"anthropic-beta": "web-fetch-2025-09-10"},
+)
+```
+
+**Web Search vs Web Fetch:**
+
+| Dimension | Web Search | Web Fetch |
+|-----------|-----------|-----------|
+| **Input** | Search keywords (`query`) | Specific URL (`url`) |
+| **Output** | Multiple search result snippets | Full page content of a single URL |
+| **Provider** | Tavily / Brave (API key required) | httpx direct fetch (default, **no key needed**) |
+| **PDF Support** | No | Yes (base64 passthrough) |
+| **Default max_uses** | 10 | 20 |
+
+**Tool Type Comparison:**
+
+| Tool Type | Description | Requires Docker |
+|-----------|-------------|----------------|
+| `web_fetch_20250910` | Basic URL fetching | No |
+| `web_fetch_20260209` | Dynamic filtering (Claude can write code to process fetched content) | **Yes** (requires Docker sandbox, ECS needs EC2 launch type) |
+
 #### Programmatic Tool Calling (PTC) Configuration
 ```bash
 # Enable PTC feature (requires Docker)
@@ -1268,12 +1338,16 @@ anthropic_api_proxy/
        --- anthropic.py  # Anthropic API schemas
        --- bedrock.py    # Bedrock API schemas
        --- web_search.py # Web search tool models
+       --- web_fetch.py  # Web fetch tool models
    --- services/         # Business logic
        --- bedrock_service.py
        --- web_search_service.py  # Web search orchestration service
        --- web_search/            # Search provider module
            --- providers.py       # Tavily/Brave search implementations
            --- domain_filter.py   # Domain filtering
+       --- web_fetch_service.py   # Web fetch orchestration service
+       --- web_fetch/             # Fetch provider module
+           --- providers.py       # Httpx/Tavily fetch implementations
    --- tracing/          # OpenTelemetry distributed tracing
        --- provider.py   # TracerProvider initialization and exporter config
        --- middleware.py  # Turn-based request tracing middleware

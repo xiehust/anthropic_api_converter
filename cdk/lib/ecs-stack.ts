@@ -251,6 +251,11 @@ export class ECSStack extends cdk.Stack {
       ...(config.webSearchMaxResults && { WEB_SEARCH_MAX_RESULTS: config.webSearchMaxResults.toString() }),
       ...(config.webSearchDefaultMaxUses && { WEB_SEARCH_DEFAULT_MAX_USES: config.webSearchDefaultMaxUses.toString() }),
 
+      // Web Fetch
+      ENABLE_WEB_FETCH: config.enableWebFetch.toString(),
+      ...(config.webFetchDefaultMaxUses && { WEB_FETCH_DEFAULT_MAX_USES: config.webFetchDefaultMaxUses.toString() }),
+      ...(config.webFetchDefaultMaxContentTokens && { WEB_FETCH_DEFAULT_MAX_CONTENT_TOKENS: config.webFetchDefaultMaxContentTokens.toString() }),
+
       // Cache TTL
       ...(config.defaultCacheTtl && { DEFAULT_CACHE_TTL: config.defaultCacheTtl }),
 

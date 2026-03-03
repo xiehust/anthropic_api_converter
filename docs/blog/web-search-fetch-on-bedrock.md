@@ -970,3 +970,15 @@ for block in response.content:
 - **流式 Agentic Loop 优化**：当前 Agentic Loop 内部使用非流式调用，最终结果通过 SSE 流式输出。未来将探索在 Loop 执行过程中即时流式传输中间结果，进一步减少首 Token 延迟
 - **支持更多搜索提供商**：扩展 `SearchProvider` 抽象接口，接入 Google Custom Search、Bing Web Search 等更多搜索后端，为用户提供更多选择
 - **引用准确率持续优化**：通过更精细的提示工程和后处理算法，提升引用标记的覆盖率和格式稳定性
+
+---
+
+## 参考资料
+
+1. [使用 Amazon Bedrock + 自建 ECS Docker Sandbox 实现 Agent 程序化工具调用 Programmatic Tool Calling](https://aws.amazon.com/cn/blogs/china/programmatic-tool-calling-agent-using-bedrock-and-ecs-docker-sandbox/) — 本系列前作，介绍 PTC 和 Docker 沙箱实现
+2. [Improved Web Search with Dynamic Filtering](https://claude.com/blog/improved-web-search-with-dynamic-filtering) — Anthropic 官方博客，介绍 Dynamic Filtering 特性及基准测试数据
+3. [Anthropic Web Search Tool Documentation](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-search) — Anthropic 官方 Web Search 工具文档
+4. [Anthropic Web Fetch Tool Documentation](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-fetch) — Anthropic 官方 Web Fetch 工具文档
+5. [Amazon Bedrock InvokeModel API Reference](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html) — AWS Bedrock InvokeModel API 文档
+6. [Tavily Search API](https://tavily.com/) — 本项目默认使用的 AI 搜索提供商
+7. [Brave Search API](https://brave.com/search/api/) — 备选搜索提供商

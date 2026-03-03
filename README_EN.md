@@ -12,8 +12,9 @@
 <p>
   <a href="./README.md"><img src="https://img.shields.io/badge/文档-中文-red.svg" alt="中文文档"></a>
   <a href="./README_EN.md"><img src="https://img.shields.io/badge/Docs-English-blue.svg" alt="English Docs"></a>
-  <a href="https://mp.weixin.qq.com/s/mW1RNem5zbAlyvLixSFWOw“><img src="https://img.shields.io/badge/📚-Tech_Blog-purple.svg" alt="Tech Blog"></a>
-  <a href="./cdk/DEPLOYMENT.md"><img src="https://img.shields.io/badge/🚀-Deployment-orange.svg" alt="Deployment Guide"></a>
+  <a href=”https://mp.weixin.qq.com/s/mW1RNem5zbAlyvLixSFWOw”><img src=”https://img.shields.io/badge/📚-Tech_Blog-purple.svg” alt=”Tech Blog”></a>
+  <a href=”https://aws.amazon.com/cn/blogs/china/programmatic-tool-calling-agent-using-bedrock-and-ecs-docker-sandbox/”><img src=”https://img.shields.io/badge/📝-AWS_Blog-FF9900.svg” alt=”AWS Blog”></a>
+  <a href=”./cdk/DEPLOYMENT.md”><img src=”https://img.shields.io/badge/🚀-Deployment-orange.svg” alt=”Deployment Guide”></a>
 </p>
 
 ---
@@ -24,10 +25,14 @@
 
 This lightweight API convertion service enables you to use various large language models on AWS Bedrock with the Anthropic SDK without any code changes. Through simple environment variable configuration, you can seamlessly switch between different models like Qwen, DeepSeek, and others in tools such as Claude Code and Claude Agent SDK.
 
+> 📝 **AWS Blog**: [Programmatic Tool Calling Agent Using Amazon Bedrock and ECS Docker Sandbox](https://aws.amazon.com/cn/blogs/china/programmatic-tool-calling-agent-using-bedrock-and-ecs-docker-sandbox/)
+
 **Key Advantages:**
 - 🔄 **Zero Code Migration** - Fully compatible with Anthropic API, no code changes required
 - 🚀 **Ready to Use** - Supports all advanced features including streaming/non-streaming, tool calling, and multi-modal content
 - 🤖 **Programmatic Tool Calling** - First proxy service to implement Anthropic-compatible PTC API on Bedrock
+- 🔍 **Dynamic Web Search** - Supports Anthropic `web_search_20250305` / `web_search_20260209` with Claude dynamically writing code to filter search results
+- 🌐 **Web Fetch** - Supports Anthropic `web_fetch_20250910` / `web_fetch_20260209`, fetches web pages and PDFs with no extra API key required
 - 💰 **Cost Optimization** - Flexibly use open-source models on Bedrock to significantly reduce inference costs
 - 🔐 **Enterprise-Grade** - Built-in API key management, rate limiting, usage tracking, and monitoring metrics
 - ☁️ **Cloud-Native** - One-click deployment to AWS ECS with auto-scaling and high availability

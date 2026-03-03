@@ -13,6 +13,7 @@
   <a href="./README.md"><img src="https://img.shields.io/badge/文档-中文-red.svg" alt="中文文档"></a>
   <a href="./README_EN.md"><img src="https://img.shields.io/badge/Docs-English-blue.svg" alt="English Docs"></a>
   <a href="https://mp.weixin.qq.com/s/mW1RNem5zbAlyvLixSFWOw"><img src="https://img.shields.io/badge/📚-技术博客-purple.svg" alt="技术博客"></a>
+  <a href="https://aws.amazon.com/cn/blogs/china/programmatic-tool-calling-agent-using-bedrock-and-ecs-docker-sandbox/"><img src="https://img.shields.io/badge/📝-AWS_Blog-FF9900.svg" alt="AWS Blog"></a>
   <a href="./cdk/DEPLOYMENT.md"><img src="https://img.shields.io/badge/🚀-部署指南-orange.svg" alt="部署指南"></a>
 </p>
 
@@ -23,11 +24,16 @@
 ## 项目简介
 
 这是一个轻量级的 API 转换服务，让你无需修改代码即可在 Anthropic SDK 中使用 AWS Bedrock 上的各种大语言模型。通过简单的环境变量配置，即可在 Claude Code、Claude Agent SDK 等工具中切换使用 Qwen3、DeepSeek 等不同模型。
-![最新公众号文章](./assets/weixin.png)  
+
+> 📝 **AWS 官方博客**：[基于 Amazon Bedrock 与自建 ECS Docker Sandbox 实现 Agent 编程式工具调用（Programmatic Tool Calling）](https://aws.amazon.com/cn/blogs/china/programmatic-tool-calling-agent-using-bedrock-and-ecs-docker-sandbox/)
+
+![最新公众号文章](./assets/weixin.png)
 **核心优势：**
 - 🔄 **零代码迁移** - 完全兼容 Anthropic API，无需修改现有代码
 - 🚀 **开箱即用** - 支持流式/非流式响应、工具调用、多模态等所有高级特性
 - 🤖 **Programmatic Tool Calling** - 业界首个在 Bedrock 上实现 Anthropic 兼容 PTC API 的代理服务
+- 🔍 **Dynamic Web Search** - 支持 Anthropic `web_search_20250305` / `web_search_20260209`，Claude 可动态编写代码过滤搜索结果
+- 🌐 **Web Fetch** - 支持 Anthropic `web_fetch_20250910` / `web_fetch_20260209`，无需额外 API Key 即可抓取网页与 PDF 内容
 - 💰 **成本优化** - 灵活使用 Bedrock 上的开源模型，显著降低推理成本
 - 🔐 **企业级** - 内置 API 密钥管理、速率限制、使用追踪和监控指标
 - ☁️ **云原生** - 一键部署到 AWS ECS，自动扩展，高可用架构

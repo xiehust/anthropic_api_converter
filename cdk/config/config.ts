@@ -66,6 +66,11 @@ export interface EnvironmentConfig {
   webSearchMaxResults?: number;            // Max results per search (default: 5)
   webSearchDefaultMaxUses?: number;        // Max searches per request (default: 10)
 
+  // Web Fetch Configuration
+  enableWebFetch: boolean;
+  webFetchDefaultMaxUses?: number;         // Max fetches per request (default: 20)
+  webFetchDefaultMaxContentTokens?: number; // Max content tokens per fetch (default: 100000)
+
   // Cache TTL Configuration
   defaultCacheTtl?: string;                // Proxy-level default cache TTL ('5m' or '1h')
 
@@ -159,6 +164,11 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     // webSearchMaxResults: 5,
     // webSearchDefaultMaxUses: 10,
 
+    // Web Fetch (enabled by default, uses httpx direct fetch — no API key needed)
+    enableWebFetch: true,
+    // webFetchDefaultMaxUses: 20,
+    // webFetchDefaultMaxContentTokens: 100000,
+
     // Cache TTL (set via env var: DEFAULT_CACHE_TTL)
     // defaultCacheTtl: '1h',
 
@@ -249,6 +259,11 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     // webSearchApiKey: 'tvly-xxx',
     // webSearchMaxResults: 5,
     // webSearchDefaultMaxUses: 10,
+
+    // Web Fetch (enabled by default, uses httpx direct fetch — no API key needed)
+    enableWebFetch: true,
+    // webFetchDefaultMaxUses: 20,
+    // webFetchDefaultMaxContentTokens: 100000,
 
     // Cache TTL (set via env var: DEFAULT_CACHE_TTL)
     // defaultCacheTtl: '1h',
@@ -359,6 +374,11 @@ export function getConfig(environmentName: string = 'dev'): EnvironmentConfig {
     ? process.env.ENABLE_WEB_SEARCH.toLowerCase() === 'true'
     : config.enableWebSearch;
 
+  // Override Web Fetch settings from environment variables
+  const enableWebFetch = process.env.ENABLE_WEB_FETCH
+    ? process.env.ENABLE_WEB_FETCH.toLowerCase() === 'true'
+    : config.enableWebFetch;
+
   return {
     ...config,
     platform,
@@ -367,6 +387,7 @@ export function getConfig(environmentName: string = 'dev'): EnvironmentConfig {
     enablePtc,
     enableTracing,
     enableWebSearch,
+    enableWebFetch,
     ...(process.env.OTEL_EXPORTER_OTLP_ENDPOINT && { otelExporterEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT }),
     ...(process.env.OTEL_EXPORTER_OTLP_PROTOCOL && { otelExporterProtocol: process.env.OTEL_EXPORTER_OTLP_PROTOCOL }),
     ...(process.env.OTEL_EXPORTER_OTLP_HEADERS && { otelExporterHeaders: process.env.OTEL_EXPORTER_OTLP_HEADERS }),
@@ -377,6 +398,8 @@ export function getConfig(environmentName: string = 'dev'): EnvironmentConfig {
     ...(process.env.WEB_SEARCH_API_KEY && { webSearchApiKey: process.env.WEB_SEARCH_API_KEY }),
     ...(process.env.WEB_SEARCH_MAX_RESULTS && { webSearchMaxResults: parseInt(process.env.WEB_SEARCH_MAX_RESULTS) }),
     ...(process.env.WEB_SEARCH_DEFAULT_MAX_USES && { webSearchDefaultMaxUses: parseInt(process.env.WEB_SEARCH_DEFAULT_MAX_USES) }),
+    ...(process.env.WEB_FETCH_DEFAULT_MAX_USES && { webFetchDefaultMaxUses: parseInt(process.env.WEB_FETCH_DEFAULT_MAX_USES) }),
+    ...(process.env.WEB_FETCH_DEFAULT_MAX_CONTENT_TOKENS && { webFetchDefaultMaxContentTokens: parseInt(process.env.WEB_FETCH_DEFAULT_MAX_CONTENT_TOKENS) }),
     ...(process.env.DEFAULT_CACHE_TTL && { defaultCacheTtl: process.env.DEFAULT_CACHE_TTL }),
   };
 }

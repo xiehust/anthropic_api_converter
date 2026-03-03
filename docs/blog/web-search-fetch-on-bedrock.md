@@ -432,3 +432,184 @@ def _to_server_tool_id(original_id: str) -> str:
 转换仅针对 Proxy 拦截的工具（`web_search` 和 `bash_code_execution`），用户自定义工具的 `tool_use` 块不受影响，原样透传给客户端。这确保了客户端在区分服务端托管工具与自定义工具时，能够沿用与 Anthropic 官方 API 完全一致的判断逻辑（检查 `type` 字段或 `id` 前缀）。
 
 此外，`srvtoolu_` 前缀在客户端发回的 `tool_result` 中也必须保持一致——Proxy 在构建下一轮 Bedrock 请求时，会将 `srvtoolu_` ID 还原为 `toolu_` ID，确保 Bedrock 端的上下文连续性。
+
+---
+
+## 四、Web Fetch 实现
+
+Web Fetch 的实现完全遵循 Web Search 的 Agentic Loop 模式，共享工具替换、Tool ID 转换、引用系统和 Dynamic Filtering 沙箱等核心机制——这些机制在第三节已有详细介绍，本节不再重复。Web Fetch 与 Web Search 同属 Server-Managed Tool，两者的 Proxy 编排逻辑在结构上高度一致：都在请求入口处将客户端声明的工具类型替换为 Bedrock 可识别的标准 tool definition，都通过相同的 Agentic Loop 驱动多轮推理，都在响应组装阶段进行 Tool ID 前缀转换和引用后处理。本节仅聚焦 Web Fetch 与 Web Search 之间的**差异点**，帮助读者快速掌握两者的区别，而不必重复阅读已覆盖的共性设计。Web Fetch 的核心差异体现在四个方面：替换为不同的 tool definition、使用面向单 URL 抓取的独立提供商体系、结果格式采用文档块（document block）嵌套结构，以及在执行 HTTP 请求前增加前置域名检查。
+
+### 4.1 工具替换差异
+
+Web Search 和 Web Fetch 的工具替换遵循相同的逻辑，但替换目标不同。Web Search 将 `type: "web_search_20250305"` 或 `type: "web_search_20260209"` 的服务端工具声明替换为接受 `query` 参数的标准 tool definition；Web Fetch 则将 `type: "web_fetch_20250910"` 或 `type: "web_fetch_20260209"` 替换为接受 `url` 参数的标准 tool definition。
+
+**Web Search 替换后的 tool definition：**
+
+```json
+{
+  "name": "web_search",
+  "description": "Search the web for current information. Returns search results with titles, URLs, and content snippets.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {"type": "string", "description": "The search query"}
+    },
+    "required": ["query"]
+  }
+}
+```
+
+**Web Fetch 替换后的 tool definition：**
+
+```json
+{
+  "name": "web_fetch",
+  "description": "Fetch the content of a specific URL. Returns the full page content as plain text.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "url": {"type": "string", "description": "The URL to fetch"}
+    },
+    "required": ["url"]
+  }
+}
+```
+
+这一差异直接决定了 Claude 生成工具调用时使用的参数字段：Web Search 的工具调用 input 中包含 `query` 字段，Web Fetch 的工具调用 input 中包含 `url` 字段。Agentic Loop 在检测工具调用时，也通过工具名称（`web_search` 或 `web_fetch`）来区分并路由到对应的执行逻辑。
+
+### 4.2 Fetch 提供商
+
+与 Web Search 的 `SearchProvider` 体系类似，Web Fetch 通过抽象基类 `FetchProvider` 统一封装不同的 URL 抓取后端，使 Agentic Loop 与具体抓取实现解耦。
+
+```python
+class FetchProvider(ABC):
+    @abstractmethod
+    async def fetch(
+        self,
+        url: str,
+        max_content_tokens: int = 10000,
+    ) -> FetchResult:
+        """抓取指定 URL 的内容，返回标准化的 FetchResult"""
+        pass
+```
+
+目前提供两种实现：`HttpxFetchProvider`（默认）和 `TavilyFetchProvider`。
+
+#### HttpxFetchProvider（默认，无需 API Key）
+
+`HttpxFetchProvider` 是 Web Fetch 功能的默认实现，**无需任何外部 API Key**，直接使用 Python 标准生态完成 URL 抓取与内容提取，是零依赖部署的首选方案。
+
+核心处理流程分为三个阶段：
+
+**阶段一：URL 验证**
+
+在发出任何网络请求前，首先对目标 URL 进行格式检查：必须以 `http://` 或 `https://` 开头，且总长度不超过 250 个字符。不合法的 URL 在此阶段即被拒绝，避免无效的网络请求。
+
+**阶段二：HTTP 请求**
+
+使用 `httpx.AsyncClient` 发起 GET 请求，配置 `follow_redirects=True` 以自动处理 301/302 等跳转，并设置合理的超时时间。响应的 `Content-Type` 头部决定后续的内容处理策略。
+
+**阶段三：内容处理（按 Content-Type 分支）**
+
+| Content-Type | 处理策略 |
+|-------------|---------|
+| `text/html` | 完整 HTML 解析管道（见下文） |
+| `application/pdf` | base64 编码后作为二进制数据返回 |
+| `text/*`、`application/json`、`text/csv` | 直接返回原始文本 |
+
+针对 HTML 页面，Proxy 执行以下清洗管道，将 HTML 转换为适合 Claude 阅读的纯文本：
+
+1. 提取 `<title>` 标签内容，作为文档标题
+2. 移除所有 `<script>` 和 `<style>` 标签及其内容（避免代码噪音）
+3. 移除 HTML 注释（`<!-- ... -->`）
+4. 将块级元素（`<p>`、`<br>`、`<div>`、`<h1>`–`<h6>`、`<li>`）转换为换行符，保留文档的段落结构
+5. 移除所有剩余 HTML 标签
+6. 解码 HTML 实体（`&amp;` → `&`、`&lt;` → `<` 等）
+7. 压缩连续空白（多个空行合并为单个空行）
+
+清洗后的纯文本按 `max_content_tokens` 参数进行截断，确保内容长度不超过 Claude 的上下文窗口限制，避免单次抓取消耗过多 Token。
+
+`HttpxFetchProvider` 的核心优势在于**零外部依赖**——整个抓取和清洗流程仅依赖 Python 标准库和 `httpx`，无需注册任何第三方服务或配置 API Key，部署门槛极低。
+
+#### TavilyFetchProvider（可选，需付费 API Key）
+
+`TavilyFetchProvider` 调用 Tavily 的 Extract API（`/extract` 端点），由 Tavily 服务端负责完整的网页内容提取。与 `HttpxFetchProvider` 相比，Tavily 对 JavaScript 渲染页面和反爬机制有更好的兼容性，适用于需要处理动态内容的场景。但该方案需要 Tavily 的付费 API Key，且引入了外部服务依赖。
+
+#### 工厂函数
+
+`create_fetch_provider()` 根据环境变量选择具体实现，默认使用 `HttpxFetchProvider`，当环境变量 `WEB_FETCH_PROVIDER` 设置为 `"tavily"` 时切换为 `TavilyFetchProvider`：
+
+```python
+def create_fetch_provider() -> FetchProvider:
+    if settings.web_fetch_provider == "tavily":
+        return TavilyFetchProvider(api_key=settings.tavily_api_key)
+    return HttpxFetchProvider()  # 默认：无需 API Key
+```
+
+### 4.3 结果格式差异
+
+Web Search 和 Web Fetch 向 Claude 注入的工具结果（`tool_result`）在结构上存在显著差异，这是由两者截然不同的数据特性决定的：Web Search 返回多条摘要，Web Fetch 返回单个 URL 的完整内容。
+
+#### 格式对比
+
+| 特性 | Web Search | Web Fetch |
+|------|-----------|-----------|
+| `content` 类型 | `List[web_search_result]`（数组，每条结果对应一个对象） | 单个 `web_fetch_result` 对象 |
+| 内容字段 | `encrypted_content`（Base64 编码的加密内容） | `source.data`（纯文本或 Base64 编码的 PDF） |
+| 额外元数据 | `page_age`（页面发布时间估计） | `retrieved_at`（实际抓取时间戳）、`source.media_type` |
+| 文档结构 | 扁平结构，每条结果直接包含内容字段 | 嵌套结构：`content.source`（document block） |
+
+Web Fetch 的结果采用 Anthropic document block 格式，将页面内容包裹在 `content.source` 层级中，与 Anthropic 官方 API 的 `web_fetch_tool_result` 类型完全对应。以下是一个完整的结果示例：
+
+```json
+{
+  "type": "web_fetch_tool_result",
+  "tool_use_id": "srvtoolu_01Abc...",
+  "content": {
+    "type": "web_fetch_result",
+    "url": "https://docs.python.org/3/whatsnew/3.13.html",
+    "retrieved_at": "2026-03-03T08:30:00Z",
+    "content": {
+      "type": "document",
+      "source": {
+        "type": "text",
+        "media_type": "text/plain",
+        "data": "What's New In Python 3.13\n..."
+      },
+      "title": "What's New in Python 3.13"
+    }
+  }
+}
+```
+
+对于 PDF 内容，`source.type` 变为 `"base64"`，`media_type` 为 `"application/pdf"`，`data` 字段包含 base64 编码后的 PDF 二进制数据，Claude 可直接解析 PDF 文档内容。
+
+### 4.4 域名检查差异
+
+Web Search 和 Web Fetch 在域名过滤的时机和方式上存在重要区别，这一差异源于两者访问网络的方式不同。
+
+**Web Search 的域名过滤**发生在搜索完成之后：Proxy 将 `allowed_domains` 和 `blocked_domains` 配置传入搜索提供商（如 Tavily 原生支持域名参数），搜索完成后再通过 `DomainFilter` 对返回的结果列表进行二次过滤，剔除不符合域名规则的条目。整个过滤过程属于**后处理**——网络请求已经发出，只是对结果做筛选。
+
+**Web Fetch 增加了前置域名检查**：在执行 HTTP 请求之前，Proxy 首先解析目标 URL 的域名，并与 `allowed_domains` 和 `blocked_domains` 规则进行比对。如果目标域名不在白名单内（或在黑名单中），请求将被立即拒绝，**不会发出任何网络请求**，并向 Claude 返回一条域名被阻止的错误提示。
+
+这一设计的原因在于两者的风险模型不同：Web Search 的目标是关键词查询，搜索提供商可以自行决定返回哪些来源；而 Web Fetch 是直接访问用户（或 Claude）指定的具体 URL，如果不加前置检查，Proxy 可能被用来访问内网地址、敏感端点或被明确禁止的外部域名，因此需要更严格的入口控制。前置检查将安全边界前移至网络请求发出之前，是 Web Fetch 安全模型的重要组成部分。
+
+### 4.5 引用类型差异
+
+Web Search 和 Web Fetch 虽然共享相同的三步引用机制（系统提示注入 → 结果编号与注册 → `[N]` 标记后处理），但两者最终生成的 citation 对象类型不同，对应 Anthropic 官方 API 中两种不同的引用定位方式。
+
+**Web Search 的引用类型**为 `web_search_result_location`，包含以下字段：
+- `url`：来源页面的完整 URL
+- `title`：页面标题
+- `encrypted_index`：结果编号的 Base64 编码（如 `"MQ=="` 对应编号 1）
+- `cited_text`：被引用的具体文本片段（取来源内容的前 150 个字符）
+
+**Web Fetch 的引用类型**为 `char_location`，包含以下字段：
+- `document_index`：文档索引（从 0 开始，对应第几个 web_fetch_result）
+- `start_char_index`：引用文本在文档中的起始字符位置
+- `end_char_index`：引用文本在文档中的结束字符位置
+- `document_title`：文档标题
+
+`char_location` 类型反映了 Web Fetch 的内容特性：由于 Web Fetch 抓取的是完整的单个文档，Claude 可以对文档内容进行精确的字符级定位，而不是模糊地指向某条搜索摘要。这种细粒度的引用方式对于需要精确溯源的长文档场景尤为有价值。
+
+两种引用类型均通过相同的 `_post_process_citations()` 后处理逻辑生成，区别仅在于构建最终 citation 对象时调用不同的工厂函数：Web Search 调用 `build_web_search_citation()`，Web Fetch 调用 `build_char_location_citation()`。上层 Agentic Loop 代码无需感知这一差异，引用类型的选择由各自的 Service 类在初始化时通过依赖注入确定。

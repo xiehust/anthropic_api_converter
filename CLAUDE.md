@@ -8,6 +8,11 @@ This is an **Anthropic-Bedrock API Proxy** - a FastAPI service that translates b
 
 **Key Insight**: The service is bidirectional translation middleware. Requests flow through: Anthropic format → Bedrock format → Bedrock API → Bedrock response → Anthropic format.
 
+## Git Policy
+
+- **Direct pushes to `main` are blocked** by branch protection rules. All changes must go through a pull request.
+- Always create a feature/fix branch, push it, and create a PR via `gh pr create`.
+
 ## Development Setup
 
 ### Installation & Environment

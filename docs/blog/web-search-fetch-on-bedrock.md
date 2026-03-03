@@ -55,3 +55,90 @@ Web Fetch 同样提供标准版（`web_fetch_20250910`）和增强版（`web_fet
 AWS Bedrock 的 InvokeModel API 在工具调用方面采用了标准的 tool definition 格式，即每个工具必须包含 `name`、`description` 和 `input_schema` 字段。对于 Anthropic 特有的 server-managed tool 声明（如 `type: "web_search_20250305"`），Bedrock **无法识别**，请求会被直接拒绝并返回验证错误。
 
 这意味着，即使底层使用的是同一个 Claude 模型，通过 Bedrock 调用时也无法直接使用 Web Search 和 Web Fetch 这两项能力。这正是本文要解决的核心问题：**如何在 Proxy 层弥补这一差距，让 Bedrock 上的 Claude 也能具备实时搜索和网页抓取能力**。
+
+---
+
+## 二、整体架构概览
+
+### 2.1 核心思路
+
+Proxy 作为中间层，拦截包含 server-managed tool 声明的请求，将 Bedrock 无法识别的工具类型（如 `type: "web_search_20250305"`）替换为标准的 tool definition（包含 `name`、`description`、`input_schema` 字段），再通过 **Agentic Loop（代理循环）** 自行编排搜索或抓取的执行过程——包括调用 Bedrock 获取模型指令、调用外部搜索/抓取提供商获取真实数据，以及将结果注入对话上下文后继续推理——最终将整个多轮执行过程的最终结果组装为与 Anthropic 官方 API **完全一致的响应格式**，对客户端完全透明。
+
+### 2.2 架构总览
+
+```mermaid
+flowchart TD
+    A["客户端\n(Anthropic Python SDK)"] -->|"包含 web_search /\nweb_fetch 工具的请求"| B
+
+    subgraph Proxy["Proxy 服务层"]
+        B["API 路由层\napp/api/messages.py\n检测 server-managed tools"] --> C{工具类型?}
+
+        C -->|"web_search_20250305\nweb_search_20260209"| D["WebSearchService\nAgentic Loop"]
+        C -->|"web_fetch_20250910\nweb_fetch_20260209"| E["WebFetchService\nAgentic Loop"]
+
+        subgraph SearchLoop["Web Search Agentic Loop"]
+            D --> D1["调用 Bedrock InvokeModel\n(标准 tool definition)"]
+            D1 --> D2{Claude 发起\n工具调用?}
+            D2 -->|是| D3["调用搜索提供商\nTavily / Brave API"]
+            D3 --> D4["将搜索结果注入\n对话上下文"]
+            D4 --> D1
+            D2 -->|否 (最终回答)| D5["组装 Anthropic\n格式响应"]
+        end
+
+        subgraph FetchLoop["Web Fetch Agentic Loop"]
+            E --> E1["调用 Bedrock InvokeModel\n(标准 tool definition)"]
+            E1 --> E2{Claude 发起\n工具调用?}
+            E2 -->|是| E3["调用抓取提供商\nHttpx / Tavily API"]
+            E3 --> E4["将抓取内容注入\n对话上下文"]
+            E4 --> E1
+            E2 -->|否 (最终回答)| E5["组装 Anthropic\n格式响应"]
+        end
+    end
+
+    D5 -->|"SSE 流式响应\n(Anthropic 格式)"| A
+    E5 -->|"SSE 流式响应\n(Anthropic 格式)"| A
+```
+
+### 2.3 关键设计决策
+
+**1. 客户端透明**
+
+使用 Anthropic Python SDK 的客户端无需任何代码修改。Proxy 对外暴露与 Anthropic 官方 API 完全相同的端点和响应格式，包括流式事件类型、引用（citation）字段结构以及 `stop_reason` 语义，使得现有代码可以零改动迁移至 Bedrock。
+
+**2. 工具替换策略**
+
+将 server-managed tool（如 `type: "web_search_20250305"`）替换为标准的 tool definition（包含 `name`、`description`、`input_schema` 三个字段），让 Bedrock InvokeModel API 能正常处理请求。Claude 模型本身理解这些工具的语义，因此仅凭标准定义即可正确生成工具调用指令，无需修改模型行为。
+
+**3. 混合流式架构**
+
+内部对 Bedrock 的调用始终使用**非流式模式**——这是 Agentic Loop 正确运行的前提，因为只有在获得完整响应后，才能判断 Claude 是否发起了工具调用，进而决定是执行工具并继续推理，还是返回最终结果。对外则通过 **SSE（Server-Sent Events）** 逐步向客户端发送最终结果，兼顾了内部编排的可靠性与用户的实时感知体验。
+
+### 2.4 支持的工具版本
+
+| 工具类型 | 类型标识 | 特性 |
+|---------|---------|------|
+| Web Search 标准版 | `web_search_20250305` | Web 搜索 + 引用 |
+| Web Search 增强版 | `web_search_20260209` | 搜索 + Dynamic Filtering |
+| Web Fetch 标准版 | `web_fetch_20250910` | URL 抓取 + 引用 |
+| Web Fetch 增强版 | `web_fetch_20260209` | 抓取 + Dynamic Filtering |
+
+### 2.5 源码目录结构
+
+以下是与 Web Search / Web Fetch 功能相关的核心文件：
+
+```
+app/
+├── api/messages.py                    # API 路由：检测并分发请求
+├── converters/anthropic_to_bedrock.py # 多轮对话格式转换
+├── schemas/
+│   ├── web_search.py                  # Web Search 数据模型
+│   └── web_fetch.py                   # Web Fetch 数据模型
+└── services/
+    ├── web_search_service.py          # Web Search Agentic Loop
+    ├── web_fetch_service.py           # Web Fetch Agentic Loop
+    ├── web_search/
+    │   ├── providers.py               # 搜索提供商 (Tavily/Brave)
+    │   └── domain_filter.py           # 域名过滤
+    └── web_fetch/
+        └── providers.py               # Fetch 提供商 (Httpx/Tavily)
+```

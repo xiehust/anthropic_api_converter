@@ -69,6 +69,14 @@
   - 用户位置本地化：支持基于地理位置的搜索结果优化
   - 动态过滤（`web_search_20260209`）：Claude 可编写代码过滤搜索结果（依赖 Docker sandbox 代码执行，**ECS 部署需使用 EC2 启动类型**）
   - 支持流式和非流式响应
+- **Web 抓取工具**：支持 Anthropic 的 `web_fetch_20250910` 和 `web_fetch_20260209` 工具类型
+  - 代理端服务器工具实现（Bedrock 不原生支持 Web Fetch，由代理拦截并执行）
+  - 默认使用 httpx 直接抓取（**无需额外 API Key**），内置 HTML 转纯文本
+  - 支持 PDF 文档抓取（base64 传递）
+  - 域名过滤：支持 `allowed_domains` 和 `blocked_domains` 配置
+  - 抓取次数限制：通过 `max_uses` 控制；内容长度限制：通过 `max_content_tokens` 控制
+  - 动态过滤（`web_fetch_20260209`）：Claude 可编写代码处理抓取内容（依赖 Docker sandbox，**ECS 部署需使用 EC2 启动类型**）
+  - 支持流式和非流式响应
 
 ### 基础设施
 - **身份验证**：基于 API 密钥的身份验证，使用 DynamoDB 存储
@@ -655,6 +663,9 @@ ENABLE_WEB_SEARCH=true \
 WEB_SEARCH_PROVIDER=tavily \
 WEB_SEARCH_API_KEY=tvly-your-api-key \
 ./scripts/deploy.sh -e prod -r us-west-2 -p arm64 -l ec2
+
+# Web Fetch 默认启用，无需额外 API Key（使用 httpx 直接抓取）
+# 如需关闭：ENABLE_WEB_FETCH=false
 ```
 
 这将部署：
@@ -1030,6 +1041,65 @@ curl http://localhost:8000/health/web-search
 # 返回: {"status": "healthy", "provider": "tavily", "enabled": true, ...}
 ```
 
+#### Web Fetch 配置
+
+Web Fetch 工具允许 Claude 主动抓取指定 URL 的完整页面内容（与 Web Search 搜索关键词不同）。
+
+```bash
+# Web Fetch 默认启用，使用 httpx 直接抓取（无需 API Key）
+ENABLE_WEB_FETCH=True
+
+# 默认最大抓取次数
+WEB_FETCH_DEFAULT_MAX_USES=20
+
+# 默认最大内容 token 数
+WEB_FETCH_DEFAULT_MAX_CONTENT_TOKENS=100000
+```
+
+**使用示例：**
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-your-api-key",
+    base_url="http://localhost:8000"
+)
+
+# 使用 web_fetch 工具
+message = client.messages.create(
+    model="claude-sonnet-4-5-20250929",
+    max_tokens=4096,
+    tools=[
+        {
+            "type": "web_fetch_20250910",
+            "name": "web_fetch",
+            "max_uses": 5,
+            "max_content_tokens": 50000,
+        }
+    ],
+    messages=[{"role": "user", "content": "请抓取 https://docs.python.org/3/whatsnew/3.13.html 并总结主要新特性"}],
+    extra_headers={"anthropic-beta": "web-fetch-2025-09-10"},
+)
+```
+
+**Web Search vs Web Fetch 对比：**
+
+| 维度 | Web Search | Web Fetch |
+|------|-----------|-----------|
+| **输入** | 搜索关键词（`query`） | 具体 URL（`url`） |
+| **输出** | 多条搜索结果摘要 | 单个 URL 的完整页面内容 |
+| **Provider** | Tavily / Brave（需 API Key） | httpx 直接抓取（默认，**无需 Key**） |
+| **PDF 支持** | 无 | 有（base64 传递） |
+| **默认 max_uses** | 10 | 20 |
+
+**工具类型对比：**
+
+| 工具类型 | 说明 | 需要 Docker |
+|---------|------|------------|
+| `web_fetch_20250910` | 基础 URL 抓取 | 否 |
+| `web_fetch_20260209` | 动态过滤（Claude 可编写代码处理抓取内容） | **是**（依赖 Docker sandbox，ECS 需使用 EC2 启动类型） |
+
 #### Programmatic Tool Calling (PTC) 配置
 ```bash
 # PTC 功能开关（需要 Docker）
@@ -1286,13 +1356,17 @@ anthropic_api_proxy/
 │   ├── schemas/          # Pydantic 模型
 │   │   ├── anthropic.py  # Anthropic API 模式
 │   │   ├── bedrock.py    # Bedrock API 模式
-│   │   └── web_search.py # Web 搜索工具模型
+│   │   ├── web_search.py # Web 搜索工具模型
+│   │   └── web_fetch.py  # Web 抓取工具模型
 │   ├── services/         # 业务逻辑
 │   │   ├── bedrock_service.py
 │   │   ├── web_search_service.py  # Web 搜索编排服务
-│   │   └── web_search/            # 搜索提供商模块
-│   │       ├── providers.py       # Tavily/Brave 搜索实现
-│   │       └── domain_filter.py   # 域名过滤
+│   │   ├── web_search/            # 搜索提供商模块
+│   │   │   ├── providers.py       # Tavily/Brave 搜索实现
+│   │   │   └── domain_filter.py   # 域名过滤
+│   │   ├── web_fetch_service.py   # Web 抓取编排服务
+│   │   └── web_fetch/             # 抓取提供商模块
+│   │       └── providers.py       # Httpx/Tavily 抓取实现
 │   ├── tracing/          # OpenTelemetry 分布式追踪
 │   │   ├── provider.py   # TracerProvider 初始化和导出器配置
 │   │   ├── middleware.py  # 请求根 Span 中间件

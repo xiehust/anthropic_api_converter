@@ -68,7 +68,7 @@ Proxy 作为中间层，拦截包含 server-managed tool 声明的请求，将 B
 
 ```mermaid
 flowchart TD
-    A["客户端\n(Anthropic Python SDK)"] -->|"包含 web_search /\nweb_fetch 工具的请求"| B
+    A["客户端 - Anthropic Python SDK"] -->|"包含 web_search /\nweb_fetch 工具的请求"| B
 
     subgraph Proxy["Proxy 服务层"]
         B["API 路由层\napp/api/messages.py\n检测 server-managed tools"] --> C{工具类型?}
@@ -77,26 +77,26 @@ flowchart TD
         C -->|"web_fetch_20250910\nweb_fetch_20260209"| E["WebFetchService\nAgentic Loop"]
 
         subgraph SearchLoop["Web Search Agentic Loop"]
-            D --> D1["调用 Bedrock InvokeModel\n(标准 tool definition)"]
+            D --> D1["调用 Bedrock InvokeModel\n- 标准 tool definition"]
             D1 --> D2{Claude 发起\n工具调用?}
-            D2 -->|是| D3["调用搜索提供商\nTavily / Brave API"]
+            D2 -->|"是"| D3["调用搜索提供商\nTavily / Brave API"]
             D3 --> D4["将搜索结果注入\n对话上下文"]
             D4 --> D1
-            D2 -->|否 (最终回答)| D5["组装 Anthropic\n格式响应"]
+            D2 -->|"否 - 最终回答"| D5["组装 Anthropic\n格式响应"]
         end
 
         subgraph FetchLoop["Web Fetch Agentic Loop"]
-            E --> E1["调用 Bedrock InvokeModel\n(标准 tool definition)"]
+            E --> E1["调用 Bedrock InvokeModel\n- 标准 tool definition"]
             E1 --> E2{Claude 发起\n工具调用?}
-            E2 -->|是| E3["调用抓取提供商\nHttpx / Tavily API"]
+            E2 -->|"是"| E3["调用抓取提供商\nHttpx / Tavily API"]
             E3 --> E4["将抓取内容注入\n对话上下文"]
             E4 --> E1
-            E2 -->|否 (最终回答)| E5["组装 Anthropic\n格式响应"]
+            E2 -->|"否 - 最终回答"| E5["组装 Anthropic\n格式响应"]
         end
     end
 
-    D5 -->|"SSE 流式响应\n(Anthropic 格式)"| A
-    E5 -->|"SSE 流式响应\n(Anthropic 格式)"| A
+    D5 -->|"SSE 流式响应 - Anthropic 格式"| A
+    E5 -->|"SSE 流式响应 - Anthropic 格式"| A
 ```
 
 ### 2.3 关键设计决策

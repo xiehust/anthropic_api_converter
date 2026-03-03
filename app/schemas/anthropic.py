@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.web_search import WebSearchToolResultContent
+from app.schemas.web_fetch import WebFetchToolResultContent
 
 
 # Content Block Types
@@ -206,6 +207,8 @@ ContentBlock = Union[
     TextEditorCodeExecutionToolResult,
     # Web search result types
     WebSearchToolResultContent,
+    # Web fetch result types
+    WebFetchToolResultContent,
 ]
 
 

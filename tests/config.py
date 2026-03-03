@@ -23,9 +23,9 @@ else:
         print(f"Warning: tests/.env not found, using .env.example")
 
 # Configuration values
-API_KEY = os.getenv("API_KEY", "sk-test-key")
-BASE_URL = os.getenv("BASE_URL", "http://localhost:8002")
+API_KEY = os.getenv("API_KEY")
+BASE_URL = os.getenv("BASE_URL")
 MODEL_ID = os.getenv("MODEL_ID", "claude-sonnet-4-5-20250929")
-
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 # Aliases for compatibility
 PROXY_BASE_URL = BASE_URL

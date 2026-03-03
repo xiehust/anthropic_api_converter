@@ -31,9 +31,9 @@ print("=" * 60)
 print("Test 1: Non-streaming PTC (code calling external tool)")
 print("=" * 60)
 
-response1 = client.beta.messages.create(
+response1 = client.messages.create(
     model="claude-sonnet-4-5-20250929",
-    betas=["advanced-tool-use-2025-11-20"],
+    # betas=["advanced-tool-use-2025-11-20"],
     max_tokens=4096,
     messages=[{
         "role": "user",

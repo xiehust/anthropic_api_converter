@@ -691,6 +691,33 @@ class AnthropicToBedrockConverter:
                             }
                         }
                     )
+                elif block_type == "web_fetch_tool_result":
+                    # Handle web fetch results in multi-turn: convert to toolResult
+                    wf_content = block.get("content", {})
+                    if isinstance(wf_content, dict):
+                        wf_type = wf_content.get("type", "")
+                        if wf_type == "web_fetch_result":
+                            doc = wf_content.get("content", {})
+                            source = doc.get("source", {})
+                            data = source.get("data", "")
+                            title = doc.get("title", "")
+                            url = wf_content.get("url", "")
+                            result_text = f"Title: {title}\nURL: {url}\nContent: {data}"
+                        elif wf_type == "web_fetch_tool_error":
+                            result_text = f"Error: {wf_content.get('error_code', 'unknown')}"
+                        else:
+                            result_text = str(wf_content)
+                    else:
+                        result_text = str(wf_content)
+                    bedrock_content.append(
+                        {
+                            "toolResult": {
+                                "toolUseId": block.get("tool_use_id", ""),
+                                "content": [{"text": result_text}],
+                                "status": "success",
+                            }
+                        }
+                    )
                 elif block_type == "tool_use":
                     bedrock_content.append(
                         {

@@ -730,16 +730,17 @@ if __name__ == "__main__":
     parser.add_argument("--dynamic-location", action="store_true", help="Run dynamic filtering + user_location test")
     parser.add_argument("--multi-turn-dynamic", action="store_true", help="Run multi-turn dynamic filtering test")
     parser.add_argument("--all", action="store_true", help="Run all tests")
-    parser.add_argument("--official", action="store_false", help="Run all tests")
+    parser.add_argument("--official", action="store_true", help="Run all tests")
     args = parser.parse_args()
+    print(args)
 
-
-    if args.official:
-        print("===========use proxy api===========")
-        client = Anthropic(api_key=API_KEY, base_url=BASE_URL)
-    else:
+    if  args.official:
         print("===========use anthropic official api===========")
         client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    else:
+        print("===========use proxy api===========")
+        client = Anthropic(api_key=API_KEY, base_url=BASE_URL)
+
 
     # If no specific flag, run basic non-stream + stream
     any_specific = (

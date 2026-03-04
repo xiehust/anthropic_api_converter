@@ -55,10 +55,10 @@ def run_web_fetch(version: str, url: str, stream: bool, citations: bool,official
     messages = [
         {
             "role": "user",
-            "content": f"Please fetch the content at {url} and count how many times 'hammer' appears",
+            "content": f"Please fetch the content at {url} and find which 3 words have the highest frequency?",
         }
     ]
-
+    print(f"Input:{messages}")
     if stream:
         print("--- Streaming Response ---")
         with client.messages.stream(

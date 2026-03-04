@@ -1071,9 +1071,98 @@ Token 差异不到 1%，属于 Bedrock 与 Anthropic 原生 API 之间 token 计
 
 > **注意**：不同模型在工具调用的指令遵从能力上存在差异。Claude 对 `[N]` 引用标记的遵从率最高，Qwen3-Coder 和 Kimi K2.5 也表现良好，而部分较小的模型可能偶尔遗漏引用标记。Dynamic Filtering 的代码生成质量同样因模型而异——Claude 和 Qwen3-Coder 生成的 Python 代码通常更健壮。
 
-### 6.5 对比结论
+### 6.5 Dynamic Filtering vs 传统 Agent 模式：精确性对比
 
-综合 Web Search、Web Fetch 与 Anthropic 官方 API 的直接对比（6.2、6.3），以及跨模型兼容性验证（6.4），总结如下：
+前面几节验证了 Proxy 与 Anthropic 官方 API 的格式兼容性。本节从另一个角度验证 Dynamic Filtering 的实际价值：**当任务涉及精确数值计算时，代码执行与纯 LLM 推理之间的差距有多大？**
+
+#### 测试设计
+
+我们使用**相同的模型**（`claude-sonnet-4-6`）、**相同的 URL**（`https://httpbin.org/html`，Herman Melville《Moby-Dick》节选）和**相同的 Prompt**，分别通过两种方式执行：
+
+| 维度 | Dynamic Filtering (Proxy) | Traditional Agent (Strands SDK + Tavily MCP) |
+|------|--------------------------|----------------------------------------------|
+| **框架** | Anthropic SDK + Proxy `web_fetch_20260209` | Strands Agent SDK + Tavily MCP Server |
+| **抓取方式** | Proxy 内置 httpx 直接抓取 | Tavily `tavily_extract` API |
+| **分析方式** | Claude 编写 Python 代码（`Counter`）精确计算 | Claude 纯 LLM 推理估算 |
+| **模型** | `claude-sonnet-4-6` (via Bedrock) | `claude-sonnet-4-6` (via Bedrock) |
+
+**Prompt：** *"Please fetch the content at https://httpbin.org/html and find which 3 words have the highest frequency?"*
+
+#### Dynamic Filtering 的执行过程
+
+Claude 在获取抓取内容后，自动选择调用 `bash_code_execution` 编写 Python 代码进行分析：
+
+```python
+import re
+from collections import Counter
+
+text = '''Herman Melville - Moby-Dick ...'''
+
+words = re.findall(r"[a-z']+", text.lower())
+freq = Counter(words)
+print('Top 10 most frequent words:')
+for word, count in freq.most_common(10):
+    print(f'  {word!r}: {count}')
+```
+
+代码在 Docker 沙箱中执行，输出精确结果：
+
+```
+Top 10 most frequent words:
+  'the': 35
+  'and': 28
+  'of': 22
+  'to': 17
+  'a': 15
+  'his': 14
+  'in': 12
+  'had': 8
+  'old': 6
+  'by': 6
+```
+
+#### Traditional Agent 的执行过程
+
+Strands Agent 通过 Tavily MCP 抓取页面内容后，Claude 直接用 LLM 推理"目测"估算词频，**没有任何代码执行环节**。
+
+#### 结果准确性对比
+
+| 排名 | Dynamic Filtering (代码计算) | Traditional Agent (LLM 推理) | 代码验证的正确值 |
+|------|---------------------------|----------------------------|-----------------|
+| #1 | **"the" = 35** | "the" = 29 ❌ | **35** |
+| #2 | **"and" = 28** | "and" = 22 ❌ | **28** |
+| #3 | **"of" = 22** | "his" = 16 ❌ | **of = 22** |
+
+Traditional Agent 模式的**每个数字都不对**：
+- "the" 少计了 6 次（29 vs 正确值 35，偏差 -17%）
+- "and" 少计了 6 次（22 vs 正确值 28，偏差 -21%）
+- 第三名**整个词都搞错了**——给出 "his" = 16（实际 "his" 仅出现 14 次），而真正的第三名 "of" 出现了 22 次
+
+#### Token 消耗对比
+
+| 指标 | Dynamic Filtering | Traditional Agent |
+|------|------------------|-------------------|
+| **总 Token** | 6,731 (input: 5,442 + output: 1,289) | 6,745 |
+| **工具调用** | `web_fetch` + `bash_code_execution` | `tavily_extract` |
+| **Agentic Loop 轮次** | 3 轮（fetch → code → answer） | 1 轮（fetch → answer） |
+
+两者的 Token 消耗几乎完全相同（6,731 vs 6,745，差异 <0.2%），但结果质量天壤之别。
+
+#### 分析
+
+这一对比清晰地展示了 Dynamic Filtering 的核心价值：
+
+1. **精确性保障**：对于涉及**计数、排序、数值提取、数据对比**等需要精确计算的任务，LLM 的自然语言推理天然不可靠——模型会"数错"、"估错"、甚至遗漏项目。而代码执行是**确定性的**，Python 的 `Counter` 不会数错。
+
+2. **成本中性**：Dynamic Filtering 的额外代码执行轮次并未带来显著的 Token 开销。在本测试中，两种方式的总 Token 消耗几乎相同，但 Dynamic Filtering 用代码执行替代了不可靠的 LLM 数值推理，获得了 100% 的准确率。
+
+3. **自动决策**：Claude 在获取抓取内容后，**自主判断**当前任务适合用代码来完成（而非纯推理），并自动生成了使用 `re` + `Counter` 的分析脚本。开发者无需在 Prompt 中显式要求"写代码分析"——这正是 Anthropic 所描述的 *"Claude behaves like an actual researcher, writing Python to parse, filter, and cross-reference results"*。
+
+> **适用场景提示**：当任务涉及精确数值（词频统计、价格对比、数据提取、排名计算等）时，应优先使用增强版工具（`web_search_20260209` / `web_fetch_20260209`）以启用 Dynamic Filtering。对于纯摘要或内容理解类任务，标准版工具（`web_search_20250305` / `web_fetch_20250910`）已足够。
+
+### 6.6 对比结论
+
+综合 Proxy 与 Anthropic 官方 API 的直接对比（6.2、6.3）、跨模型兼容性验证（6.4）以及 Dynamic Filtering 与传统模式的精确性对比（6.5），总结如下：
 
 | 评估维度 | Web Search (6.2) | Web Fetch + Citations (6.3) |
 |----------|-----------------|---------------------------|
@@ -1084,6 +1173,8 @@ Token 差异不到 1%，属于 Bedrock 与 Anthropic 原生 API 之间 token 计
 | **Citations 格式** | `web_search_result_location` 一致 | `char_location` 一致（字段名/值/拆分策略完全匹配） |
 | **数据准确性** | 提取相同数据，得出相同结论 | 抓取内容逐字节一致，计算结果相同 |
 | **跨模型兼容性** | Qwen3 / Kimi / MiniMax 均通过 | Qwen3 / Kimi / MiniMax 均通过 |
+
+此外，Dynamic Filtering 相比传统的纯 LLM 推理 Agent 模式，在**相同 Token 消耗**下实现了从"每个数字都不对"到"100% 精确"的质量飞跃（6.5 节），验证了代码执行在数值计算场景中的不可替代性。
 
 Proxy 不仅与 Anthropic 官方 API 在功能和格式上完全等价，还将 Web Search 和 Web Fetch 能力**扩展到了 Bedrock 上所有支持工具调用的模型**，打破了这些服务端工具与特定模型提供商的绑定。
 

@@ -8,11 +8,6 @@ This is an **Anthropic-Bedrock API Proxy** - a FastAPI service that translates b
 
 **Key Insight**: The service is bidirectional translation middleware. Requests flow through: Anthropic format → Bedrock format → Bedrock API → Bedrock response → Anthropic format.
 
-## Git Policy
-
-- **Direct pushes to `main` are blocked** by branch protection rules. All changes must go through a pull request.
-- Always create a feature/fix branch, push it, and create a PR via `gh pr create`.
-
 ## Development Setup
 
 ### Installation & Environment
@@ -622,6 +617,122 @@ Bedrock's standard `toolSpec` doesn't support `inputExamples`. When the `tool-ex
 - To add more beta header mappings, update `BETA_HEADER_MAPPING` in config
 - To enable for more models, add model IDs to `BETA_HEADER_SUPPORTED_MODELS`
 
+### Web Search Tool
+
+The proxy implements Anthropic's `web_search_20250305` and `web_search_20260209` server tools. Bedrock doesn't natively support these, so the proxy intercepts and executes them.
+
+**How it works:**
+1. Client sends request with a web search tool (e.g., `{"type": "web_search_20250305", "name": "web_search"}`)
+2. Proxy detects the tool, removes it from tools sent to Bedrock, and injects a regular tool definition
+3. When Bedrock (Claude) calls the search tool, the proxy intercepts the tool_use response
+4. Proxy executes the search via Tavily or Brave, builds a tool_result with search results
+5. Proxy sends the tool_result back to Bedrock in a multi-turn agentic loop (up to 25 iterations)
+6. Supports hybrid streaming: non-streaming Bedrock calls but emits SSE events per iteration
+
+**Tool types:**
+- `web_search_20250305` - Basic search, no Docker needed
+- `web_search_20260209` - Dynamic filtering (Claude writes code to filter results), requires Docker sandbox
+
+**Key files:**
+- `app/services/web_search_service.py` - Main orchestration, agentic loop
+- `app/services/web_search/providers.py` - Tavily and Brave search implementations
+- `app/services/web_search/domain_filter.py` - Domain filtering logic
+- `app/schemas/web_search.py` - Pydantic models (WebSearchToolDefinition, UserLocation, etc.)
+
+**Configuration:**
+- `ENABLE_WEB_SEARCH=True` - Feature flag
+- `WEB_SEARCH_PROVIDER=tavily` - Provider (`tavily` or `brave`)
+- `WEB_SEARCH_API_KEY` - Provider API key (Tavily or Brave)
+- `WEB_SEARCH_MAX_RESULTS=5` - Max results per search
+- `WEB_SEARCH_DEFAULT_MAX_USES=10` - Max searches per request
+
+**Health check:** `GET /health/web-search`
+
+### Web Fetch Tool
+
+The proxy implements Anthropic's `web_fetch_20250910` and `web_fetch_20260209` server tools. Uses httpx for direct fetching (no external API key required by default).
+
+**How it works:** Same agentic loop pattern as web search. Proxy intercepts web_fetch tool calls, fetches the URL content, converts HTML to plain text, and returns results to Bedrock.
+
+**Tool types:**
+- `web_fetch_20250910` - Basic URL fetching, no Docker needed
+- `web_fetch_20260209` - Dynamic filtering (Claude writes code to process fetched content), requires Docker
+
+**Key files:**
+- `app/services/web_fetch_service.py` - Main orchestration
+- `app/services/web_fetch/providers.py` - HttpxFetchProvider (default, no API key), TavilyFetchProvider
+- `app/schemas/web_fetch.py` - Pydantic models
+
+**Configuration:**
+- `ENABLE_WEB_FETCH=True` - Feature flag (enabled by default)
+- `WEB_FETCH_DEFAULT_MAX_USES=20` - Max fetches per request
+- `WEB_FETCH_DEFAULT_MAX_CONTENT_TOKENS=100000` - Content length limit
+
+**Health check:** `GET /health/web-fetch`
+
+### OpenTelemetry Tracing
+
+The proxy has a full OpenTelemetry tracing system for LLM observability, following the OTEL GenAI semantic conventions.
+
+**Architecture:**
+- Turn-based trace structure: each HTTP request becomes a "Turn" span, grouped under a session trace
+- Session store (`app/tracing/session_store.py`) maps `x-session-id` headers to OTEL trace contexts with 600s TTL
+- `ChatOnlySpanProcessor` filters out third-party library spans
+- Supports Langfuse, Jaeger, Grafana Tempo, and any OTEL-compatible backend
+
+**Key files:**
+- `app/tracing/provider.py` - TracerProvider initialization and exporter configuration
+- `app/tracing/middleware.py` - TracingMiddleware (creates root request spans)
+- `app/tracing/spans.py` - Span helpers for LLM calls, tool execution, PTC
+- `app/tracing/attributes.py` - OTEL GenAI semantic convention constants (~51 attributes)
+- `app/tracing/streaming.py` - Streaming response token accumulator
+- `app/tracing/session_store.py` - Session-to-trace mapping for agent loop aggregation
+- `app/tracing/context.py` - Session ID extraction and thread context propagation
+
+**Configuration:**
+- `ENABLE_TRACING=true` - Feature flag (disabled by default)
+- `OTEL_EXPORTER_OTLP_ENDPOINT` - Export endpoint (e.g., Langfuse, Jaeger)
+- `OTEL_EXPORTER_OTLP_PROTOCOL` - `http/protobuf` (default) or `grpc`
+- `OTEL_EXPORTER_OTLP_HEADERS` - Auth headers (e.g., `Authorization=Basic xxx`)
+- `OTEL_SERVICE_NAME` - Service name for trace identification
+- `OTEL_TRACE_CONTENT=false` - Include request/response bodies (PII risk)
+- `OTEL_TRACE_SAMPLING_RATIO=1.0` - Sampling ratio (0.0-1.0)
+
+**Zero-overhead design:** When tracing is disabled, all trace functions are no-ops.
+
+### Cache TTL (1-Hour Caching)
+
+The proxy extends Anthropic's `cache_control` with configurable TTL. Bedrock Claude models default to 5-minute cache; the proxy supports extending to 1 hour.
+
+**TTL Priority (highest to lowest):**
+1. API Key `cache_ttl` field (forced override for all requests from that key)
+2. Client request `cache_control.ttl` value
+3. `DEFAULT_CACHE_TTL` environment variable
+4. Anthropic/Bedrock default (5 minutes)
+
+**Cost impact:** 5m writes cost 1.25x input price; 1h writes cost 2.0x input price. The system auto-calculates correct pricing per TTL.
+
+**Configuration:** `DEFAULT_CACHE_TTL=1h` (or `5m`)
+
+### Admin Portal
+
+The admin portal is a separate FastAPI application for managing API keys, usage, pricing, and budgets.
+
+**Architecture:**
+- Backend: `admin_portal/backend/main.py` - Independent FastAPI server (port 8005 in dev)
+- Frontend: `admin_portal/frontend/` - Static files served from `frontend/dist`
+- Auth: AWS Cognito JWT validation via `admin_portal/backend/middleware/cognito_auth.py`
+- Background task: Usage aggregation runs every 5 minutes (`admin_portal/backend/services/usage_aggregator.py`)
+
+**API routers** (`admin_portal/backend/api/`):
+- `auth.py` - Cognito authentication (login, token refresh)
+- `api_keys.py` - API key CRUD, budget management
+- `pricing.py` - Model pricing configuration
+- `dashboard.py` - Usage statistics and analytics
+- `model_mapping.py` - Model ID mapping management
+
+**In production (ECS):** The admin portal frontend is served as static files from the main proxy at `/admin/`, with API calls proxied to the backend.
+
 ## Testing Strategy
 
 ### Unit Tests (`tests/unit/`)
@@ -694,6 +805,15 @@ Features like guardrails are Bedrock-specific. Strategy:
 4. Don't break Anthropic SDK compatibility
 
 ## Troubleshooting
+
+### Health Endpoints
+
+- `GET /health` - Basic health check
+- `GET /ready` - Readiness check
+- `GET /liveness` - Liveness check
+- `GET /health/ptc` - PTC/Docker status
+- `GET /health/web-search` - Web search provider status
+- `GET /health/web-fetch` - Web fetch status
 
 ### "Rate limit exceeded" Errors
 
@@ -803,12 +923,29 @@ app/
 ├── db/               # DynamoDB client and managers (data access layer)
 ├── middleware/       # Auth and rate limiting (request processing pipeline)
 ├── schemas/          # Pydantic models (validation and serialization)
-└── services/         # Business logic (orchestrates converters and Bedrock calls)
-    ├── bedrock_service.py  # Bedrock API calls
-    ├── ptc_service.py      # PTC orchestration
-    └── ptc/                # PTC sandbox module
-        ├── sandbox.py      # Docker sandbox executor
-        └── exceptions.py   # PTC exceptions
+│   ├── anthropic.py  # Anthropic API schemas (request/response/content types)
+│   ├── bedrock.py    # Bedrock API schemas
+│   ├── web_search.py # Web search tool models
+│   └── web_fetch.py  # Web fetch tool models
+├── services/         # Business logic (orchestrates converters and Bedrock calls)
+│   ├── bedrock_service.py       # Bedrock API calls (InvokeModel + Converse)
+│   ├── ptc_service.py           # PTC orchestration
+│   ├── web_search_service.py    # Web search agentic loop
+│   ├── web_fetch_service.py     # Web fetch agentic loop
+│   ├── ptc/                     # PTC sandbox module
+│   ├── web_search/              # Search providers (Tavily, Brave) + domain filter
+│   └── web_fetch/               # Fetch providers (httpx, Tavily)
+└── tracing/          # OpenTelemetry distributed tracing
+    ├── provider.py   # TracerProvider + ChatOnlySpanProcessor
+    ├── middleware.py  # Request-level tracing middleware
+    ├── spans.py      # Span creation helpers (LLM, tools, PTC)
+    └── session_store.py  # Session-to-trace context mapping
+admin_portal/
+├── backend/          # Separate FastAPI app for admin UI
+│   ├── api/          # Routers: auth, api_keys, pricing, dashboard, model_mapping
+│   ├── middleware/   # Cognito JWT validation
+│   └── services/     # Usage aggregator (background task, 5-min interval)
+└── frontend/         # Static frontend (served at /admin/ in production)
 ```
 
 **Why this structure?**
@@ -842,9 +979,33 @@ app/
 - `PTC_MEMORY_LIMIT=256m` - Container memory limit
 - `PTC_NETWORK_DISABLED=True` - Disable network in sandbox
 
-**Beta Header Mapping Settings:**
-- `BETA_HEADER_MAPPING` - Dict mapping Anthropic beta headers to Bedrock beta headers (default: `advanced-tool-use-2025-11-20` → `['tool-examples-2025-10-29', 'tool-search-tool-2025-10-19']`)
-- `BETA_HEADER_SUPPORTED_MODELS` - List of model IDs that support beta header mapping (default: Claude Opus 4.5)
+**Web Search:**
+- `ENABLE_WEB_SEARCH=True` - Enable web search tool
+- `WEB_SEARCH_PROVIDER=tavily` - Provider (`tavily` or `brave`)
+- `WEB_SEARCH_API_KEY` - Provider API key
+- `WEB_SEARCH_MAX_RESULTS=5` - Results per search
+- `WEB_SEARCH_DEFAULT_MAX_USES=10` - Max searches per request
+
+**Web Fetch:**
+- `ENABLE_WEB_FETCH=True` - Enable web fetch tool (default: enabled)
+- `WEB_FETCH_DEFAULT_MAX_USES=20` - Max fetches per request
+- `WEB_FETCH_DEFAULT_MAX_CONTENT_TOKENS=100000` - Content length limit
+
+**Cache TTL:**
+- `DEFAULT_CACHE_TTL=1h` - Default cache TTL (`5m` or `1h`)
+
+**OpenTelemetry Tracing:**
+- `ENABLE_TRACING=true` - Enable tracing (default: disabled)
+- `OTEL_EXPORTER_OTLP_ENDPOINT` - Export endpoint URL
+- `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` - Protocol (`http/protobuf` or `grpc`)
+- `OTEL_EXPORTER_OTLP_HEADERS` - Auth headers (e.g., `Authorization=Basic xxx`)
+- `OTEL_SERVICE_NAME` - Service name
+- `OTEL_TRACE_CONTENT=false` - Include request/response content (PII risk)
+- `OTEL_TRACE_SAMPLING_RATIO=1.0` - Sampling ratio (0.0-1.0)
+
+**Beta Header Mapping:**
+- `BETA_HEADER_MAPPING` - Dict mapping Anthropic beta headers to Bedrock beta headers
+- `BETA_HEADER_SUPPORTED_MODELS` - List of model IDs that support beta header mapping
 
 See `.env.example` for full list.
 
@@ -868,16 +1029,25 @@ This service aims for **100% compatibility** with the Anthropic Messages API. Ke
 
 8. **Tool Input Examples**: The `input_examples` parameter in tool definitions is supported and passed to Bedrock as `inputExamples`. Requires beta header `advanced-tool-use-2025-11-20` for the feature to be enabled.
 
+9. **Web Search**: `web_search_20250305` and `web_search_20260209` tools are supported. Proxy-side implementation (Bedrock doesn't support these natively). Requires a search provider API key (Tavily or Brave).
+
+10. **Web Fetch**: `web_fetch_20250910` and `web_fetch_20260209` tools are supported. Default httpx provider requires no external API key.
+
+11. **Cache TTL**: Supports `cache_control.ttl: "1h"` for extended caching (Bedrock default is 5 minutes).
+
 ## Key Files to Understand
 
 1. **`app/converters/anthropic_to_bedrock.py`** - Request conversion (Anthropic → Bedrock)
 2. **`app/converters/bedrock_to_anthropic.py`** - Response conversion (Bedrock → Anthropic)
-3. **`app/services/bedrock_service.py`** - Orchestrates Bedrock API calls
+3. **`app/services/bedrock_service.py`** - Orchestrates Bedrock API calls (InvokeModel + Converse)
 4. **`app/api/messages.py`** - Main API endpoint handler
 5. **`app/core/config.py`** - Configuration and settings
 6. **`app/services/ptc_service.py`** - PTC orchestration (code execution flow)
 7. **`app/services/ptc/sandbox.py`** - Docker sandbox executor
-8. **`ARCHITECTURE.md`** - Detailed architecture documentation
+8. **`app/services/web_search_service.py`** - Web search agentic loop orchestration
+9. **`app/services/web_fetch_service.py`** - Web fetch agentic loop orchestration
+10. **`app/tracing/provider.py`** - OpenTelemetry provider and span processor
+11. **`admin_portal/backend/main.py`** - Admin portal backend entry point
 
 ## Performance Considerations
 

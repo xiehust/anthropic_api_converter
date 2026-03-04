@@ -22,10 +22,12 @@ from anthropic import Anthropic
 from config import API_KEY, BASE_URL, MODEL_ID,ANTHROPIC_API_KEY
 
 
-def run_web_fetch(version: str, url: str, stream: bool, citations: bool):
-    if not BASE_URL:
+def run_web_fetch(version: str, url: str, stream: bool, citations: bool,official:bool):
+    if official:
+        print("=======use official anthropic==========")
         client = Anthropic(api_key=ANTHROPIC_API_KEY)
     else:
+        print("=======use api proxy==========")
         client = Anthropic(api_key=API_KEY, base_url=BASE_URL)
 
     tool_type = f"web_fetch_{version}"
@@ -53,7 +55,7 @@ def run_web_fetch(version: str, url: str, stream: bool, citations: bool):
     messages = [
         {
             "role": "user",
-            "content": f"Please fetch and summarize the content at {url}",
+            "content": f"Please fetch the content at {url} and count how many times 'hammer' appears",
         }
     ]
 
@@ -159,14 +161,16 @@ def run_web_fetch(version: str, url: str, stream: bool, citations: bool):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Manual web fetch test")
-    parser.add_argument("--version", choices=["20250910", "20260209"], default="20250910",
-                        help="Web fetch tool version (default: 20250910)")
+    parser.add_argument("--version", choices=["20250910", "20260209"], default="20260209",
+                        help="Web fetch tool version (default: 20260209)")
     parser.add_argument("--url", default="https://httpbin.org/html",
                         help="URL to fetch (default: https://httpbin.org/html)")
     parser.add_argument("--stream", action="store_true",
                         help="Use streaming mode")
+    parser.add_argument("--official", action="store_true",
+                        help="Use official")
     parser.add_argument("--citations", action="store_true",
                         help="Enable citations")
     args = parser.parse_args()
 
-    run_web_fetch(args.version, args.url, args.stream, args.citations)
+    run_web_fetch(args.version, args.url, args.stream, args.citations,args.official)

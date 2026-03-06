@@ -8,7 +8,7 @@ import {
   useSmartRoutingConfig,
   useUpdateSmartRoutingConfig,
 } from '../hooks';
-import type { RoutingRule, RoutingRuleCreate, SmartRoutingConfig } from '../types';
+import type { RoutingRule, RoutingRuleCreate } from '../types';
 
 function SlideOver({ isOpen, onClose, title, children }: {
   isOpen: boolean; onClose: () => void; title: string; children: React.ReactNode;

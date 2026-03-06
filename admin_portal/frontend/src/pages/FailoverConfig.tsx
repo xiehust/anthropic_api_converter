@@ -2,7 +2,6 @@ import { useState } from 'react';
 import {
   useFailoverChains,
   useCreateFailoverChain,
-  useUpdateFailoverChain,
   useDeleteFailoverChain,
 } from '../hooks';
 import type { FailoverChainCreate, FailoverTarget } from '../types';

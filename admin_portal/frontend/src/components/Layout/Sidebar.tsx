@@ -94,6 +94,7 @@ export default function Sidebar() {
             </NavLink>
           ))}
 
+        {/* TODO: Gateway section hidden - pending optimization before release
         <div className="px-3 mt-6 mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
           Gateway
         </div>
@@ -121,6 +122,7 @@ export default function Sidebar() {
               </span>
             </NavLink>
           ))}
+        */}
       </nav>
 
       {/* User Section */}

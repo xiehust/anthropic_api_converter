@@ -74,6 +74,12 @@ class CompactionContent(BaseModel):
     content: Optional[str] = None
 
 
+class ToolReferenceContent(BaseModel):
+    """Tool reference content block used in tool_result to reference available tools."""
+    type: Literal["tool_reference"] = "tool_reference"
+    tool_name: str
+
+
 class CallerInfo(BaseModel):
     """Information about who invoked a tool (for PTC)."""
     type: Literal["direct", "code_execution_20250825"]
@@ -185,7 +191,7 @@ class ToolResultContent(BaseModel):
     """Tool result content block in user messages."""
     type: Literal["tool_result"] = "tool_result"
     tool_use_id: str
-    content: Union[str, List[Union[TextContent, ImageContent]]]
+    content: Union[str, List[Union[TextContent, ImageContent, ToolReferenceContent]]]
     is_error: Optional[bool] = None
     cache_control: Optional["CacheControl"] = None
 

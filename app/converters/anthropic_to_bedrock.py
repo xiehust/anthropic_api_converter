@@ -20,6 +20,7 @@ from app.schemas.anthropic import (
     TextContent,
     ThinkingContent,
     Tool,
+    ToolReferenceContent,
     ToolResultContent,
     ToolUseContent,
     # Standalone code execution types
@@ -434,6 +435,10 @@ class AnthropicToBedrockConverter:
                 if block.cache_control and settings.prompt_caching_enabled and self._supports_prompt_caching():
                     bedrock_content.append({"cachePoint": {"type": "default"}})
                     print(f"[CONVERTER] Added cachePoint after image block")
+
+            elif isinstance(block, ToolReferenceContent):
+                # Convert tool_reference to text for Converse API compatibility
+                bedrock_content.append({"text": f"[Tool: {block.tool_name}]"})
 
             elif isinstance(block, DocumentContent):
                 if not settings.enable_document_support:

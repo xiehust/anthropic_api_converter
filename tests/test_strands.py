@@ -5,13 +5,12 @@ import os
 import asyncio
 import argparse
 from strands.tools.mcp import MCPClient
-from strands_tools import python_repl
-from strands_tools.code_interpreter import AgentCoreCodeInterpreter
+from mcp import stdio_client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
 from mcp.client.sse import sse_client
 from dotenv import load_dotenv
 # MCP Client Setup
-os.environ["BYPASS_TOOL_CONSENT"]='true'
+
 load_dotenv()
 tavily_key = os.environ.get('TAVILY_API_KEY')
 # mcp_server MCP Client
@@ -29,21 +28,14 @@ agent_model = BedrockModel(
 )
 
 # Main execution
-async def main(user_input_arg: str = None, messages_arg: str = None, use_code_exe:bool = False):
+async def main(user_input_arg: str = None, messages_arg: str = None):
     global mcp_server_client_9538
 
     # Use MCP clients in context managers (only those connected to execution agent)
     with mcp_server_client_9538:
         # Get tools from MCP servers
         mcp_tools = []
-        if use_code_exe:
-            bedrock_agent_core_code_interpreter = AgentCoreCodeInterpreter(region="us-west-2")
-            # code_tool = python_repl
-            code_tool = bedrock_agent_core_code_interpreter.code_interpreter
-            mcp_tools.extend([code_tool])
-
         mcp_tools.extend(mcp_server_client_9538.list_tools_sync())
-
         
         # Create agent with MCP tools
         agent = Agent(
@@ -85,12 +77,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Execute Strands Agent')
     # parser.add_argument('--user-input', type=str, help='User input prompt',default="Search for the current prices of AAPL and GOOGL, then calculate which has a better P/E ratio.")
     # parser.add_argument('--messages', type=str, help='JSON string of conversation messages')
-    parser.add_argument('--code-exe', action="store_true")
+
     args = parser.parse_args()
 
     user_input_param = 'Please fetch the content at https://httpbin.org/html and find which 3 words have the highest frequency?'
     messages_param = ''
     print(f'user input:{user_input_param}')
-    if args.code_exe:
-        print(f'python code execution tool is enabled')
-    asyncio.run(main(user_input_param, messages_param,use_code_exe=args.code_exe))
+    asyncio.run(main(user_input_param, messages_param))

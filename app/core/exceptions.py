@@ -109,6 +109,22 @@ class AccessDeniedError(BedrockAPIError):
         )
 
 
+class NoProviderAvailableError(BedrockAPIError):
+    """
+    Exception when no provider or key is available for the requested model.
+
+    Maps to HTTP 503 Service Unavailable.
+    """
+
+    def __init__(self, error_message: str = "No provider available for the requested model"):
+        super().__init__(
+            error_code="NoProviderAvailable",
+            error_message=error_message,
+            http_status=503,
+            error_type="api_error"
+        )
+
+
 def map_bedrock_error(error_code: str, error_message: str) -> BedrockAPIError:
     """
     Map Bedrock error code to appropriate exception.

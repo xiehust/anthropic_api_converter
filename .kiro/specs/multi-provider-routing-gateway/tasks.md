@@ -1,0 +1,333 @@
+# Implementation Plan: Multi-Provider Routing Gateway
+
+## Overview
+
+Incrementally build the multi-provider routing gateway on top of the existing `anthropic_api_proxy` codebase. Each task builds on previous ones, starting with foundational abstractions and ending with full Admin Portal integration. All new features are behind feature flags (default off). Python/FastAPI backend, React/TypeScript frontend, DynamoDB storage, `hypothesis` for property-based testing.
+
+## Tasks
+
+- [x] 1. Add feature flags and core exceptions
+  - [x] 1.1 Add feature flag fields and new config fields to `app/core/config.py` Settings class
+    - Add `multi_provider_enabled`, `routing_enabled`, `smart_routing_enabled`, `failover_enabled`, `compression_enabled` boolean fields with correct defaults (all false except failover_enabled=true)
+    - Add `provider_key_encryption_secret`, `smart_routing_strong_model`, `smart_routing_weak_model`, `smart_routing_threshold`, `compression_tool_result_max_chars`, `compression_fold_after_turns`, `failover_chains` fields
+    - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 9.4_
+  - [x] 1.2 Add `NoProviderAvailableError` exception to `app/core/exceptions.py`
+    - Subclass existing `BedrockAPIError` with error_code="NoProviderAvailable", http_status=503
+    - _Requirements: 8.4_
+  - [x]* 1.3 Write unit tests for feature flag defaults
+    - Verify all flags have correct default values
+    - Verify flag=all-defaults means no new code paths are triggered
+    - **Validates: Requirements 15.1, 15.2, 15.3, 15.4, 15.5, 15.6**
+
+- [x] 2. Implement Provider abstraction layer
+  - [x] 2.1 Create `app/services/provider_base.py` with LLMProvider ABC, ProviderResponse, and ProviderStreamChunk dataclasses
+    - Define abstract methods: name property, invoke, invoke_stream, supports_model, get_cost, list_models
+    - _Requirements: 1.1_
+  - [x] 2.2 Create `app/services/provider_registry.py` with ProviderRegistry class
+    - Implement register, unregister, get_providers_for_model, get_provider, list_all_models methods
+    - _Requirements: 1.2, 1.3, 1.4, 1.6_
+  - [x]* 2.3 Write property test for Provider Registry model lookup (Property 1)
+    - **Property 1: Provider Registry model lookup correctness**
+    - For any set of registered providers with known model support and any model query, `get_providers_for_model` returns exactly the providers whose `supports_model` returns true, and empty list when none match
+    - **Validates: Requirements 1.2, 1.3, 1.4**
+  - [x]* 2.4 Write property test for Provider Registry register/unregister round-trip (Property 2)
+    - **Property 2: Provider Registry register/unregister round-trip**
+    - For any provider, registering then unregistering should remove it from the registry
+    - **Validates: Requirements 1.6**
+
+- [x] 3. Implement BedrockProvider wrapper
+  - [x] 3.1 Create `app/services/bedrock_provider.py` with BedrockProvider class
+    - Wrap existing BedrockService, implement all LLMProvider abstract methods
+    - invoke delegates to BedrockService.invoke_model, invoke_stream delegates to invoke_model_stream
+    - supports_model checks default_model_mapping, get_cost uses ModelPricingManager, list_models delegates to list_available_models
+    - _Requirements: 2.1, 2.4, 2.5, 2.6_
+  - [x]* 3.2 Write property test for Bedrock Provider model mapping coverage (Property 3)
+    - **Property 3: Bedrock Provider model mapping coverage**
+    - For any model ID in default_model_mapping, BedrockProvider.supports_model returns true
+    - **Validates: Requirements 2.4**
+  - [x]* 3.3 Write unit tests for BedrockProvider
+    - Test invoke wraps response correctly with ProviderResponse
+    - Test invoke_stream delegates to BedrockService
+    - Test get_cost calculation with mock pricing
+    - _Requirements: 2.1, 2.6_
+
+- [x] 4. Checkpoint — Ensure provider abstraction tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 5. Implement Key encryption module
+  - [x] 5.1 Create `app/keypool/__init__.py` and `app/keypool/encryption.py` with KeyEncryption class
+    - Implement Fernet-based encrypt/decrypt using SHA-256 derived key from PROVIDER_KEY_ENCRYPTION_SECRET
+    - Implement mask() static method for key redaction (first 4 + **** + last 4, or **** for short keys)
+    - _Requirements: 3.2, 16.1, 16.2, 16.3_
+  - [x]* 5.2 Write property test for Fernet encrypt/decrypt round-trip (Property 4)
+    - **Property 4: Fernet encryption round-trip**
+    - For any non-empty string, encrypt then decrypt returns the original string
+    - **Validates: Requirements 3.2, 16.1**
+  - [x]* 5.3 Write property test for Key masking format (Property 20)
+    - **Property 20: Key masking format**
+    - For any key with length > 8, mask returns `{first4}****{last4}`. For length ≤ 8, returns `"****"`
+    - **Validates: Requirements 16.3, 17.6**
+  - [x]* 5.4 Write unit tests for encryption edge cases
+    - Test missing PROVIDER_KEY_ENCRYPTION_SECRET logs warning and disables multi-provider
+    - Test decrypt failure marks key as unavailable and logs error without key content
+    - _Requirements: 3.3, 3.4_
+
+- [x] 6. Implement KeyPoolManager
+  - [x] 6.1 Create `app/keypool/manager.py` with KeyState dataclass and KeyPoolManager class
+    - Implement load_keys (from DynamoDB), get_available_key (Round-Robin with cooldown skip), mark_rate_limited, mark_preemptive_cooldown, has_available_keys
+    - _Requirements: 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3, 5.4, 5.5_
+  - [x]* 6.2 Write property test for Round-Robin even distribution (Property 5)
+    - **Property 5: Round-Robin even distribution**
+    - For any pool with N available keys, calling get_available_key N times returns each key exactly once
+    - **Validates: Requirements 4.1, 4.2**
+  - [x]* 6.3 Write property test for cooldown key skipping (Property 6)
+    - **Property 6: Cooldown key skipping**
+    - get_available_key never returns a key in cooldown; returns None when all keys are in cooldown
+    - **Validates: Requirements 4.3, 4.4**
+  - [x]* 6.4 Write property test for rate limit marking and cooldown time (Property 7)
+    - **Property 7: Rate limit marking and cooldown time**
+    - mark_rate_limited with retry_after sets cooldown to that value; None defaults to 60s; same for preemptive cooldown
+    - **Validates: Requirements 5.1, 5.2, 5.3, 5.5**
+  - [x]* 6.5 Write property test for cooldown recovery (Property 8)
+    - **Property 8: Cooldown recovery round-trip**
+    - After cooldown time T elapses, the key becomes available again
+    - **Validates: Requirements 5.4**
+
+- [x] 7. Implement FailoverManager
+  - [x] 7.1 Create `app/keypool/failover.py` with FailoverTarget dataclass and FailoverManager class
+    - Implement load_chains (from DynamoDB), find_failover (ordered chain search with key availability check)
+    - Log failover events with from_model, to_provider, to_model
+    - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6_
+  - [x]* 7.2 Write property test for Failover chain ordered search (Property 9)
+    - **Property 9: Failover chain ordered search**
+    - find_failover returns the first target in chain order with an available key, or None if all unavailable
+    - **Validates: Requirements 6.2, 6.5**
+  - [x]* 7.3 Write unit tests for FailoverManager
+    - Test failover logging includes from/to information
+    - Test 503 returned when entire chain exhausted
+    - Test failover disabled when FAILOVER_ENABLED=false
+    - _Requirements: 6.4, 6.5, 6.6_
+
+- [x] 8. Checkpoint — Ensure key pool and failover tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 9. Implement routing engine
+  - [x] 9.1 Create `app/routing/__init__.py` and `app/routing/rules.py` with RoutingRule, RuleMatch dataclasses and RuleEngine class
+    - Implement load_rules, match (keyword case-insensitive, regex, model name matching, priority-ordered)
+    - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
+  - [x]* 9.2 Write property test for rule matching correctness (Property 10)
+    - **Property 10: Rule matching correctness**
+    - Keyword matches iff message contains keyword (case-insensitive); regex matches iff pattern matches; model matches iff request model in source list
+    - **Validates: Requirements 7.2, 7.3, 7.4, 7.5**
+  - [x]* 9.3 Write property test for rule priority ordering (Property 11)
+    - **Property 11: Rule priority ordering**
+    - When multiple rules match, the one with lowest priority value is returned
+    - **Validates: Requirements 7.1, 7.6**
+  - [x] 9.4 Create `app/routing/engine.py` with RoutingDecision dataclass and RoutingEngine class
+    - Implement route method: check strategy, rule engine first, budget degradation, then cost/quality/auto routing
+    - Implement _should_degrade (80% budget threshold), _route_by_cost (cheapest available), _route_by_quality (most expensive available), _route_by_smart
+    - Log every routing decision with original_model, target_model, reason
+    - _Requirements: 8.1, 8.2, 8.3, 8.4, 10.1, 10.2, 10.3, 11.1, 11.2, 11.3, 11.4_
+  - [x]* 9.5 Write property test for cost routing (Property 12)
+    - **Property 12: Cost routing selects cheapest available model**
+    - Cost routing selects model with lowest standardized cost (1000 input + 500 output tokens) that has available keys; raises NoProviderAvailableError if none
+    - **Validates: Requirements 8.1, 8.2, 8.3, 8.4**
+  - [x]* 9.6 Write property test for quality routing (Property 23)
+    - **Property 23: Quality routing selects most expensive available model**
+    - Quality routing selects model with highest standardized cost that has available keys
+    - **Validates: Requirements 11.3**
+  - [x]* 9.7 Write property test for budget-aware degradation (Property 14)
+    - **Property 14: Budget-aware degradation**
+    - When budget_used_mtd/monthly_budget >= 0.8 and budget > 0, routing forces weak_model; strategy "off" skips budget check
+    - **Validates: Requirements 10.1, 10.2, 10.3**
+  - [x]* 9.8 Write property test for routing strategy off passthrough (Property 19)
+    - **Property 19: Routing strategy off passthrough**
+    - When strategy is "off", returns original model without rule/cost/smart routing
+    - **Validates: Requirements 11.2, 10.3**
+
+- [x] 10. Implement SmartRouter
+  - [x] 10.1 Create `app/routing/smart.py` with SmartRouter class
+    - Implement lazy-loaded RouteLLM integration, classify method returning "high"/"low"
+    - Fail-safe: on classification error, default to "high" (strong model)
+    - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5_
+  - [x]* 10.2 Write property test for smart routing complexity mapping (Property 13)
+    - **Property 13: Smart routing complexity mapping**
+    - "high" classification → strong_model, "low" → weak_model
+    - **Validates: Requirements 9.2, 9.3**
+  - [x]* 10.3 Write unit tests for SmartRouter
+    - Test RouteLLM not loaded when SMART_ROUTING_ENABLED=false
+    - Test classification failure defaults to "high"
+    - _Requirements: 9.5_
+
+- [x] 11. Implement ContextCompressor
+  - [x] 11.1 Create `app/compression/__init__.py` and `app/compression/context_compressor.py` with CompressionStats dataclass and ContextCompressor class
+    - Implement compress method with strategy dispatch (off/conservative/moderate/aggressive)
+    - Implement _truncate_tool_results (head + tail + omission marker with char count)
+    - Implement _fold_history (fold old assistant messages beyond fold_after_turns, skip short messages ≤ fold_min_length, simple truncation to fold_summary_length + "...")
+    - _Requirements: 12.1, 12.2, 12.3, 12.4, 13.1, 13.2, 13.3, 13.4, 13.5, 14.1, 14.2_
+  - [x]* 11.2 Write property test for tool result truncation (Property 15)
+    - **Property 15: Tool result truncation correctness**
+    - Content > max_chars → head + tail + omission marker with original count; content ≤ max_chars → unchanged
+    - **Validates: Requirements 12.1, 12.2, 12.3**
+  - [x]* 11.3 Write property test for compression off passthrough (Property 16)
+    - **Property 16: Compression strategy off passthrough**
+    - Strategy "off" returns messages unchanged with savings_ratio=0.0
+    - **Validates: Requirements 12.4**
+  - [x]* 11.4 Write property test for history folding strategy awareness (Property 17)
+    - **Property 17: History folding strategy awareness**
+    - aggressive/moderate fold old long assistant messages; conservative does not fold; messages ≤ fold_min_length never folded
+    - **Validates: Requirements 13.1, 13.2, 13.3, 13.4, 13.5**
+  - [x]* 11.5 Write property test for compression stats accuracy (Property 18)
+    - **Property 18: Compression stats accuracy**
+    - original_chars >= compressed_chars, savings_ratio = 1 - compressed/original when original > 0
+    - **Validates: Requirements 14.2**
+
+- [x] 12. Checkpoint — Ensure all core module tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 13. Wire core modules into the gateway request pipeline
+  - [x] 13.1 Modify `app/api/messages.py` to add feature flag branch in `create_message`
+    - When MULTI_PROVIDER_ENABLED=true: run compression → routing → key acquisition + failover → provider invocation pipeline
+    - When MULTI_PROVIDER_ENABLED=false: existing BedrockService path unchanged
+    - Handle 429/ThrottlingError by marking key cooldown and retrying with next key
+    - Record compression savings in usage tracking
+    - _Requirements: 2.2, 2.3, 5.1, 5.2, 5.3, 5.5, 6.3, 6.6, 14.3, 15.6_
+  - [x] 13.2 Modify `app/api/models.py` to add multi-provider model aggregation in `list_models`
+    - When MULTI_PROVIDER_ENABLED=true: return ProviderRegistry.list_all_models()
+    - When false: existing behavior unchanged
+    - _Requirements: 1.5_
+  - [x] 13.3 Initialize and wire all new module instances (ProviderRegistry, BedrockProvider, KeyPoolManager, FailoverManager, RoutingEngine, RuleEngine, SmartRouter, ContextCompressor)
+    - Register BedrockProvider in ProviderRegistry at startup
+    - Load keys, rules, and failover chains from DynamoDB at startup
+    - Handle missing PROVIDER_KEY_ENCRYPTION_SECRET gracefully (log warning, disable multi-provider)
+    - _Requirements: 2.3, 3.3_
+
+- [x] 14. Extend DynamoDB layer for new tables
+  - [x] 14.1 Add new DynamoDB table definitions and managers to `app/db/dynamodb.py`
+    - Add ProviderKeyManager for `anthropic-proxy-provider-keys` table (CRUD + GSI on provider)
+    - Add RoutingConfigManager for `anthropic-proxy-routing-rules` table (CRUD + reorder)
+    - Add FailoverConfigManager for `anthropic-proxy-failover-chains` table (CRUD)
+    - Add SmartRoutingConfigManager for `anthropic-proxy-smart-routing-config` table (get/put global config)
+    - Extend create_tables to create all new tables
+    - _Requirements: 3.1, 18.9, 20.5_
+  - [x] 14.2 Add `routing_strategy` and `compression_strategy` fields to existing api-keys table operations
+    - Ensure existing API key CRUD reads/writes the new fields with defaults ("off")
+    - _Requirements: 11.1, 14.1_
+
+- [x] 15. Checkpoint — Ensure gateway integration works end-to-end
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 16. Implement Admin Portal backend APIs
+  - [x] 16.1 Create `admin_portal/backend/schemas/provider_key.py` with ProviderKeyCreate, ProviderKeyUpdate, ProviderKeyResponse schemas
+    - _Requirements: 17.1, 17.2, 17.3_
+  - [x] 16.2 Create `admin_portal/backend/api/provider_keys.py` with CRUD endpoints
+    - GET /api/provider-keys — list all (key masked)
+    - POST /api/provider-keys — create (encrypt key before storage)
+    - PUT /api/provider-keys/{key_id} — update models/enabled
+    - DELETE /api/provider-keys/{key_id} — delete
+    - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.6_
+  - [x] 16.3 Create `admin_portal/backend/schemas/routing.py` with RoutingRuleCreate, RoutingRuleUpdate, RoutingRuleResponse, RuleReorderRequest, SmartRoutingConfig schemas
+    - _Requirements: 18.2, 18.3, 18.4, 18.5, 18.7_
+  - [x] 16.4 Create `admin_portal/backend/api/routing.py` with routing rule CRUD + smart config endpoints
+    - GET/POST/PUT/DELETE /api/routing/rules — rule CRUD
+    - PUT /api/routing/rules/reorder — batch priority update
+    - GET/PUT /api/routing/smart-config — smart routing global config
+    - _Requirements: 18.2, 18.3, 18.4, 18.5, 18.6, 18.7, 18.8, 18.9_
+  - [x] 16.5 Create `admin_portal/backend/schemas/failover.py` with FailoverTarget, FailoverChainCreate, FailoverChainUpdate, FailoverChainResponse schemas
+    - _Requirements: 20.1, 20.2_
+  - [x] 16.6 Create `admin_portal/backend/api/failover.py` with Failover chain CRUD endpoints
+    - GET/POST/PUT/DELETE /api/failover/chains
+    - _Requirements: 20.1, 20.2, 20.3, 20.4, 20.5_
+  - [x] 16.7 Extend `admin_portal/backend/schemas/api_key.py` to add routing_strategy and compression_strategy fields
+    - Add to ApiKeyCreate and ApiKeyUpdate schemas
+    - _Requirements: 18.1, 19.1, 19.2_
+  - [x] 16.8 Register all new API routes in `admin_portal/backend/main.py`
+    - Include provider_keys, routing, and failover routers
+    - _Requirements: 17.1, 18.2, 20.1_
+  - [x]* 16.9 Write property test for routing rule persistence round-trip (Property 21)
+    - **Property 21: Routing rule persistence round-trip**
+    - Creating a rule via API then retrieving it returns equivalent rule with all fields preserved
+    - **Validates: Requirements 18.9**
+  - [x]* 16.10 Write property test for Failover chain persistence and order preservation (Property 22)
+    - **Property 22: Failover chain persistence and order preservation**
+    - Storing a failover chain and retrieving it preserves exact target order
+    - **Validates: Requirements 20.4, 20.5**
+  - [x]* 16.11 Write unit tests for Admin Portal backend APIs
+    - Test Provider Key CRUD (create encrypts, list masks, delete removes)
+    - Test routing rule CRUD and reorder
+    - Test failover chain CRUD
+    - Test smart routing config get/put
+    - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.6, 18.2, 18.9, 20.1, 20.5_
+
+- [x] 17. Checkpoint — Ensure Admin Portal backend tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 18. Implement Admin Portal frontend — TypeScript types and API clients
+  - [x] 18.1 Create `admin_portal/frontend/src/types/provider-key.ts` with ProviderKey interface
+    - _Requirements: 17.1_
+  - [x] 18.2 Create `admin_portal/frontend/src/types/routing.ts` with RoutingRule and SmartRoutingConfig interfaces
+    - _Requirements: 18.2, 18.7_
+  - [x] 18.3 Create `admin_portal/frontend/src/types/failover.ts` with FailoverTarget and FailoverChain interfaces
+    - _Requirements: 20.1_
+  - [x] 18.4 Extend `admin_portal/frontend/src/types/api-key.ts` to add routing_strategy and compression_strategy fields
+    - _Requirements: 18.1, 19.1_
+  - [x] 18.5 Extend `admin_portal/frontend/src/services/api.ts` with new API client functions
+    - Add providerKeys API (list, create, update, delete)
+    - Add routing API (rules CRUD, reorder, smart config get/put)
+    - Add failover API (chains CRUD)
+    - _Requirements: 17.1, 18.2, 20.1_
+
+- [x] 19. Implement Admin Portal frontend — React Query hooks
+  - [x] 19.1 Create `admin_portal/frontend/src/hooks/useProviderKeys.ts` with React Query hooks for Provider Key CRUD
+    - _Requirements: 17.1, 17.2, 17.3, 17.4_
+  - [x] 19.2 Create `admin_portal/frontend/src/hooks/useRouting.ts` with React Query hooks for routing rules and smart config
+    - _Requirements: 18.2, 18.7_
+  - [x] 19.3 Create `admin_portal/frontend/src/hooks/useFailover.ts` with React Query hooks for failover chains
+    - _Requirements: 20.1_
+
+- [x] 20. Implement Admin Portal frontend — Pages
+  - [x] 20.1 Create `admin_portal/frontend/src/pages/ProviderKeys.tsx`
+    - Key list table (provider, masked key, models, status badge)
+    - Add/Edit modal (provider dropdown, key input, model multi-select)
+    - Delete confirmation dialog
+    - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.5_
+  - [x] 20.2 Create `admin_portal/frontend/src/pages/RoutingConfig.tsx`
+    - Routing rules table with drag-to-reorder
+    - Add/Edit rule modal (type selector, pattern input, target model selector)
+    - Smart routing config panel (strong_model dropdown, weak_model dropdown, threshold slider)
+    - _Requirements: 18.2, 18.3, 18.4, 18.5, 18.6, 18.7, 18.8_
+  - [x] 20.3 Create `admin_portal/frontend/src/pages/FailoverConfig.tsx`
+    - Failover chain list
+    - Add/Edit modal (source model selector, sortable target list)
+    - _Requirements: 20.1, 20.2, 20.3, 20.4_
+  - [x] 20.4 Extend existing API Key edit form to include routing_strategy dropdown and compression_strategy dropdown with descriptions
+    - Add routing_strategy select (cost/quality/auto/off)
+    - Add compression_strategy select with descriptions (aggressive/moderate/conservative/off)
+    - _Requirements: 18.1, 19.1, 19.2_
+  - [x] 20.5 Add new page routes to `admin_portal/frontend/src/App.tsx`
+    - Add routes for ProviderKeys, RoutingConfig, FailoverConfig pages
+    - Add navigation links in sidebar/menu
+    - _Requirements: 17.1, 18.2, 20.1_
+
+- [x] 21. Add project dependencies
+  - [x] 21.1 Add `cryptography` to project dependencies (for Fernet encryption)
+    - _Requirements: 3.2, 16.1_
+  - [x] 21.2 Add `routellm` as optional dependency (lazy-loaded, only when SMART_ROUTING_ENABLED=true)
+    - _Requirements: 9.1_
+  - [x] 21.3 Add `hypothesis` as dev dependency for property-based testing
+    - _Requirements: Testing strategy_
+
+- [x] 22. Final checkpoint — Full integration validation
+  - Ensure all tests pass, ask the user if questions arise.
+  - Verify feature flags default off and existing behavior unchanged
+  - Verify no API key plaintext in any log output
+
+## Notes
+
+- Tasks marked with `*` are optional and can be skipped for faster MVP
+- Each task references specific requirements for traceability
+- Checkpoints ensure incremental validation
+- Property tests validate universal correctness properties from the design document (23 properties total)
+- Unit tests validate specific examples and edge cases
+- All new code paths are gated behind feature flags — existing users are unaffected
+- Python with `hypothesis` library for all property-based tests

@@ -21,6 +21,16 @@ import type {
   ModelMappingCreate,
   ModelMappingUpdate,
   ModelMappingListResponse,
+  ProviderKey,
+  ProviderKeyCreate,
+  ProviderKeyUpdate,
+  RoutingRule,
+  RoutingRuleCreate,
+  RoutingRuleUpdate,
+  SmartRoutingConfig,
+  FailoverChain,
+  FailoverChainCreate,
+  FailoverChainUpdate,
 } from '../types';
 
 const API_BASE_URL = '/api';
@@ -306,6 +316,106 @@ export const modelMappingApi = {
 
   delete: async (anthropicModelId: string): Promise<{ message: string }> => {
     return apiFetch(`/model-mapping/${encodeURIComponent(anthropicModelId)}`, {
+      method: 'DELETE',
+    });
+  },
+};
+
+
+// Provider Keys API
+export const providerKeysApi = {
+  list: async (): Promise<ProviderKey[]> => {
+    return apiFetch('/provider-keys');
+  },
+
+  create: async (data: ProviderKeyCreate): Promise<ProviderKey> => {
+    return apiFetch('/provider-keys', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  update: async (keyId: string, data: ProviderKeyUpdate): Promise<{ success: boolean }> => {
+    return apiFetch(`/provider-keys/${encodeURIComponent(keyId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  delete: async (keyId: string): Promise<void> => {
+    await apiFetch(`/provider-keys/${encodeURIComponent(keyId)}`, {
+      method: 'DELETE',
+    });
+  },
+};
+
+// Routing API
+export const routingApi = {
+  listRules: async (): Promise<RoutingRule[]> => {
+    return apiFetch('/routing/rules');
+  },
+
+  createRule: async (data: RoutingRuleCreate): Promise<RoutingRule> => {
+    return apiFetch('/routing/rules', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateRule: async (ruleId: string, data: RoutingRuleUpdate): Promise<{ success: boolean }> => {
+    return apiFetch(`/routing/rules/${encodeURIComponent(ruleId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  deleteRule: async (ruleId: string): Promise<void> => {
+    await apiFetch(`/routing/rules/${encodeURIComponent(ruleId)}`, {
+      method: 'DELETE',
+    });
+  },
+
+  reorderRules: async (ruleIds: string[]): Promise<{ success: boolean }> => {
+    return apiFetch('/routing/rules/reorder', {
+      method: 'PUT',
+      body: JSON.stringify({ rule_ids: ruleIds }),
+    });
+  },
+
+  getSmartConfig: async (): Promise<SmartRoutingConfig> => {
+    return apiFetch('/routing/smart-config');
+  },
+
+  updateSmartConfig: async (data: SmartRoutingConfig): Promise<SmartRoutingConfig> => {
+    return apiFetch('/routing/smart-config', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+};
+
+// Failover API
+export const failoverApi = {
+  listChains: async (): Promise<FailoverChain[]> => {
+    return apiFetch('/failover/chains');
+  },
+
+  createChain: async (data: FailoverChainCreate): Promise<FailoverChain> => {
+    return apiFetch('/failover/chains', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateChain: async (sourceModel: string, data: FailoverChainUpdate): Promise<{ success: boolean }> => {
+    return apiFetch(`/failover/chains/${encodeURIComponent(sourceModel)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  deleteChain: async (sourceModel: string): Promise<void> => {
+    await apiFetch(`/failover/chains/${encodeURIComponent(sourceModel)}`, {
       method: 'DELETE',
     });
   },

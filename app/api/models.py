@@ -5,8 +5,9 @@ Implements GET /v1/models for listing available Bedrock models.
 """
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from app.core.config import settings
 from app.services.bedrock_service import BedrockService
 
 router = APIRouter()
@@ -23,12 +24,14 @@ def get_bedrock_service() -> BedrockService:
     description="List all available models in AWS Bedrock that support text generation.",
 )
 async def list_models(
+    request: Request,
     bedrock_service: BedrockService = Depends(get_bedrock_service),
 ):
     """
     List available models.
 
     Returns a list of all available Bedrock models that support the Converse API.
+    When MULTI_PROVIDER_ENABLED=true, returns aggregated models from all providers.
 
     Returns:
         Dictionary with list of models and their details
@@ -37,6 +40,16 @@ async def list_models(
         HTTPException: If failed to retrieve models
     """
     try:
+        if settings.multi_provider_enabled:
+            provider_registry = getattr(request.app.state, "provider_registry", None)
+            if provider_registry:
+                models = provider_registry.list_all_models()
+                return {
+                    "object": "list",
+                    "data": models,
+                    "has_more": False,
+                }
+
         models = bedrock_service.list_available_models()
 
         return {

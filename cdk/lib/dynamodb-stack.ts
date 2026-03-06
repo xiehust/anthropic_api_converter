@@ -69,6 +69,10 @@ export class DynamoDBStack extends cdk.Stack {
   public readonly modelMappingTable: dynamodb.Table;
   public readonly usageStatsTable: dynamodb.Table;
   public readonly modelPricingTable: dynamodb.Table;
+  public readonly providerKeysTable: dynamodb.Table;
+  public readonly routingRulesTable: dynamodb.Table;
+  public readonly failoverChainsTable: dynamodb.Table;
+  public readonly smartRoutingConfigTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props: DynamoDBStackProps) {
     super(scope, id, props);
@@ -197,6 +201,81 @@ export class DynamoDBStack extends cdk.Stack {
     // This runs on CREATE only, won't overwrite existing data on UPDATE
     this.seedDefaultPricing(config);
 
+    // === Multi-Provider Gateway Tables ===
+
+    // Provider Keys Table (encrypted API keys for multi-provider support)
+    this.providerKeysTable = new dynamodb.Table(this, 'ProviderKeysTable', {
+      partitionKey: {
+        name: 'key_id',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode:
+        config.dynamodbBillingMode === 'PAY_PER_REQUEST'
+          ? dynamodb.BillingMode.PAY_PER_REQUEST
+          : dynamodb.BillingMode.PROVISIONED,
+      readCapacity: config.dynamodbReadCapacity,
+      writeCapacity: config.dynamodbWriteCapacity,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+    });
+
+    this.providerKeysTable.addGlobalSecondaryIndex({
+      indexName: 'provider-index',
+      partitionKey: {
+        name: 'provider',
+        type: dynamodb.AttributeType.STRING,
+      },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+
+    // Routing Rules Table (rule-based routing configuration)
+    this.routingRulesTable = new dynamodb.Table(this, 'RoutingRulesTable', {
+      partitionKey: {
+        name: 'rule_id',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode:
+        config.dynamodbBillingMode === 'PAY_PER_REQUEST'
+          ? dynamodb.BillingMode.PAY_PER_REQUEST
+          : dynamodb.BillingMode.PROVISIONED,
+      readCapacity: config.dynamodbReadCapacity,
+      writeCapacity: config.dynamodbWriteCapacity,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+    });
+
+    // Failover Chains Table (cross-model failover configuration)
+    this.failoverChainsTable = new dynamodb.Table(this, 'FailoverChainsTable', {
+      partitionKey: {
+        name: 'source_model',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode:
+        config.dynamodbBillingMode === 'PAY_PER_REQUEST'
+          ? dynamodb.BillingMode.PAY_PER_REQUEST
+          : dynamodb.BillingMode.PROVISIONED,
+      readCapacity: config.dynamodbReadCapacity,
+      writeCapacity: config.dynamodbWriteCapacity,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+    });
+
+    // Smart Routing Config Table (global smart routing parameters)
+    this.smartRoutingConfigTable = new dynamodb.Table(this, 'SmartRoutingConfigTable', {
+      partitionKey: {
+        name: 'config_id',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode:
+        config.dynamodbBillingMode === 'PAY_PER_REQUEST'
+          ? dynamodb.BillingMode.PAY_PER_REQUEST
+          : dynamodb.BillingMode.PROVISIONED,
+      readCapacity: config.dynamodbReadCapacity,
+      writeCapacity: config.dynamodbWriteCapacity,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+    });
+
     // Apply tags to all tables
     Object.entries(config.tags).forEach(([key, value]) => {
       cdk.Tags.of(this.apiKeysTable).add(key, value);
@@ -204,6 +283,10 @@ export class DynamoDBStack extends cdk.Stack {
       cdk.Tags.of(this.modelMappingTable).add(key, value);
       cdk.Tags.of(this.usageStatsTable).add(key, value);
       cdk.Tags.of(this.modelPricingTable).add(key, value);
+      cdk.Tags.of(this.providerKeysTable).add(key, value);
+      cdk.Tags.of(this.routingRulesTable).add(key, value);
+      cdk.Tags.of(this.failoverChainsTable).add(key, value);
+      cdk.Tags.of(this.smartRoutingConfigTable).add(key, value);
     });
 
     // Outputs - exportName omitted to avoid cross-stack conflicts
@@ -230,6 +313,26 @@ export class DynamoDBStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ModelPricingTableName', {
       value: this.modelPricingTable.tableName,
       description: 'Model Pricing DynamoDB Table Name',
+    });
+
+    new cdk.CfnOutput(this, 'ProviderKeysTableName', {
+      value: this.providerKeysTable.tableName,
+      description: 'Provider Keys DynamoDB Table Name',
+    });
+
+    new cdk.CfnOutput(this, 'RoutingRulesTableName', {
+      value: this.routingRulesTable.tableName,
+      description: 'Routing Rules DynamoDB Table Name',
+    });
+
+    new cdk.CfnOutput(this, 'FailoverChainsTableName', {
+      value: this.failoverChainsTable.tableName,
+      description: 'Failover Chains DynamoDB Table Name',
+    });
+
+    new cdk.CfnOutput(this, 'SmartRoutingConfigTableName', {
+      value: this.smartRoutingConfigTable.tableName,
+      description: 'Smart Routing Config DynamoDB Table Name',
     });
   }
 

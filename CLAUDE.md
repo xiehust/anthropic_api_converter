@@ -4,333 +4,119 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an **Anthropic-Bedrock API Proxy** - a FastAPI service that translates between the Anthropic Messages API format and AWS Bedrock's Converse API. This allows clients using the Anthropic Python SDK to seamlessly access any Bedrock model.
+**Anthropic-Bedrock API Proxy** — a FastAPI service that translates between the Anthropic Messages API format and AWS Bedrock's APIs. Clients using the Anthropic Python SDK can seamlessly access any Bedrock model.
 
-**Key Insight**: The service is bidirectional translation middleware. Requests flow through: Anthropic format → Bedrock format → Bedrock API → Bedrock response → Anthropic format.
+**Key Insight**: Bidirectional translation middleware. Requests: Anthropic format → Bedrock format → Bedrock API → Bedrock response → Anthropic format.
 
 ## Development Setup
 
-### Installation & Environment
-
 ```bash
-# Install dependencies with uv (preferred)
-uv sync
+# Install
+uv sync                    # or: pip install -e ".[dev]"
+cp .env.example .env       # configure AWS credentials + settings
 
-# Alternative: pip install with dev extras
-pip install -e ".[dev]"
+# Setup
+uv run scripts/setup_tables.py
+uv run scripts/create_api_key.py --user-id dev-user --name "Development Key"
 
-# Copy and configure environment
-cp .env.example .env
-# Edit .env with your AWS credentials and settings
+# Run
+uv run uvicorn app.main:app --reload                           # dev
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 -w 4   # prod
+docker-compose up -d                                            # full stack
 
-# Setup DynamoDB tables
-uv run  scripts/setup_tables.py
+# Test
+uv run pytest                                    # all tests
+uv run pytest --cov=app --cov-report=html        # with coverage
+uv run pytest -m integration                     # integration only
 
-# Create an API key for testing
-uv run  scripts/create_api_key.py --user-id dev-user --name "Development Key"
+# Code quality
+black app tests && ruff check app tests && mypy app
 ```
-
-### Running the Service
-
-```bash
-# Development mode (with auto-reload)
-uv run uvicorn app.main:app --reload
-
-# Production mode
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
-
-# Using Docker Compose (includes DynamoDB Local, Prometheus, Grafana)
-docker-compose up -d
-```
-
-### Testing
-
-```bash
-# Run all tests
-uv run pytest
-
-# Run with coverage
-uv run pytest --cov=app --cov-report=html
-
-# Run specific test file
-uv run pytest tests/unit/test_converters.py
-
-# Run integration tests only
-uv run pytest -m integration
-
-# Run with verbose output
-uv run pytest -v
-```
-
-### Code Quality
-
-```bash
-# Format code
-black app tests
-
-# Lint code
-ruff check app tests
-
-# Type checking
-mypy app
-```
-
-## AWS Deployment (CDK)
-
-The service can be deployed to AWS ECS using CDK. Two launch types are supported:
-
-### Launch Type Comparison
-
-| Feature | Fargate | EC2 |
-|---------|---------|-----|
-| **PTC Support** | No | Yes |
-| **Management** | Serverless (zero) | Some (ASG, AMI) |
-| **Cost Model** | Pay per use | Instance-based |
-| **Scaling** | Fast (seconds) | Slower (minutes) |
-| **Docker Access** | No | Yes (socket mount) |
-| **Best For** | Standard API proxy | PTC-enabled deployments |
-
-### Fargate Deployment (Default)
-
-```bash
-cd cdk
-
-# Deploy to dev environment (ARM64, Fargate)
-./scripts/deploy.sh -e dev -p arm64
-
-# Deploy to prod environment (AMD64, Fargate)
-./scripts/deploy.sh -e prod -p amd64 -r us-east-1
-```
-
-### EC2 Deployment (For PTC Support)
-
-```bash
-cd cdk
-
-# Deploy to dev with EC2 (enables PTC, uses Spot instances)
-./scripts/deploy.sh -e dev -p arm64 -l ec2
-
-# Deploy to prod with EC2 (On-Demand instances for stability)
-./scripts/deploy.sh -e prod -p arm64 -l ec2
-```
-
-### Key CDK Files
-
-- `cdk/config/config.ts` - Environment configurations (VPC, ECS, EC2, PTC settings)
-- `cdk/lib/ecs-stack.ts` - ECS infrastructure (supports both Fargate and EC2)
-- `cdk/scripts/deploy.sh` - Deployment script with options
-
-### CDK Environment Variables
-
-The deploy script sets these environment variables:
-- `CDK_PLATFORM` - Architecture: `arm64` or `amd64`
-- `CDK_LAUNCH_TYPE` - Launch type: `fargate` or `ec2`
-- `CDK_ENVIRONMENT` - Environment name: `dev` or `prod`
-
-### EC2 Instance Types
-
-Platform-specific instance types are automatically selected:
-- **ARM64**: t4g.medium (dev), t4g.large (prod) - Graviton processors
-- **AMD64**: t3.medium (dev), t3.large (prod) - Intel/AMD processors
-
-Dev environments use Spot instances for cost savings; prod uses On-Demand.
 
 ## Architecture
 
 ### Dual API Mode
 
-The service supports two Bedrock API modes depending on the model:
+- **InvokeModel API** (Claude models): Native Anthropic format, minimal conversion, full beta feature support
+- **Converse API** (non-Claude models): Requires format conversion, unified API for all Bedrock models
 
-1. **InvokeModel API** (for Claude models):
-   - Uses `invoke_model` / `invoke_model_with_response_stream`
-   - Native Anthropic request/response format (minimal conversion)
-   - Supports all Claude beta features (tool-examples, tool-search, etc.)
-   - Better feature compatibility with Anthropic API
+**Routing**: If model ID contains "anthropic" or "claude" → InvokeModel; otherwise → Converse.
 
-2. **Converse API** (for non-Claude models):
-   - Uses `converse` / `converse_stream`
-   - Requires format conversion (Anthropic ↔ Bedrock Converse format)
-   - Unified API for all Bedrock models
-   - Some beta features may not be available
+> **Detailed conversion flows, content block mapping, and streaming implementation**: see [docs/architecture/detailed-flows.md](docs/architecture/detailed-flows.md)
 
-**Routing Logic:** Model ID is checked - if it contains "anthropic" or "claude", InvokeModel API is used.
+### Configuration
 
-### Critical Conversion Flow
+All config in `app/core/config.py` (Pydantic Settings, loads from env vars / `.env`). When adding new features, add corresponding feature flags and config options.
 
-The core of this service is the bidirectional conversion between Anthropic and Bedrock formats:
+### DynamoDB Tables
 
-**Request Flow (Converse API - non-Claude models):**
-1. `app/api/messages.py` - Receives Anthropic-formatted request
-2. `app/middleware/auth.py` - Validates API key from DynamoDB
-3. `app/middleware/rate_limit.py` - Enforces token bucket rate limiting
-4. `app/converters/anthropic_to_bedrock.py` - **Converts request to Bedrock format**
-5. `app/services/bedrock_service.py` - Calls AWS Bedrock Converse API
-6. `app/converters/bedrock_to_anthropic.py` - **Converts response back to Anthropic format**
-7. Response returned to client
+| Table | Purpose |
+|-------|---------|
+| `anthropic-proxy-api-keys` | API keys, budgets, rate limits |
+| `anthropic-proxy-usage` | Per-request usage logs |
+| `anthropic-proxy-usage-stats` | Aggregated token counts |
+| `anthropic-proxy-model-pricing` | Model pricing data |
+| `anthropic-proxy-model-mapping` | Anthropic → Bedrock model ID mapping |
 
-**Request Flow (InvokeModel API - Claude models):**
-1. `app/api/messages.py` - Receives Anthropic-formatted request
-2. `app/middleware/auth.py` - Validates API key from DynamoDB
-3. `app/middleware/rate_limit.py` - Enforces token bucket rate limiting
-4. `app/services/bedrock_service.py` - Converts to native Anthropic format with Bedrock versioning
-5. `app/services/bedrock_service.py` - Calls AWS Bedrock InvokeModel API
-6. Response is already in Anthropic format (minimal conversion to MessageResponse)
-7. Response returned to client
+> **Full schema, budget computation, and aggregation details**: see [docs/architecture/detailed-flows.md](docs/architecture/detailed-flows.md)
 
-**Streaming Flow:** Same as above, using streaming API variants.
+## Project Structure
 
-### Key Conversion Logic
-
-**Model ID Mapping** (`app/core/config.py`):
-- Anthropic model IDs (e.g., `claude-3-5-sonnet-20241022`) → Bedrock ARNs (e.g., `anthropic.claude-3-5-sonnet-20241022-v2:0`)
-- Custom mappings stored in DynamoDB `model-mapping` table
-- Falls back to treating unknown IDs as valid Bedrock ARNs
-
-**Content Block Conversion** (`anthropic_to_bedrock.py`):
-- `TextContent` → `{"text": "..."}`
-- `ImageContent` → `{"image": {"format": "png", "source": {"bytes": b"..."}}}`
-- `ToolUseContent` → `{"toolUse": {"toolUseId": "...", "name": "...", "input": {...}}}`
-- `ToolResultContent` → `{"toolResult": {"toolUseId": "...", "content": [...], "status": "success"}}`
-
-**Streaming Event Conversion** (`bedrock_to_anthropic.py`):
-- Bedrock's `contentBlockDelta` → Anthropic's `content_block_delta`
-- Bedrock's `messageStart` → Anthropic's `message_start`
-- SSE format: `event: <type>\ndata: <json>\n\n`
-
-### DynamoDB Schema
-
-**Critical Tables:**
-1. **API Keys** (`anthropic-proxy-api-keys`):
-   - PK: `api_key` - The actual API key string
-   - Attributes: `user_id`, `name`, `is_active`, `rate_limit`, `service_tier`, `metadata`
-   - Budget fields: `monthly_budget`, `budget_used` (total), `budget_used_mtd` (month-to-date), `budget_mtd_month` (YYYY-MM)
-   - Deactivation: `deactivated_reason` ("budget_exceeded" when MTD exceeds monthly limit)
-   - GSI: `user_id-index` for querying by user
-
-2. **Usage Tracking** (`anthropic-proxy-usage`):
-   - PK: `api_key`, SK: `timestamp`
-   - Attributes: `request_id`, `model`, `input_tokens`, `output_tokens`, `success`
-   - GSI: `request_id-index` for request lookup
-
-3. **Usage Stats** (`anthropic-proxy-usage-stats`):
-   - PK: `api_key`
-   - Attributes: `total_input_tokens`, `total_output_tokens`, `total_cached_tokens`, `total_cache_write_tokens`, `total_requests`, `last_aggregated_timestamp`
-   - Used for incremental usage aggregation
-
-4. **Model Pricing** (`anthropic-proxy-model-pricing`):
-   - PK: `model_id` - Bedrock model ID
-   - Attributes: `provider`, `display_name`, `input_price`, `output_price`, `cache_read_price`, `cache_write_price`, `status`
-
-5. **Model Mapping** (`anthropic-proxy-model-mapping`):
-   - PK: `anthropic_model_id`
-   - Attributes: `bedrock_model_id`
-
-### Budget Usage Computation
-
-The system calculates budget usage through incremental aggregation, running every 5 minutes via `UsageAggregator`.
-
-**Data Flow:**
 ```
-anthropic-proxy-usage          (raw request logs per API call)
-        │
-        ▼ (aggregation every 5 min)
-anthropic-proxy-usage-stats    (aggregated token counts + last_aggregated_timestamp)
-        │
-        ▼ (cost calculation with service tier multiplier)
-anthropic-proxy-api-keys       (budget_used + budget_used_mtd - displayed in UI)
+app/
+├── api/              # Route handlers (thin, delegates to services)
+├── converters/       # Core Anthropic↔Bedrock conversion logic
+├── core/             # Configuration, logging, metrics
+├── db/               # DynamoDB client and managers
+├── middleware/       # Auth and rate limiting
+├── schemas/          # Pydantic models (anthropic.py, bedrock.py, web_search.py, web_fetch.py, ptc.py)
+├── services/         # Business logic, Bedrock calls, PTC, web search/fetch
+└── tracing/          # OpenTelemetry distributed tracing
+admin_portal/
+├── backend/          # Separate FastAPI app (auth, api_keys, pricing, dashboard, model_mapping)
+└── frontend/         # Static frontend (served at /admin/ in production)
 ```
 
-**Budget Tracking Fields:**
-| Field | Description |
-|-------|-------------|
-| `budget_used` | Total cumulative budget used (never resets) |
-| `budget_used_mtd` | Month-to-date budget used (resets at start of each month) |
-| `budget_mtd_month` | Month being tracked for MTD (YYYY-MM format) |
-| `monthly_budget` | Monthly budget limit (compared against `budget_used_mtd`) |
+## Key Files
 
-**Automatic Budget Enforcement:**
-- When `budget_used_mtd >= monthly_budget`, the API key is automatically deactivated
-- `deactivated_reason` is set to `"budget_exceeded"`
-- Key automatically reactivates at the start of the next month
-- Admin can manually reactivate keys via the portal
+1. `app/converters/anthropic_to_bedrock.py` — Request conversion
+2. `app/converters/bedrock_to_anthropic.py` — Response conversion
+3. `app/services/bedrock_service.py` — Bedrock API calls (InvokeModel + Converse)
+4. `app/api/messages.py` — Main API endpoint handler
+5. `app/core/config.py` — Configuration and settings
+6. `app/services/ptc_service.py` — PTC orchestration
+7. `app/services/web_search_service.py` — Web search agentic loop
+8. `app/services/web_fetch_service.py` — Web fetch agentic loop
+9. `app/tracing/provider.py` — OpenTelemetry provider
+10. `admin_portal/backend/main.py` — Admin portal backend
 
-**Incremental Aggregation:**
-- First run: Processes ALL usage records, sets `last_aggregated_timestamp`
-- Subsequent runs: Only processes records WHERE `timestamp > last_aggregated_timestamp`
-- Uses atomic `INCREMENT` operations to avoid race conditions
-- Month rollover: When aggregating in a new month, `budget_used_mtd` resets to 0
+## Features
 
-**Service Tier Pricing Multipliers:**
-| Tier | Multiplier | Description |
-|------|------------|-------------|
-| `default` | 1.0 | Standard pricing |
-| `flex` | 0.5 | 50% discount |
-| `priority` | 1.75 | 75% markup |
+Each feature has detailed docs in [docs/architecture/features.md](docs/architecture/features.md):
 
-**Cost Calculation:**
-```
-base_cost = (input_tokens × input_price / 1M)
-          + (output_tokens × output_price / 1M)
-          + (cached_tokens × cache_read_price / 1M)
-          + (cache_write_tokens × cache_write_price / 1M)
-
-adjusted_cost = base_cost × service_tier_multiplier
-```
-
-**Key Files:**
-- `app/db/dynamodb.py` → `UsageStatsManager.aggregate_all_usage()` - Main aggregation logic
-- `app/db/dynamodb.py` → `APIKeyManager.increment_budget_used()` - MTD tracking + budget enforcement
-- `app/db/dynamodb.py` → `APIKeyManager.validate_api_key()` - Auto-reactivation on new month
-- `admin_portal/backend/services/usage_aggregator.py` - Scheduler (runs every 5 min)
-
-**Resetting Budget Data:**
-To fully reset budget calculations:
-1. Delete all items from `anthropic-proxy-usage-stats` table
-2. Reset budget fields on all API keys:
-```bash
-# Reset both total and MTD budget for all keys
-aws dynamodb scan --table-name anthropic-proxy-api-keys \
-  --projection-expression "api_key" \
-  --query "Items[*].api_key.S" --output text | \
-  tr '\t' '\n' | while read key; do
-    aws dynamodb update-item --table-name anthropic-proxy-api-keys \
-      --key "{\"api_key\": {\"S\": \"$key\"}}" \
-      --update-expression "SET budget_used = :zero, budget_used_mtd = :zero" \
-      --expression-attribute-values "{\":zero\": {\"N\": \"0\"}}"
-  done
-```
-
-### Configuration Management
-
-All configuration is in `app/core/config.py` using Pydantic Settings:
-- Loads from environment variables (`.env` file in development)
-- Feature flags: `ENABLE_TOOL_USE`, `ENABLE_EXTENDED_THINKING`, `ENABLE_DOCUMENT_SUPPORT`
-- AWS settings: Region, credentials, endpoint URLs
-- Rate limiting: Requests per window, window duration
-- Table names: All DynamoDB table names configurable
-
-**Important:** When adding new features, add corresponding feature flags and configuration options.
+- **Programmatic Tool Calling (PTC)**: Docker sandbox code execution with client-side tool calls. Requires Docker + EC2 launch type on ECS.
+- **Web Search**: Proxy-side `web_search_20250305`/`web_search_20260209` via Tavily or Brave. Agentic loop (up to 25 iterations).
+- **Web Fetch**: Proxy-side `web_fetch_20250910`/`web_fetch_20260209` via httpx (no API key needed).
+- **Beta Header Mapping**: Maps Anthropic beta headers → Bedrock beta headers for supported models.
+- **Tool Input Examples**: `input_examples` param on tool definitions, passed via `additionalModelRequestFields`.
+- **Cache TTL**: Extends `cache_control` with configurable TTL (5m or 1h). Priority: API key → request → env → default.
+- **OpenTelemetry Tracing**: OTEL GenAI semantic conventions, session-based trace grouping. Zero overhead when disabled.
+- **Admin Portal**: Separate FastAPI app for API key/usage/pricing management with Cognito auth.
 
 ## Common Development Tasks
 
-### Adding Support for a New Anthropic Feature
+### Adding a New Anthropic Feature
 
-1. **Update Pydantic schemas** (`app/schemas/anthropic.py` and `app/schemas/bedrock.py`)
-2. **Update request converter** (`app/converters/anthropic_to_bedrock.py`):
-   - Add conversion logic in appropriate method
-   - Handle feature flag (if optional)
-3. **Update response converter** (`app/converters/bedrock_to_anthropic.py`):
-   - Add reverse conversion logic
-   - Handle streaming events if applicable
-4. **Add tests** (`tests/unit/test_converters.py`)
-5. **Update documentation** (README.md, ARCHITECTURE.md)
+1. Update Pydantic schemas (`app/schemas/anthropic.py`, `app/schemas/bedrock.py`)
+2. Update request converter (`app/converters/anthropic_to_bedrock.py`)
+3. Update response converter (`app/converters/bedrock_to_anthropic.py`)
+4. Add tests (`tests/unit/test_converters.py`)
+5. Add feature flag if optional
 
 ### Adding a New Model Mapping
 
-**Programmatically:**
 ```python
 from app.db.dynamodb import DynamoDBClient
-
 client = DynamoDBClient()
 client.model_mapping_manager.set_mapping(
     anthropic_model_id="claude-sonnet-4-5-20250929",
@@ -338,726 +124,69 @@ client.model_mapping_manager.set_mapping(
 )
 ```
 
-**Via Configuration:**
-Update `DEFAULT_MODEL_MAPPING` in `app/core/config.py`.
+Or update `DEFAULT_MODEL_MAPPING` in `app/core/config.py`.
 
-### Debugging Conversion Issues
+### Streaming
 
-1. **Enable DEBUG logging** in `.env`: `LOG_LEVEL=DEBUG`
-2. **Check conversion logs**: Look for `Converting Anthropic request` and `Converting Bedrock response` messages
-3. **Inspect raw Bedrock requests/responses**: Add logging in `app/services/bedrock_service.py`
-4. **Test converters directly**:
-```python
-from app.converters.anthropic_to_bedrock import AnthropicToBedrockConverter
-from app.schemas.anthropic import MessageRequest
+SSE format: `event: <type>\ndata: <json>\n\n`. Uses FastAPI `StreamingResponse`. See `app/api/messages.py` → `create_message()` streaming branch and `app/services/bedrock_service.py` → `invoke_model_stream()`.
 
-converter = AnthropicToBedrockConverter()
-bedrock_request = converter.convert_request(your_request)
-print(bedrock_request)
-```
+## AWS Deployment (CDK)
 
-### Working with Streaming Responses
-
-Streaming uses **Server-Sent Events (SSE)**. Key points:
-
-- SSE format: `event: <event_type>\ndata: <json_data>\n\n`
-- Must set headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`
-- FastAPI's `StreamingResponse` handles SSE automatically when you yield strings in the correct format
-- Bedrock streaming events arrive as `contentBlockDelta`, `messageStart`, etc.
-- Convert each event to Anthropic format (`message_start`, `content_block_delta`, etc.)
-
-**Implementation:** See `app/api/messages.py` → `create_message()` → streaming branch and `app/services/bedrock_service.py` → `invoke_model_stream()`.
-
-### Programmatic Tool Calling (PTC)
-
-PTC allows Claude to generate Python code that calls tools programmatically. The proxy implements this using a Docker sandbox for code execution with client-side tool execution.
-
-**How PTC Works:**
-
-1. Client sends request with:
-   - Header: `anthropic-beta: advanced-tool-use-2025-11-20`
-   - Tool: `{"type": "code_execution_20250825", "name": "code_execution"}`
-   - Regular tools with `allowed_callers: ["code_execution_20250825"]`
-
-2. **Detailed Flow (Multi-Tool, Multi-Round):**
-
-   ```
-   ┌─────────────────────────────────────────────────────────────────────────┐
-   │ INITIAL REQUEST                                                         │
-   ├─────────────────────────────────────────────────────────────────────────┤
-   │ Client Request → Proxy → Bedrock (Claude)                               │
-   │                              ↓                                          │
-   │                    Claude returns execute_code                          │
-   │                              ↓                                          │
-   │                    Proxy creates Docker container                       │
-   │                    Proxy runs code in sandbox                           │
-   └─────────────────────────────────────────────────────────────────────────┘
-                                  ↓
-   ┌─────────────────────────────────────────────────────────────────────────┐
-   │ TOOL CALL LOOP (repeats for each tool call from code)                   │
-   ├─────────────────────────────────────────────────────────────────────────┤
-   │ Code calls tool (e.g., get_expenses) → Sandbox PAUSES                   │
-   │                              ↓                                          │
-   │ Proxy returns tool_use to client (with caller field)                    │
-   │                              ↓                                          │
-   │ Client executes tool locally → sends tool_result back                   │
-   │                              ↓                                          │
-   │ Proxy RESUMES sandbox with tool result                                  │
-   │                              ↓                                          │
-   │ Code continues... (may call more tools → repeat loop)                   │
-   └─────────────────────────────────────────────────────────────────────────┘
-                                  ↓
-   ┌─────────────────────────────────────────────────────────────────────────┐
-   │ CODE COMPLETION                                                         │
-   ├─────────────────────────────────────────────────────────────────────────┤
-   │ Code finishes execution → Proxy gets stdout/stderr                      │
-   │                              ↓                                          │
-   │ Proxy calls Claude with code output as tool_result                      │
-   │                              ↓                                          │
-   │ Claude generates final response (or requests more code → repeat all)    │
-   │                              ↓                                          │
-   │ Proxy returns Claude's response to client                               │
-   └─────────────────────────────────────────────────────────────────────────┘
-   ```
-
-3. **Response Content Types:**
-
-   Tool call from code (client must execute):
-   ```json
-   {
-     "type": "tool_use",
-     "id": "toolu_xxx",
-     "name": "get_expenses",
-     "input": {"employee_id": "ENG008"},
-     "caller": {
-       "type": "code_execution_20250825",
-       "tool_id": "srvtoolu_yyy"
-     }
-   }
-   ```
-
-   Direct tool call (not from code execution):
-   ```json
-   {
-     "type": "tool_use",
-     "id": "toolu_xxx",
-     "name": "search_docs",
-     "input": {"query": "..."},
-     "caller": {"type": "direct"}
-   }
-   ```
-
-4. **Session Management:**
-   - Container reuse via `container` field in response/request
-   - Sessions timeout after 4.5 minutes (`PTC_SESSION_TIMEOUT`)
-   - Client must include `container.id` in continuation requests
-   - Proxy tracks pending tool calls per session
-
-5. **Multi-Round Code Execution:**
-   - After code completes, Claude may request another `execute_code`
-   - Proxy handles this recursively until Claude returns text response
-   - Same container is reused across multiple code execution rounds
-
-6. **Parallel Tool Calls (asyncio.gather support):**
-
-   Claude can generate code that calls tools in parallel using `asyncio.gather`:
-   ```python
-   # Claude generates code like this (instead of sequential loop)
-   expense_tasks = [
-       get_expenses(employee_id=emp_id, quarter='Q3')
-       for emp_id in employee_ids
-   ]
-   results = await asyncio.gather(*expense_tasks)
-   ```
-
-   **How it works:**
-   - Sandbox detects multiple tool calls within 100ms batch window
-   - Proxy returns response with multiple `tool_use` blocks (one per tool)
-   - Client executes all tools (can be parallel) and returns all `tool_result` blocks
-   - Proxy batches results and injects them all into sandbox
-   - Code resumes with all results available
-
-   **Response format (batch):**
-   ```json
-   {
-     "content": [
-       {"type": "server_tool_use", "id": "srvtoolu_xxx", "name": "code_execution", ...},
-       {"type": "tool_use", "id": "toolu_aaa", "name": "get_expenses", "input": {"employee_id": "ENG001"}, "caller": {...}},
-       {"type": "tool_use", "id": "toolu_bbb", "name": "get_expenses", "input": {"employee_id": "ENG002"}, "caller": {...}},
-       {"type": "tool_use", "id": "toolu_ccc", "name": "get_expenses", "input": {"employee_id": "ENG003"}, "caller": {...}}
-     ],
-     "stop_reason": "tool_use"
-   }
-   ```
-
-   **Client continuation (all results in one request):**
-   ```json
-   {
-     "messages": [..., {
-       "role": "user",
-       "content": [
-         {"type": "tool_result", "tool_use_id": "toolu_aaa", "content": "..."},
-         {"type": "tool_result", "tool_use_id": "toolu_bbb", "content": "..."},
-         {"type": "tool_result", "tool_use_id": "toolu_ccc", "content": "..."}
-       ]
-     }],
-     "container": {"id": "container_xxx"}
-   }
-   ```
-
-   **Configuration:**
-   - `tool_call_batch_window_ms`: Time window to collect parallel calls (default: 100ms)
-
-**Key Files:**
-- `app/services/ptc_service.py` - Main PTC orchestration, state management
-- `app/services/ptc/sandbox.py` - Docker sandbox executor, socket IPC
-- `app/services/ptc/exceptions.py` - PTC-specific exceptions
-- `app/schemas/ptc.py` - PTC Pydantic models
-- `app/schemas/anthropic.py` - Content types (ServerToolUseContent, ServerToolResultContent)
-
-**Key Methods in PTCService:**
-- `process_request()` - Entry point, detects PTC and orchestrates flow
-- `_handle_code_execution()` - Runs code, handles tool call pauses
-- `handle_tool_result_continuation()` - Resumes paused sandbox
-- `_finalize_code_execution()` - Calls Claude after code completes
-- `resume_execution()` - Injects tool result into sandbox, continues
-
-**Health Check:**
 ```bash
-curl http://localhost:8000/health/ptc
-# Returns: {"status": "healthy", "docker": "connected", "active_sessions": 0, ...}
+cd cdk
+./scripts/deploy.sh -e dev -p arm64           # Fargate (default)
+./scripts/deploy.sh -e dev -p arm64 -l ec2    # EC2 (for PTC/Docker)
+./scripts/deploy.sh -e prod -p amd64 -r us-east-1
 ```
 
-**Requirements:**
-- Docker must be running and accessible
-- `python:3.11-slim` image (or configured `PTC_SANDBOX_IMAGE`)
-- **For AWS ECS deployment**: Must use EC2 launch type (not Fargate)
-  - Fargate doesn't provide Docker daemon access
-  - EC2 launch type mounts Docker socket (`/var/run/docker.sock`)
-  - Deploy with: `./scripts/deploy.sh -e dev -p arm64 -l ec2`
-- **For multi-instance deployments**: ALB sticky sessions must be enabled
-  - PTC sessions are stored in-memory on individual instances
-  - Continuation requests (with `container.id`) must route to the same instance
-  - CDK automatically enables sticky sessions with 300s duration
-  - Without sticky sessions, continuation requests may go to wrong instance and create new sessions
+Key CDK files: `cdk/config/config.ts`, `cdk/lib/ecs-stack.ts`, `cdk/scripts/deploy.sh`
 
-**Limitations:**
-- Non-streaming only (streaming PTC not yet implemented)
-- Network disabled in sandbox by default
-- Tools are executed client-side (not in the sandbox)
-- **ECS Fargate not supported** (no Docker daemon access)
-- **Multi-instance deployments require sticky sessions** (see Requirements above)
+| Feature | Fargate | EC2 |
+|---------|---------|-----|
+| PTC Support | No | Yes |
+| Management | Serverless | Some (ASG, AMI) |
+| Dev instances | — | Spot for cost savings |
 
-### Beta Header Mapping and Tool Input Examples
+## Design Decisions
 
-The proxy supports mapping Anthropic beta headers to Bedrock-specific beta headers, and the `input_examples` tool parameter for enhanced tool use.
+- **Sync boto3**: DynamoDB ops are fast enough (<10ms) that sync calls don't bottleneck. Avoids aioboto3 complexity.
+- **Token bucket rate limiting**: Allows burst traffic while maintaining average rate limits. Per-key, in-memory.
+- **DynamoDB over Redis**: Persistence, serverless-friendly, single-region, native AWS integration.
+- **Bedrock-specific passthrough**: Optional params (e.g., guardrails) pass through without breaking Anthropic SDK compatibility.
 
-**Beta Header Mapping:**
+## Environment Variables
 
-When Anthropic clients send beta headers (e.g., `anthropic-beta: advanced-tool-use-2025-11-20`), the proxy maps them to corresponding Bedrock beta headers for supported models.
+**Required:**
+- `AWS_REGION` — AWS region for Bedrock and DynamoDB
+- `MASTER_API_KEY` — Master key for admin access (or `REQUIRE_API_KEY=False` for dev)
 
-**Configuration (`app/core/config.py`):**
-```python
-# Beta header mapping (Anthropic → Bedrock)
-beta_header_mapping: Dict[str, List[str]] = {
-    "advanced-tool-use-2025-11-20": [
-        "tool-examples-2025-10-29",
-        "tool-search-tool-2025-10-19",
-    ],
-}
+**Feature Flags:** `ENABLE_TOOL_USE`, `ENABLE_EXTENDED_THINKING`, `ENABLE_DOCUMENT_SUPPORT`, `ENABLE_PROGRAMMATIC_TOOL_CALLING`, `ENABLE_WEB_SEARCH`, `ENABLE_WEB_FETCH`, `ENABLE_TRACING`
 
-# Models that support beta header mapping
-beta_header_supported_models: List[str] = [
-    "claude-opus-4-5-20251101",
-    "global.anthropic.claude-opus-4-5-20251101-v1:0",
-]
-```
+See `.env.example` for full list including PTC, web search, web fetch, cache TTL, tracing, and beta header settings.
 
-**How it works:**
-1. Client sends request with `anthropic-beta: advanced-tool-use-2025-11-20` header
-2. Proxy checks if the model supports beta header mapping
-3. If supported, maps to Bedrock beta headers: `tool-examples-2025-10-29`, `tool-search-tool-2025-10-19`
-4. Mapped headers are added to `additionalModelRequestFields.anthropic_beta`
+## API Compatibility
 
-**Tool Input Examples:**
-
-The `input_examples` parameter allows providing example inputs to help Claude understand how to use a tool:
-
-```python
-tools = [
-    {
-        "name": "get_weather",
-        "description": "Get the current weather in a given location",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "location": {"type": "string"},
-                "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
-            },
-            "required": ["location"]
-        },
-        "input_examples": [
-            {"location": "San Francisco, CA", "unit": "fahrenheit"},
-            {"location": "Tokyo, Japan", "unit": "celsius"},
-            {"location": "New York, NY"}  # 'unit' is optional
-        ]
-    }
-]
-```
-
-**Key Files:**
-- `app/core/config.py` - `beta_header_mapping` and `beta_header_supported_models` settings
-- `app/schemas/anthropic.py` - `Tool.input_examples` field
-- `app/converters/anthropic_to_bedrock.py` - `_map_beta_headers()`, `_supports_beta_header_mapping()`, `_get_tools_with_examples()`
-
-**Implementation Note:**
-Bedrock's standard `toolSpec` doesn't support `inputExamples`. When the `tool-examples-2025-10-29` beta is enabled, tools with `input_examples` are passed via `additionalModelRequestFields.tools` in Anthropic format instead of the standard `toolConfig`.
-
-**Extending Support:**
-- To add more beta header mappings, update `BETA_HEADER_MAPPING` in config
-- To enable for more models, add model IDs to `BETA_HEADER_SUPPORTED_MODELS`
-
-### Web Search Tool
-
-The proxy implements Anthropic's `web_search_20250305` and `web_search_20260209` server tools. Bedrock doesn't natively support these, so the proxy intercepts and executes them.
-
-**How it works:**
-1. Client sends request with a web search tool (e.g., `{"type": "web_search_20250305", "name": "web_search"}`)
-2. Proxy detects the tool, removes it from tools sent to Bedrock, and injects a regular tool definition
-3. When Bedrock (Claude) calls the search tool, the proxy intercepts the tool_use response
-4. Proxy executes the search via Tavily or Brave, builds a tool_result with search results
-5. Proxy sends the tool_result back to Bedrock in a multi-turn agentic loop (up to 25 iterations)
-6. Supports hybrid streaming: non-streaming Bedrock calls but emits SSE events per iteration
-
-**Tool types:**
-- `web_search_20250305` - Basic search, no Docker needed
-- `web_search_20260209` - Dynamic filtering (Claude writes code to filter results), requires Docker sandbox
-
-**Key files:**
-- `app/services/web_search_service.py` - Main orchestration, agentic loop
-- `app/services/web_search/providers.py` - Tavily and Brave search implementations
-- `app/services/web_search/domain_filter.py` - Domain filtering logic
-- `app/schemas/web_search.py` - Pydantic models (WebSearchToolDefinition, UserLocation, etc.)
-
-**Configuration:**
-- `ENABLE_WEB_SEARCH=True` - Feature flag
-- `WEB_SEARCH_PROVIDER=tavily` - Provider (`tavily` or `brave`)
-- `WEB_SEARCH_API_KEY` - Provider API key (Tavily or Brave)
-- `WEB_SEARCH_MAX_RESULTS=5` - Max results per search
-- `WEB_SEARCH_DEFAULT_MAX_USES=10` - Max searches per request
-
-**Health check:** `GET /health/web-search`
-
-### Web Fetch Tool
-
-The proxy implements Anthropic's `web_fetch_20250910` and `web_fetch_20260209` server tools. Uses httpx for direct fetching (no external API key required by default).
-
-**How it works:** Same agentic loop pattern as web search. Proxy intercepts web_fetch tool calls, fetches the URL content, converts HTML to plain text, and returns results to Bedrock.
-
-**Tool types:**
-- `web_fetch_20250910` - Basic URL fetching, no Docker needed
-- `web_fetch_20260209` - Dynamic filtering (Claude writes code to process fetched content), requires Docker
-
-**Key files:**
-- `app/services/web_fetch_service.py` - Main orchestration
-- `app/services/web_fetch/providers.py` - HttpxFetchProvider (default, no API key), TavilyFetchProvider
-- `app/schemas/web_fetch.py` - Pydantic models
-
-**Configuration:**
-- `ENABLE_WEB_FETCH=True` - Feature flag (enabled by default)
-- `WEB_FETCH_DEFAULT_MAX_USES=20` - Max fetches per request
-- `WEB_FETCH_DEFAULT_MAX_CONTENT_TOKENS=100000` - Content length limit
-
-**Health check:** `GET /health/web-fetch`
-
-### OpenTelemetry Tracing
-
-The proxy has a full OpenTelemetry tracing system for LLM observability, following the OTEL GenAI semantic conventions.
-
-**Architecture:**
-- Turn-based trace structure: each HTTP request becomes a "Turn" span, grouped under a session trace
-- Session store (`app/tracing/session_store.py`) maps `x-session-id` headers to OTEL trace contexts with 600s TTL
-- `ChatOnlySpanProcessor` filters out third-party library spans
-- Supports Langfuse, Jaeger, Grafana Tempo, and any OTEL-compatible backend
-
-**Key files:**
-- `app/tracing/provider.py` - TracerProvider initialization and exporter configuration
-- `app/tracing/middleware.py` - TracingMiddleware (creates root request spans)
-- `app/tracing/spans.py` - Span helpers for LLM calls, tool execution, PTC
-- `app/tracing/attributes.py` - OTEL GenAI semantic convention constants (~51 attributes)
-- `app/tracing/streaming.py` - Streaming response token accumulator
-- `app/tracing/session_store.py` - Session-to-trace mapping for agent loop aggregation
-- `app/tracing/context.py` - Session ID extraction and thread context propagation
-
-**Configuration:**
-- `ENABLE_TRACING=true` - Feature flag (disabled by default)
-- `OTEL_EXPORTER_OTLP_ENDPOINT` - Export endpoint (e.g., Langfuse, Jaeger)
-- `OTEL_EXPORTER_OTLP_PROTOCOL` - `http/protobuf` (default) or `grpc`
-- `OTEL_EXPORTER_OTLP_HEADERS` - Auth headers (e.g., `Authorization=Basic xxx`)
-- `OTEL_SERVICE_NAME` - Service name for trace identification
-- `OTEL_TRACE_CONTENT=false` - Include request/response bodies (PII risk)
-- `OTEL_TRACE_SAMPLING_RATIO=1.0` - Sampling ratio (0.0-1.0)
-
-**Zero-overhead design:** When tracing is disabled, all trace functions are no-ops.
-
-### Cache TTL (1-Hour Caching)
-
-The proxy extends Anthropic's `cache_control` with configurable TTL. Bedrock Claude models default to 5-minute cache; the proxy supports extending to 1 hour.
-
-**TTL Priority (highest to lowest):**
-1. API Key `cache_ttl` field (forced override for all requests from that key)
-2. Client request `cache_control.ttl` value
-3. `DEFAULT_CACHE_TTL` environment variable
-4. Anthropic/Bedrock default (5 minutes)
-
-**Cost impact:** 5m writes cost 1.25x input price; 1h writes cost 2.0x input price. The system auto-calculates correct pricing per TTL.
-
-**Configuration:** `DEFAULT_CACHE_TTL=1h` (or `5m`)
-
-### Admin Portal
-
-The admin portal is a separate FastAPI application for managing API keys, usage, pricing, and budgets.
-
-**Architecture:**
-- Backend: `admin_portal/backend/main.py` - Independent FastAPI server (port 8005 in dev)
-- Frontend: `admin_portal/frontend/` - Static files served from `frontend/dist`
-- Auth: AWS Cognito JWT validation via `admin_portal/backend/middleware/cognito_auth.py`
-- Background task: Usage aggregation runs every 5 minutes (`admin_portal/backend/services/usage_aggregator.py`)
-
-**API routers** (`admin_portal/backend/api/`):
-- `auth.py` - Cognito authentication (login, token refresh)
-- `api_keys.py` - API key CRUD, budget management
-- `pricing.py` - Model pricing configuration
-- `dashboard.py` - Usage statistics and analytics
-- `model_mapping.py` - Model ID mapping management
-
-**In production (ECS):** The admin portal frontend is served as static files from the main proxy at `/admin/`, with API calls proxied to the backend.
-
-## Testing Strategy
-
-### Unit Tests (`tests/unit/`)
-
-- **Converters**: Test all conversion paths (Anthropic↔Bedrock)
-- **Schemas**: Validate Pydantic models with various inputs
-- **Middleware**: Test auth and rate limiting logic
-
-**Pattern:**
-```python
-def test_convert_text_content():
-    converter = AnthropicToBedrockConverter()
-    result = converter._convert_content_blocks("Hello")
-    assert result == [{"text": "Hello"}]
-```
-
-### Integration Tests (`tests/integration/`)
-
-- **Full request flow**: Auth → Rate limit → Conversion → Mock Bedrock → Response
-- **Streaming**: Test SSE event generation
-- **DynamoDB**: Test with moto for AWS mocking
-
-**Pattern:**
-```python
-@pytest.mark.integration
-async def test_full_message_flow(test_client):
-    response = await test_client.post(
-        "/v1/messages",
-        json={...},
-        headers={"x-api-key": "test-key"}
-    )
-    assert response.status_code == 200
-```
-
-### Mocking AWS Services
-
-Use `moto` for DynamoDB and Bedrock mocking:
-```python
-from moto import mock_dynamodb, mock_bedrock
-
-@mock_dynamodb
-def test_with_dynamodb():
-    # Your test code
-    pass
-```
-
-## Important Design Decisions
-
-### Why Synchronous boto3 Instead of Async?
-
-DynamoDB operations are fast enough (single-digit milliseconds) that synchronous calls don't significantly impact performance. This simplifies the codebase and avoids aioboto3 complexity.
-
-### Why Token Bucket for Rate Limiting?
-
-Token bucket algorithm allows burst traffic while maintaining average rate limits. Each API key gets its own bucket stored in memory, refilled at a constant rate.
-
-### Why DynamoDB Instead of Redis?
-
-- **Persistence**: API keys and usage data persist across restarts
-- **Serverless-friendly**: Works well with Lambda/ECS without managing Redis servers
-- **Single-region deployment**: No need for cross-region replication (per requirements)
-- **AWS integration**: Seamless with other AWS services
-
-### Handling Bedrock-Specific Features Not in Anthropic API
-
-Features like guardrails are Bedrock-specific. Strategy:
-1. Add optional parameters to request schema
-2. Pass through to Bedrock if present
-3. Document as "extended" features
-4. Don't break Anthropic SDK compatibility
+100% Anthropic Messages API compatible. Key differences:
+- Model IDs mapped to Bedrock ARNs (or pass ARNs directly)
+- Adds rate limiting (429 + `Retry-After`)
+- Auth via `x-api-key` header
+- PTC requires `anthropic-beta: advanced-tool-use-2025-11-20` + Docker
+- Web search/fetch are proxy-side implementations
+- Cache TTL supports `1h` extension
 
 ## Troubleshooting
 
-### Health Endpoints
+See [docs/troubleshooting.md](docs/troubleshooting.md) for health endpoints, common errors, Docker/PTC issues, and debugging tips.
 
-- `GET /health` - Basic health check
-- `GET /ready` - Readiness check
-- `GET /liveness` - Liveness check
-- `GET /health/ptc` - PTC/Docker status
-- `GET /health/web-search` - Web search provider status
-- `GET /health/web-fetch` - Web fetch status
+## Testing Strategy
 
-### "Rate limit exceeded" Errors
+- **Unit tests** (`tests/unit/`): Converters, schemas, middleware
+- **Integration tests** (`tests/integration/`): Full request flow with mocked Bedrock
+- **AWS mocking**: Use `moto` for DynamoDB and Bedrock
 
-- Check token bucket configuration: `RATE_LIMIT_REQUESTS` and `RATE_LIMIT_WINDOW`
-- Verify API key's custom rate limit in DynamoDB
-- Rate limits reset based on time window, not calendar time
+## Performance
 
-### "Invalid API key" Errors
-
-- Ensure DynamoDB tables are created: `python scripts/setup_tables.py`
-- Verify API key exists: Check `anthropic-proxy-api-keys` table
-- Check `is_active` flag is `True`
-- Master key bypasses validation (for admin use): Set `MASTER_API_KEY` in `.env`
-
-### Conversion Errors
-
-- Most common: Missing fields in Pydantic models
-- Check that new Anthropic features are mapped in converters
-- Verify model ID mapping exists (or allow passthrough)
-
-### Streaming Cuts Off Early
-
-- Check `STREAMING_TIMEOUT` setting
-- Verify client keeps connection alive
-- Look for exceptions in `invoke_model_stream()` generator
-
-### AWS Credentials Issues
-
-- For local development: Use AWS CLI credentials or environment variables
-- For ECS/Lambda: Use IAM roles (preferred)
-- Required permissions: `bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream`, `dynamodb:*`
-
-### PTC / Docker Issues
-
-- **"Docker not available" error**: Ensure Docker daemon is running (`docker ps`)
-- **Container timeout**: Increase `PTC_EXECUTION_TIMEOUT` or check for infinite loops
-- **Session expired**: Sessions timeout after 4.5 minutes; use `container.id` for reuse
-- **Missing sandbox image**: Pull image manually: `docker pull python:3.11-slim`
-- **Permission denied**: Ensure user has Docker socket access (`/var/run/docker.sock`)
-- **Health check failing**: Check `/health/ptc` endpoint for detailed status
-- **Tool calls not returning**: Verify client sends `tool_result` back to continue execution
-
-### Docker-in-Docker (DinD) Bind Mount Issue
-
-**Problem**: When the proxy runs inside a Docker container (e.g., ECS EC2 with Docker socket mount), PTC sandbox containers fail with "Container failed to become ready" because bind mounts don't work correctly.
-
-**Root Cause**: Docker bind mounts resolve paths from the **Docker daemon's perspective** (the host), not from inside the container making the API call.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ EC2 Host                                                        │
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ Proxy Container (ECS Task)                               │   │
-│  │                                                          │   │
-│  │  tempfile.mkdtemp() creates /tmp/ptc_sandbox_xxx         │   │
-│  │  File written: /tmp/ptc_sandbox_xxx/runner.py  ← EXISTS  │   │
-│  │                                                          │   │
-│  │  Docker API call: volumes={"/tmp/ptc_sandbox_xxx": ...}  │   │
-│  └──────────────────────────┬───────────────────────────────┘   │
-│                             │                                   │
-│                             ▼                                   │
-│  Docker daemon receives path "/tmp/ptc_sandbox_xxx"             │
-│  Looks for it on HOST filesystem ← DOESN'T EXIST (or empty)    │
-│                             │                                   │
-│                             ▼                                   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ Sandbox Container                                        │   │
-│  │  /sandbox/ is EMPTY - runner.py not found!               │   │
-│  │  python /sandbox/runner.py → fails immediately           │   │
-│  └─────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Solution**: Use Docker's `put_archive` API to copy files directly into the container instead of bind mounts. This works regardless of where the proxy runs.
-
-**How to verify the issue** (via SSM on ECS EC2 instance):
-```bash
-# Check if temp dirs exist on host vs inside proxy container
-echo "=== Host /tmp ===" && ls -la /tmp/ | grep ptc
-echo "=== Inside proxy container /tmp ===" && docker exec <proxy_container_id> ls -la /tmp/ | grep ptc
-
-# Test bind mount behavior
-docker exec <proxy_container_id> sh -c "mkdir -p /tmp/test && echo content > /tmp/test/file.txt"
-docker run --rm -v /tmp/test:/test python:3.11-slim cat /test/file.txt  # Will fail - empty!
-```
-
-**Key code changes** (`app/services/ptc/sandbox.py`):
-- Removed bind mount volumes from container config
-- Added `_copy_file_to_container()` method using `put_archive`
-- Changed runner path from `/sandbox/runner.py` to `/tmp/runner.py`
-- Removed `read_only=True` (incompatible with `put_archive`)
-
-**Security maintained via**:
-- `network_disabled=True` - No network access
-- `security_opt=["no-new-privileges"]` - Prevent privilege escalation
-- `cap_drop=["ALL"]` - Drop all Linux capabilities
-- Memory and CPU limits
-
-## Project Structure Rationale
-
-```
-app/
-├── api/              # Route handlers (thin layer, delegates to services)
-├── converters/       # Core conversion logic (most complex code here)
-├── core/             # Configuration, logging, metrics (cross-cutting concerns)
-├── db/               # DynamoDB client and managers (data access layer)
-├── middleware/       # Auth and rate limiting (request processing pipeline)
-├── schemas/          # Pydantic models (validation and serialization)
-│   ├── anthropic.py  # Anthropic API schemas (request/response/content types)
-│   ├── bedrock.py    # Bedrock API schemas
-│   ├── web_search.py # Web search tool models
-│   └── web_fetch.py  # Web fetch tool models
-├── services/         # Business logic (orchestrates converters and Bedrock calls)
-│   ├── bedrock_service.py       # Bedrock API calls (InvokeModel + Converse)
-│   ├── ptc_service.py           # PTC orchestration
-│   ├── web_search_service.py    # Web search agentic loop
-│   ├── web_fetch_service.py     # Web fetch agentic loop
-│   ├── ptc/                     # PTC sandbox module
-│   ├── web_search/              # Search providers (Tavily, Brave) + domain filter
-│   └── web_fetch/               # Fetch providers (httpx, Tavily)
-└── tracing/          # OpenTelemetry distributed tracing
-    ├── provider.py   # TracerProvider + ChatOnlySpanProcessor
-    ├── middleware.py  # Request-level tracing middleware
-    ├── spans.py      # Span creation helpers (LLM, tools, PTC)
-    └── session_store.py  # Session-to-trace context mapping
-admin_portal/
-├── backend/          # Separate FastAPI app for admin UI
-│   ├── api/          # Routers: auth, api_keys, pricing, dashboard, model_mapping
-│   ├── middleware/   # Cognito JWT validation
-│   └── services/     # Usage aggregator (background task, 5-min interval)
-└── frontend/         # Static frontend (served at /admin/ in production)
-```
-
-**Why this structure?**
-- **Separation of concerns**: Each layer has a single responsibility
-- **Testability**: Can test converters independently of API layer
-- **FastAPI patterns**: Follows FastAPI best practices (routers, middleware, schemas)
-- **Scalability**: Easy to add new endpoints without touching core conversion logic
-
-## Environment Variables Reference
-
-**Required:**
-- `AWS_REGION` - AWS region for Bedrock and DynamoDB
-- `MASTER_API_KEY` - Master key for admin access (or set `REQUIRE_API_KEY=False` for dev)
-
-**Optional but Recommended:**
-- `DYNAMODB_ENDPOINT_URL` - Use `http://localhost:8001` for DynamoDB Local
-- `BEDROCK_ENDPOINT_URL` - Override Bedrock endpoint (rarely needed)
-- `ENABLE_METRICS=True` - Exposes Prometheus metrics at `/metrics`
-
-**Feature Flags:**
-- `ENABLE_TOOL_USE=True` - Support function calling
-- `ENABLE_EXTENDED_THINKING=True` - Support thinking blocks
-- `ENABLE_DOCUMENT_SUPPORT=True` - Support document content
-- `PROMPT_CACHING_ENABLED=False` - Prompt caching (not fully implemented)
-- `ENABLE_PROGRAMMATIC_TOOL_CALLING=True` - Support PTC (requires Docker)
-
-**Programmatic Tool Calling (PTC) Settings:**
-- `PTC_SANDBOX_IMAGE=python:3.11-slim` - Docker image for sandbox
-- `PTC_SESSION_TIMEOUT=270` - Session timeout in seconds (4.5 minutes)
-- `PTC_EXECUTION_TIMEOUT=60` - Code execution timeout
-- `PTC_MEMORY_LIMIT=256m` - Container memory limit
-- `PTC_NETWORK_DISABLED=True` - Disable network in sandbox
-
-**Web Search:**
-- `ENABLE_WEB_SEARCH=True` - Enable web search tool
-- `WEB_SEARCH_PROVIDER=tavily` - Provider (`tavily` or `brave`)
-- `WEB_SEARCH_API_KEY` - Provider API key
-- `WEB_SEARCH_MAX_RESULTS=5` - Results per search
-- `WEB_SEARCH_DEFAULT_MAX_USES=10` - Max searches per request
-
-**Web Fetch:**
-- `ENABLE_WEB_FETCH=True` - Enable web fetch tool (default: enabled)
-- `WEB_FETCH_DEFAULT_MAX_USES=20` - Max fetches per request
-- `WEB_FETCH_DEFAULT_MAX_CONTENT_TOKENS=100000` - Content length limit
-
-**Cache TTL:**
-- `DEFAULT_CACHE_TTL=1h` - Default cache TTL (`5m` or `1h`)
-
-**OpenTelemetry Tracing:**
-- `ENABLE_TRACING=true` - Enable tracing (default: disabled)
-- `OTEL_EXPORTER_OTLP_ENDPOINT` - Export endpoint URL
-- `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` - Protocol (`http/protobuf` or `grpc`)
-- `OTEL_EXPORTER_OTLP_HEADERS` - Auth headers (e.g., `Authorization=Basic xxx`)
-- `OTEL_SERVICE_NAME` - Service name
-- `OTEL_TRACE_CONTENT=false` - Include request/response content (PII risk)
-- `OTEL_TRACE_SAMPLING_RATIO=1.0` - Sampling ratio (0.0-1.0)
-
-**Beta Header Mapping:**
-- `BETA_HEADER_MAPPING` - Dict mapping Anthropic beta headers to Bedrock beta headers
-- `BETA_HEADER_SUPPORTED_MODELS` - List of model IDs that support beta header mapping
-
-See `.env.example` for full list.
-
-## API Compatibility Notes
-
-This service aims for **100% compatibility** with the Anthropic Messages API. Key differences:
-
-1. **Model IDs**: Must use Anthropic-style IDs (e.g., `claude-3-5-sonnet-20241022`), which are mapped to Bedrock ARNs internally. You can also pass Bedrock ARNs directly.
-
-2. **Thinking Blocks**: Bedrock may not support extended thinking natively. The service converts thinking blocks to text annotations where needed.
-
-3. **Prompt Caching**: Anthropic's `cache_control` parameter is parsed but may not be fully supported by Bedrock. The service gracefully handles this.
-
-4. **Rate Limiting**: This service adds rate limiting (not in base Anthropic API). Clients see `429` errors and `Retry-After` headers.
-
-5. **Authentication**: Uses API keys in `x-api-key` header (consistent with Anthropic API).
-
-6. **Programmatic Tool Calling**: Fully supported via Docker sandbox. Requires `anthropic-beta: advanced-tool-use-2025-11-20` header and Docker running on the server. Tools are executed client-side (returned to caller for execution).
-
-7. **Beta Header Mapping**: Anthropic beta headers (e.g., `advanced-tool-use-2025-11-20`) are mapped to corresponding Bedrock beta headers for supported models (currently Claude Opus 4.5). Unsupported models ignore unmapped beta headers.
-
-8. **Tool Input Examples**: The `input_examples` parameter in tool definitions is supported and passed to Bedrock as `inputExamples`. Requires beta header `advanced-tool-use-2025-11-20` for the feature to be enabled.
-
-9. **Web Search**: `web_search_20250305` and `web_search_20260209` tools are supported. Proxy-side implementation (Bedrock doesn't support these natively). Requires a search provider API key (Tavily or Brave).
-
-10. **Web Fetch**: `web_fetch_20250910` and `web_fetch_20260209` tools are supported. Default httpx provider requires no external API key.
-
-11. **Cache TTL**: Supports `cache_control.ttl: "1h"` for extended caching (Bedrock default is 5 minutes).
-
-## Key Files to Understand
-
-1. **`app/converters/anthropic_to_bedrock.py`** - Request conversion (Anthropic → Bedrock)
-2. **`app/converters/bedrock_to_anthropic.py`** - Response conversion (Bedrock → Anthropic)
-3. **`app/services/bedrock_service.py`** - Orchestrates Bedrock API calls (InvokeModel + Converse)
-4. **`app/api/messages.py`** - Main API endpoint handler
-5. **`app/core/config.py`** - Configuration and settings
-6. **`app/services/ptc_service.py`** - PTC orchestration (code execution flow)
-7. **`app/services/ptc/sandbox.py`** - Docker sandbox executor
-8. **`app/services/web_search_service.py`** - Web search agentic loop orchestration
-9. **`app/services/web_fetch_service.py`** - Web fetch agentic loop orchestration
-10. **`app/tracing/provider.py`** - OpenTelemetry provider and span processor
-11. **`admin_portal/backend/main.py`** - Admin portal backend entry point
-
-## Performance Considerations
-
-- **Conversion overhead**: ~10-50ms per request (negligible compared to Bedrock latency)
-- **DynamoDB latency**: 1-10ms for API key lookup (synchronous call)
-- **Streaming**: No buffering - events streamed as received from Bedrock
-- **Bottleneck**: Almost always Bedrock API response time, not proxy logic
-
-**Target metrics:**
-- P50 latency: <500ms (non-streaming)
-- P95 latency: <2s (non-streaming)
-- Time to first token: <500ms (streaming)
-- Throughput: >100 req/s per instance
+- Conversion overhead: ~10-50ms (negligible vs Bedrock latency)
+- DynamoDB lookup: 1-10ms
+- Streaming: No buffering, events streamed as received
+- Bottleneck: Almost always Bedrock API response time

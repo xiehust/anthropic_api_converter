@@ -89,6 +89,109 @@ async def lifespan(app: FastAPI):
 
     print("Application started successfully")
 
+    # Initialize multi-provider gateway modules (if enabled)
+    if settings.multi_provider_enabled:
+        import logging
+        _logger = logging.getLogger(__name__)
+        try:
+            if not settings.provider_key_encryption_secret:
+                _logger.warning(
+                    "PROVIDER_KEY_ENCRYPTION_SECRET not set — disabling multi-provider features"
+                )
+                settings.multi_provider_enabled = False
+            else:
+                from app.services.provider_registry import ProviderRegistry
+                from app.services.bedrock_provider import BedrockProvider
+                from app.services.bedrock_service import BedrockService
+                from app.keypool.encryption import KeyEncryption
+                from app.keypool.manager import KeyPoolManager
+                from app.keypool.failover import FailoverManager
+                from app.routing.rules import RuleEngine
+                from app.routing.engine import RoutingEngine
+                from app.routing.smart import SmartRouter
+                from app.compression.context_compressor import ContextCompressor
+                from app.db.dynamodb import (
+                    ProviderKeyManager,
+                    RoutingConfigManager,
+                    FailoverConfigManager,
+                    SmartRoutingConfigManager,
+                    ModelPricingManager,
+                )
+
+                # Provider Registry + BedrockProvider
+                registry = ProviderRegistry()
+                bedrock_svc = BedrockService()
+                pricing_mgr = ModelPricingManager(dynamodb_client)
+                bedrock_provider = BedrockProvider(bedrock_svc, pricing_mgr)
+                registry.register(bedrock_provider)
+                app.state.provider_registry = registry
+
+                # Key encryption + pool
+                encryption = KeyEncryption(settings.provider_key_encryption_secret)
+                key_pool = KeyPoolManager(encryption, dynamodb_client)
+                try:
+                    key_pool.load_keys()
+                except Exception as e:
+                    _logger.warning(f"Failed to load provider keys: {e}")
+                app.state.key_pool_manager = key_pool
+
+                # Failover
+                failover = FailoverManager(key_pool, dynamodb_client)
+                try:
+                    failover.load_chains()
+                except Exception as e:
+                    _logger.warning(f"Failed to load failover chains: {e}")
+                app.state.failover_manager = failover
+
+                # Rule engine
+                rule_engine = RuleEngine()
+                try:
+                    routing_cfg_mgr = RoutingConfigManager(dynamodb_client)
+                    from app.routing.rules import RoutingRule
+                    db_rules = routing_cfg_mgr.list_rules()
+                    rules = [
+                        RoutingRule(
+                            rule_id=r["rule_id"],
+                            rule_name=r["rule_name"],
+                            rule_type=r["rule_type"],
+                            pattern=r["pattern"],
+                            target_model=r["target_model"],
+                            target_provider=r.get("target_provider", "bedrock"),
+                            priority=int(r.get("priority", 0)),
+                        )
+                        for r in db_rules
+                        if r.get("is_enabled", True)
+                    ]
+                    rule_engine.load_rules(rules)
+                except Exception as e:
+                    _logger.warning(f"Failed to load routing rules: {e}")
+
+                # Smart router
+                smart_router = SmartRouter(
+                    strong_model=settings.smart_routing_strong_model,
+                    weak_model=settings.smart_routing_weak_model,
+                    threshold=settings.smart_routing_threshold,
+                )
+
+                # Routing engine
+                routing_engine = RoutingEngine(
+                    rule_engine, smart_router, registry, pricing_mgr,
+                    cache_aware_routing=settings.cache_aware_routing_enabled,
+                )
+                app.state.routing_engine = routing_engine
+
+                # Context compressor
+                compressor = ContextCompressor(
+                    tool_result_max_chars=settings.compression_tool_result_max_chars,
+                    fold_after_turns=settings.compression_fold_after_turns,
+                )
+                app.state.context_compressor = compressor
+
+                _logger.info("Multi-provider gateway modules initialized successfully")
+        except Exception as e:
+            import logging as _log
+            _log.getLogger(__name__).error(f"Failed to initialize multi-provider modules: {e}")
+
     # Initialize OpenTelemetry tracing
     if settings.enable_tracing:
         from app.tracing import init_tracing

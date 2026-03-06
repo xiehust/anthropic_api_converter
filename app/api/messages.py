@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.core.config import settings
-from app.core.exceptions import BedrockAPIError
+from app.core.exceptions import BedrockAPIError, NoProviderAvailableError
 from app.db.dynamodb import DynamoDBClient, UsageTracker
 from app.middleware.auth import get_api_key_info
 from app.schemas.anthropic import (
@@ -837,6 +837,100 @@ async def create_message(
                 logger.error(f"Request {request_id}: Web fetch error: {e}")
                 raise
 
+        # === Multi-Provider Gateway Branch ===
+        if settings.multi_provider_enabled and not is_ptc and not is_standalone and not is_web_search and not is_web_fetch:
+            # 1. Context compression
+            compression_stats = None
+            if settings.compression_enabled:
+                compressor = getattr(request.app.state, "context_compressor", None)
+                if compressor:
+                    strategy = api_key_info.get("compression_strategy", "off")
+                    messages_dicts = [m.model_dump() if hasattr(m, "model_dump") else m for m in request_data.messages]
+                    compressed_messages, compression_stats = compressor.compress(messages_dicts, strategy)
+                    request_data = request_data.model_copy(update={"messages": compressed_messages})
+                    if compression_stats and compression_stats.savings_ratio > 0:
+                        logger.info(
+                            f"Request {request_id}: Compression savings {compression_stats.savings_ratio:.1%}",
+                        )
+
+            # 2. Routing decision
+            target_provider = "bedrock"
+            target_model = request_data.model
+            if settings.routing_enabled:
+                routing_engine = getattr(request.app.state, "routing_engine", None)
+                if routing_engine:
+                    user_msg = _extract_last_user_text(request_data.messages) or ""
+                    # Detect cache-active session (any cache_control in system/messages/tools)
+                    is_cache_active = _is_cache_active_session(request_data)
+                    decision = routing_engine.route(
+                        request_data.model, user_msg, api_key_info,
+                        is_cache_active=is_cache_active,
+                    )
+                    target_provider = decision.provider
+                    target_model = decision.model
+                    logger.info(
+                        f"Request {request_id}: Routing {request_data.model} -> {target_model} ({decision.reason})",
+                    )
+
+            # 3. Key acquisition + failover
+            key_pool = getattr(request.app.state, "key_pool_manager", None)
+            failover_mgr = getattr(request.app.state, "failover_manager", None)
+            provider_registry = getattr(request.app.state, "provider_registry", None)
+
+            decrypted_key = None
+            key_id = None
+            if key_pool:
+                key_result = key_pool.get_available_key(target_provider, target_model)
+                if key_result is None and settings.failover_enabled and failover_mgr:
+                    failover_result = failover_mgr.find_failover(target_model)
+                    if failover_result:
+                        decrypted_key, key_id, target_provider, target_model = failover_result
+                    else:
+                        raise HTTPException(
+                            status_code=503,
+                            detail={"type": "api_error", "message": "All providers unavailable"},
+                        )
+                elif key_result is None:
+                    # For bedrock provider, key is not needed (IAM auth)
+                    if target_provider != "bedrock":
+                        raise HTTPException(
+                            status_code=503,
+                            detail={"type": "api_error", "message": "No available key"},
+                        )
+                else:
+                    decrypted_key, key_id = key_result
+
+            # 4. Provider invocation
+            provider = provider_registry.get_provider(target_provider) if provider_registry else None
+            if provider:
+                if request_data.stream:
+                    _end_trace_spans()
+                    return StreamingResponse(
+                        provider.invoke_stream(request_data, target_model, api_key_info),
+                        media_type="text/event-stream",
+                        headers={
+                            "Cache-Control": "no-cache",
+                            "Connection": "keep-alive",
+                            "X-Request-ID": request_id,
+                        },
+                    )
+                else:
+                    result = await provider.invoke(request_data, target_model, api_key_info)
+                    # Record usage
+                    usage_tracker.record_usage(
+                        api_key=api_key_info.get("api_key"),
+                        request_id=request_id,
+                        model=target_model,
+                        input_tokens=result.response.usage.input_tokens,
+                        output_tokens=result.response.usage.output_tokens,
+                        cached_tokens=getattr(result.response.usage, 'cache_read_input_tokens', 0) or 0,
+                        cache_write_input_tokens=getattr(result.response.usage, 'cache_creation_input_tokens', 0) or 0,
+                        success=True,
+                        cache_ttl=effective_cache_ttl,
+                    )
+                    _end_trace_spans()
+                    return result.response
+
         # Check if streaming is requested
         if request_data.stream:
             # Return streaming response
@@ -1001,6 +1095,41 @@ async def create_message(
                 "message": f"Failed to process request: {str(e)}",
             },
         )
+
+
+def _is_cache_active_session(request_data) -> bool:
+    """Check if the request has any cache_control blocks (system, messages, tools)."""
+    # Check system
+    system = getattr(request_data, "system", None)
+    if system and isinstance(system, list):
+        for part in system:
+            cc = getattr(part, "cache_control", None)
+            if cc:
+                return True
+
+    # Check messages
+    if request_data.messages:
+        for msg in request_data.messages:
+            content = getattr(msg, "content", None)
+            if isinstance(content, list):
+                for block in content:
+                    cc = getattr(block, "cache_control", None)
+                    if cc:
+                        return True
+
+    # Check tools
+    tools = getattr(request_data, "tools", None)
+    if tools:
+        for tool in tools:
+            if isinstance(tool, dict):
+                if tool.get("cache_control"):
+                    return True
+            else:
+                cc = getattr(tool, "cache_control", None)
+                if cc:
+                    return True
+
+    return False
 
 
 def _extract_last_user_text(messages) -> Optional[str]:

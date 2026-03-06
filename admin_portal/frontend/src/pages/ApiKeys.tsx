@@ -71,6 +71,8 @@ function ApiKeyForm({
     rate_limit: initialData?.rate_limit || 1000,
     service_tier: initialData?.service_tier || 'default',
     cache_ttl: initialData?.cache_ttl || '',
+    routing_strategy: initialData?.routing_strategy || 'off',
+    compression_strategy: initialData?.compression_strategy || 'off',
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -191,6 +193,40 @@ function ApiKeyForm({
           {formData.cache_ttl === '5m' && t('apiKeys.cacheTtlDesc.5m')}
           {formData.cache_ttl === '1h' && t('apiKeys.cacheTtlDesc.1h')}
         </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-1">
+            Routing Strategy
+          </label>
+          <select
+            value={formData.routing_strategy}
+            onChange={(e) => setFormData({ ...formData, routing_strategy: e.target.value })}
+            className="w-full px-3 py-2 bg-input-bg border border-border-dark rounded-lg text-white focus:border-primary focus:ring-1 focus:ring-primary"
+          >
+            <option value="off">Off</option>
+            <option value="cost">Cost (cheapest model)</option>
+            <option value="quality">Quality (best model)</option>
+            <option value="auto">Auto (smart routing)</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-1">
+            Compression Strategy
+          </label>
+          <select
+            value={formData.compression_strategy}
+            onChange={(e) => setFormData({ ...formData, compression_strategy: e.target.value })}
+            className="w-full px-3 py-2 bg-input-bg border border-border-dark rounded-lg text-white focus:border-primary focus:ring-1 focus:ring-primary"
+          >
+            <option value="off">Off (no compression)</option>
+            <option value="conservative">Conservative (tool truncation only)</option>
+            <option value="moderate">Moderate (truncation + folding)</option>
+            <option value="aggressive">Aggressive (truncation + folding)</option>
+          </select>
+        </div>
       </div>
 
       <div className="flex gap-3 mt-4">

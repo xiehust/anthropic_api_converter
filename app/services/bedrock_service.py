@@ -885,6 +885,9 @@ class BedrockService:
                 print(f"  - Messages count: {len(native_request.get('messages', []))}")
                 print(f"  - Has tools: {bool(native_request.get('tools'))}")
                 print(f"  - Beta headers: {native_request.get('anthropic_beta', [])}")
+                print(f"  - max_tokens: {native_request.get('max_tokens')}")
+                print(f"  - thinking: {native_request.get('thinking')}")
+                print(f"  - output_config: {native_request.get('output_config')}")
 
                 # Submit the native stream worker to the thread pool
                 future = loop.run_in_executor(

@@ -15,6 +15,8 @@ class ApiKeyCreate(BaseModel):
     rate_limit: Optional[int] = Field(None, description="Custom rate limit")
     service_tier: Optional[str] = Field(None, description="Bedrock service tier")
     cache_ttl: Optional[str] = Field(None, description="Cache TTL override ('5m' or '1h')")
+    routing_strategy: Optional[str] = Field("off", description="Routing strategy: cost/quality/auto/off")
+    compression_strategy: Optional[str] = Field("off", description="Compression strategy: aggressive/moderate/conservative/off")
 
 
 class ApiKeyUpdate(BaseModel):
@@ -29,6 +31,8 @@ class ApiKeyUpdate(BaseModel):
     service_tier: Optional[str] = None
     is_active: Optional[bool] = None
     cache_ttl: Optional[str] = None  # "5m", "1h", or "none" to clear
+    routing_strategy: Optional[str] = None
+    compression_strategy: Optional[str] = None
 
 
 class ApiKeyResponse(BaseModel):
@@ -52,6 +56,8 @@ class ApiKeyResponse(BaseModel):
     updated_at: Optional[Union[int, str]] = None  # Accept both formats
     deactivated_reason: Optional[str] = None  # Reason for deactivation
     cache_ttl: Optional[str] = None  # Per-key cache TTL override
+    routing_strategy: Optional[str] = "off"
+    compression_strategy: Optional[str] = "off"
     metadata: Optional[Dict[str, Any]] = None
     # Usage stats (aggregated from usage_stats table)
     total_input_tokens: Optional[int] = 0

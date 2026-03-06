@@ -19,6 +19,9 @@ export default function Sidebar() {
     { path: '/api-keys', icon: 'vpn_key', label: t('nav.apiKeys'), section: 'main' },
     { path: '/pricing', icon: 'payments', label: t('nav.pricing'), section: 'config' },
     { path: '/model-mapping', icon: 'swap_horiz', label: t('nav.modelMapping'), section: 'config' },
+    { path: '/provider-keys', icon: 'key', label: 'Provider Keys', section: 'gateway' },
+    { path: '/routing', icon: 'alt_route', label: 'Routing', section: 'gateway' },
+    { path: '/failover', icon: 'sync_alt', label: 'Failover', section: 'gateway' },
   ];
 
   const isActive = (path: string) => location.pathname === path;
@@ -90,6 +93,36 @@ export default function Sidebar() {
               </span>
             </NavLink>
           ))}
+
+        {/* TODO: Gateway section hidden - pending optimization before release
+        <div className="px-3 mt-6 mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          Gateway
+        </div>
+        {navItems
+          .filter((item) => item.section === 'gateway')
+          .map((item) => (
+            <NavLink
+              key={item.path}
+              to={item.path}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors group ${
+                isActive(item.path)
+                  ? 'bg-primary/20 text-primary'
+                  : 'text-slate-400 hover:text-white hover:bg-surface-dark'
+              }`}
+            >
+              <span
+                className={`material-symbols-outlined ${
+                  isActive(item.path) ? 'text-primary fill-1' : 'group-hover:text-white'
+                }`}
+              >
+                {item.icon}
+              </span>
+              <span className={`text-sm ${isActive(item.path) ? 'font-bold' : 'font-medium'}`}>
+                {item.label}
+              </span>
+            </NavLink>
+          ))}
+        */}
       </nav>
 
       {/* User Section */}

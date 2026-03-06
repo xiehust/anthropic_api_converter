@@ -339,6 +339,78 @@ class Settings(BaseSettings):
         description="Default maximum content tokens per fetch"
     )
 
+    # === Multi-Provider Gateway Feature Flags ===
+    multi_provider_enabled: bool = Field(
+        default=False, alias="MULTI_PROVIDER_ENABLED",
+        description="Master switch for multi-provider gateway features"
+    )
+    routing_enabled: bool = Field(
+        default=False, alias="ROUTING_ENABLED",
+        description="Enable routing engine (rule/cost/quality/auto)"
+    )
+    smart_routing_enabled: bool = Field(
+        default=False, alias="SMART_ROUTING_ENABLED",
+        description="Enable RouteLLM smart routing (lazy-loads routellm)"
+    )
+    failover_enabled: bool = Field(
+        default=True, alias="FAILOVER_ENABLED",
+        description="Enable cross-model failover when all keys are rate-limited"
+    )
+    compression_enabled: bool = Field(
+        default=False, alias="COMPRESSION_ENABLED",
+        description="Enable agent context compression"
+    )
+
+    # === Provider Key Encryption ===
+    provider_key_encryption_secret: Optional[str] = Field(
+        default=None, alias="PROVIDER_KEY_ENCRYPTION_SECRET",
+        description="Secret for Fernet encryption of provider API keys"
+    )
+
+    # === Smart Routing Config ===
+    smart_routing_strong_model: str = Field(
+        default="claude-sonnet-4-5-20250929", alias="SMART_ROUTING_STRONG_MODEL",
+        description="Model for complex queries in smart routing"
+    )
+    smart_routing_weak_model: str = Field(
+        default="claude-haiku-4-5-20251001", alias="SMART_ROUTING_WEAK_MODEL",
+        description="Model for simple queries in smart routing"
+    )
+    smart_routing_threshold: float = Field(
+        default=0.5, alias="SMART_ROUTING_THRESHOLD",
+        description="RouteLLM classification threshold (0.0-1.0)"
+    )
+
+    # === Compression Config ===
+    compression_tool_result_max_chars: int = Field(
+        default=2000, alias="COMPRESSION_TOOL_RESULT_MAX_CHARS",
+        description="Max chars before tool_result truncation"
+    )
+    compression_fold_after_turns: int = Field(
+        default=6, alias="COMPRESSION_FOLD_AFTER_TURNS",
+        description="Fold assistant messages older than N turns from end"
+    )
+
+    # === Cache-Aware Routing ===
+    cache_aware_routing_enabled: bool = Field(
+        default=True, alias="CACHE_AWARE_ROUTING_ENABLED",
+        description="When true, routing engine preserves model for cache-active sessions"
+    )
+
+    # === Multi-Provider DynamoDB Tables ===
+    dynamodb_provider_keys_table: str = Field(
+        default="anthropic-proxy-provider-keys", alias="DYNAMODB_PROVIDER_KEYS_TABLE"
+    )
+    dynamodb_routing_rules_table: str = Field(
+        default="anthropic-proxy-routing-rules", alias="DYNAMODB_ROUTING_RULES_TABLE"
+    )
+    dynamodb_failover_chains_table: str = Field(
+        default="anthropic-proxy-failover-chains", alias="DYNAMODB_FAILOVER_CHAINS_TABLE"
+    )
+    dynamodb_smart_routing_config_table: str = Field(
+        default="anthropic-proxy-smart-routing-config", alias="DYNAMODB_SMART_ROUTING_CONFIG_TABLE"
+    )
+
     @field_validator("cors_origins", "cors_allow_methods", "cors_allow_headers", mode="before")
     @classmethod
     def parse_list_fields(cls, v: Any) -> List[str]:

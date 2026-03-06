@@ -22,6 +22,10 @@ export interface ECSStackProps extends cdk.StackProps {
   modelMappingTable: dynamodb.Table;
   usageStatsTable: dynamodb.Table;
   modelPricingTable: dynamodb.Table;
+  providerKeysTable: dynamodb.Table;
+  routingRulesTable: dynamodb.Table;
+  failoverChainsTable: dynamodb.Table;
+  smartRoutingConfigTable: dynamodb.Table;
   // Cognito (optional - for admin portal)
   cognitoUserPoolId?: string;
   cognitoClientId?: string;
@@ -39,6 +43,7 @@ export class ECSStack extends cdk.Stack {
 
     const { config, vpc, albSecurityGroup, ecsSecurityGroup } = props;
     const { apiKeysTable, usageTable, modelMappingTable, usageStatsTable, modelPricingTable } = props;
+    const { providerKeysTable, routingRulesTable, failoverChainsTable, smartRoutingConfigTable } = props;
     const { cognitoUserPoolId, cognitoClientId } = props;
 
     // Create ECS Cluster
@@ -130,6 +135,10 @@ export class ECSStack extends cdk.Stack {
     apiKeysTable.grantReadWriteData(taskRole);
     usageTable.grantReadWriteData(taskRole);
     modelMappingTable.grantReadWriteData(taskRole);
+    providerKeysTable.grantReadWriteData(taskRole);
+    routingRulesTable.grantReadWriteData(taskRole);
+    failoverChainsTable.grantReadWriteData(taskRole);
+    smartRoutingConfigTable.grantReadWriteData(taskRole);
 
     // Grant Bedrock permissions
     taskRole.addToPolicy(
@@ -207,6 +216,11 @@ export class ECSStack extends cdk.Stack {
       DYNAMODB_API_KEYS_TABLE: apiKeysTable.tableName,
       DYNAMODB_USAGE_TABLE: usageTable.tableName,
       DYNAMODB_MODEL_MAPPING_TABLE: modelMappingTable.tableName,
+      // Multi-Provider Gateway Tables
+      DYNAMODB_PROVIDER_KEYS_TABLE: providerKeysTable.tableName,
+      DYNAMODB_ROUTING_RULES_TABLE: routingRulesTable.tableName,
+      DYNAMODB_FAILOVER_CHAINS_TABLE: failoverChainsTable.tableName,
+      DYNAMODB_SMART_ROUTING_CONFIG_TABLE: smartRoutingConfigTable.tableName,
 
       // Authentication
       API_KEY_HEADER: 'x-api-key',
@@ -295,6 +309,10 @@ export class ECSStack extends cdk.Stack {
           modelMappingTable,
           usageStatsTable,
           modelPricingTable,
+          providerKeysTable,
+          routingRulesTable,
+          failoverChainsTable,
+          smartRoutingConfigTable,
         },
         cognitoUserPoolId,
         cognitoClientId
@@ -703,6 +721,10 @@ export class ECSStack extends cdk.Stack {
       modelMappingTable: dynamodb.Table;
       usageStatsTable: dynamodb.Table;
       modelPricingTable: dynamodb.Table;
+      providerKeysTable: dynamodb.Table;
+      routingRulesTable: dynamodb.Table;
+      failoverChainsTable: dynamodb.Table;
+      smartRoutingConfigTable: dynamodb.Table;
     },
     cognitoUserPoolId?: string,
     cognitoClientId?: string
@@ -739,6 +761,11 @@ export class ECSStack extends cdk.Stack {
       DYNAMODB_MODEL_MAPPING_TABLE: tables.modelMappingTable.tableName,
       DYNAMODB_USAGE_STATS_TABLE: tables.usageStatsTable.tableName,
       DYNAMODB_MODEL_PRICING_TABLE: tables.modelPricingTable.tableName,
+      // Multi-Provider Gateway Tables
+      DYNAMODB_PROVIDER_KEYS_TABLE: tables.providerKeysTable.tableName,
+      DYNAMODB_ROUTING_RULES_TABLE: tables.routingRulesTable.tableName,
+      DYNAMODB_FAILOVER_CHAINS_TABLE: tables.failoverChainsTable.tableName,
+      DYNAMODB_SMART_ROUTING_CONFIG_TABLE: tables.smartRoutingConfigTable.tableName,
       // Cognito (if configured)
       ...(cognitoUserPoolId && { COGNITO_USER_POOL_ID: cognitoUserPoolId }),
       ...(cognitoClientId && { COGNITO_CLIENT_ID: cognitoClientId }),

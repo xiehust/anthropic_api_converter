@@ -4,6 +4,7 @@ Admin Portal Backend - FastAPI Application
 Independent FastAPI server for the admin portal running on port 8005.
 Serves both the API and the static frontend files.
 """
+import logging
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -33,6 +34,7 @@ from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from admin_portal.backend.api import auth, api_keys, pricing, dashboard, model_mapping
+from admin_portal.backend.api import provider_keys, routing, failover
 from admin_portal.backend.middleware.cognito_auth import CognitoAuthMiddleware
 from admin_portal.backend.services.usage_aggregator import start_aggregator, stop_aggregator
 
@@ -91,6 +93,9 @@ app.include_router(dashboard.router, prefix=f"{API_PREFIX}/dashboard", tags=["Da
 app.include_router(api_keys.router, prefix=f"{API_PREFIX}/keys", tags=["API Keys"])
 app.include_router(pricing.router, prefix=f"{API_PREFIX}/pricing", tags=["Model Pricing"])
 app.include_router(model_mapping.router, prefix=f"{API_PREFIX}/model-mapping", tags=["Model Mapping"])
+app.include_router(provider_keys.router, prefix=f"{API_PREFIX}/provider-keys", tags=["Provider Keys"])
+app.include_router(routing.router, prefix=f"{API_PREFIX}/routing", tags=["Routing"])
+app.include_router(failover.router, prefix=f"{API_PREFIX}/failover", tags=["Failover"])
 
 
 @app.get("/health")
@@ -102,11 +107,13 @@ async def health_check():
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler."""
+    logger = logging.getLogger(__name__)
+    logger.error(f"Unhandled exception on {request.method} {request.url.path}: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
         content={
             "error": "internal_error",
-            "message": str(exc),
+            "message": "An internal error occurred. Please try again later.",
         },
     )
 

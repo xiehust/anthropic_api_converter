@@ -6,11 +6,14 @@ Supports:
 - TavilyFetchProvider: Tavily Extract API (requires paid Tavily plan)
 """
 import html as html_module
+import ipaddress
 import logging
 import re
+import socket
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import urlparse
 
 from app.core.config import settings
 
@@ -61,12 +64,74 @@ class FetchProvider(ABC):
         pass
 
 
+def _is_private_ip(ip_str: str) -> bool:
+    """Check if an IP address is private, reserved, loopback, or link-local."""
+    try:
+        addr = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True  # If we can't parse it, block it to be safe
+
+    return (
+        addr.is_private
+        or addr.is_reserved
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_multicast
+        or addr.is_unspecified
+        # AWS EC2 metadata endpoint
+        or ip_str == "169.254.169.254"
+        # ECS metadata endpoint
+        or ip_str == "169.254.170.2"
+    )
+
+
+def _validate_url_ssrf(url: str) -> None:
+    """
+    Validate URL against SSRF attacks by resolving the hostname
+    and checking if it points to a private/reserved IP address.
+
+    Raises FetchError if the URL targets an internal resource.
+    """
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+
+    if not hostname:
+        raise FetchError("invalid_input", f"Cannot extract hostname from URL: {url}")
+
+    # Block obvious internal hostnames
+    blocked_hostnames = {
+        "localhost",
+        "metadata.google.internal",
+        "metadata.google",
+    }
+    if hostname.lower() in blocked_hostnames:
+        raise FetchError(
+            "ssrf_blocked",
+            f"Access to internal host is not allowed: {hostname}",
+        )
+
+    # Resolve hostname to IP(s) and check each one
+    try:
+        addrinfos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror:
+        raise FetchError("url_not_accessible", f"Cannot resolve hostname: {hostname}")
+
+    for addrinfo in addrinfos:
+        ip_str = str(addrinfo[4][0])
+        if _is_private_ip(ip_str):
+            raise FetchError(
+                "ssrf_blocked",
+                f"Access to private/internal IP address is not allowed: {hostname} -> {ip_str}",
+            )
+
+
 def _validate_url(url: str) -> None:
     """Common URL validation. Raises FetchError on invalid URL."""
     if not url or not url.startswith(("http://", "https://")):
         raise FetchError("invalid_input", f"Invalid URL: {url}")
     if len(url) > 250:
         raise FetchError("url_too_long", f"URL exceeds 250 characters")
+    _validate_url_ssrf(url)
 
 
 def _apply_token_limit(content: str, max_content_tokens: Optional[int], label: str) -> str:
@@ -139,12 +204,26 @@ class HttpxFetchProvider(FetchProvider):
 
     @property
     def client(self):
-        """Lazy-initialize httpx async client."""
+        """Lazy-initialize httpx async client with SSRF-safe redirect handling."""
         if self._client is None:
             import httpx
+
+            async def _validate_redirect(response: httpx.Response) -> None:
+                """Validate each redirect target against SSRF."""
+                if response.next_request is not None:
+                    redirect_url = str(response.next_request.url)
+                    try:
+                        _validate_url_ssrf(redirect_url)
+                    except FetchError:
+                        raise FetchError(
+                            "ssrf_blocked",
+                            f"Redirect to blocked URL: {redirect_url}",
+                        )
+
             self._client = httpx.AsyncClient(
                 timeout=30.0,
                 follow_redirects=True,
+                event_hooks={"response": [_validate_redirect]},
                 headers={
                     "User-Agent": "Mozilla/5.0 (compatible; AnthropicProxy/1.0)",
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",

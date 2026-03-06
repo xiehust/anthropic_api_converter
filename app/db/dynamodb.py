@@ -36,6 +36,10 @@ class DynamoDBClient:
         self.model_mapping_table_name = settings.dynamodb_model_mapping_table
         self.model_pricing_table_name = settings.dynamodb_model_pricing_table
         self.usage_stats_table_name = settings.dynamodb_usage_stats_table
+        self.provider_keys_table_name = settings.dynamodb_provider_keys_table
+        self.routing_rules_table_name = settings.dynamodb_routing_rules_table
+        self.failover_chains_table_name = settings.dynamodb_failover_chains_table
+        self.smart_routing_config_table_name = settings.dynamodb_smart_routing_config_table
 
     def create_tables(self):
         """Create all required DynamoDB tables if they don't exist."""
@@ -44,6 +48,10 @@ class DynamoDBClient:
         self._create_model_mapping_table()
         self._create_model_pricing_table()
         self._create_usage_stats_table()
+        self._create_provider_keys_table()
+        self._create_routing_rules_table()
+        self._create_failover_chains_table()
+        self._create_smart_routing_config_table()
 
     def _create_api_keys_table(self):
         """Create API keys table."""
@@ -185,6 +193,100 @@ class DynamoDBClient:
             else:
                 raise
 
+    def _create_provider_keys_table(self):
+        """Create provider keys table for multi-provider key management."""
+        try:
+            table = self.dynamodb.create_table(
+                TableName=self.provider_keys_table_name,
+                KeySchema=[
+                    {"AttributeName": "key_id", "KeyType": "HASH"},
+                ],
+                AttributeDefinitions=[
+                    {"AttributeName": "key_id", "AttributeType": "S"},
+                    {"AttributeName": "provider", "AttributeType": "S"},
+                ],
+                GlobalSecondaryIndexes=[
+                    {
+                        "IndexName": "provider-index",
+                        "KeySchema": [
+                            {"AttributeName": "provider", "KeyType": "HASH"},
+                        ],
+                        "Projection": {"ProjectionType": "ALL"},
+                    }
+                ],
+                BillingMode="PAY_PER_REQUEST",
+            )
+            table.wait_until_exists()
+            print(f"Created table: {self.provider_keys_table_name}")
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ResourceInUseException":
+                print(f"Table already exists: {self.provider_keys_table_name}")
+            else:
+                raise
+
+    def _create_routing_rules_table(self):
+        """Create routing rules table."""
+        try:
+            table = self.dynamodb.create_table(
+                TableName=self.routing_rules_table_name,
+                KeySchema=[
+                    {"AttributeName": "rule_id", "KeyType": "HASH"},
+                ],
+                AttributeDefinitions=[
+                    {"AttributeName": "rule_id", "AttributeType": "S"},
+                ],
+                BillingMode="PAY_PER_REQUEST",
+            )
+            table.wait_until_exists()
+            print(f"Created table: {self.routing_rules_table_name}")
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ResourceInUseException":
+                print(f"Table already exists: {self.routing_rules_table_name}")
+            else:
+                raise
+
+    def _create_failover_chains_table(self):
+        """Create failover chains table."""
+        try:
+            table = self.dynamodb.create_table(
+                TableName=self.failover_chains_table_name,
+                KeySchema=[
+                    {"AttributeName": "source_model", "KeyType": "HASH"},
+                ],
+                AttributeDefinitions=[
+                    {"AttributeName": "source_model", "AttributeType": "S"},
+                ],
+                BillingMode="PAY_PER_REQUEST",
+            )
+            table.wait_until_exists()
+            print(f"Created table: {self.failover_chains_table_name}")
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ResourceInUseException":
+                print(f"Table already exists: {self.failover_chains_table_name}")
+            else:
+                raise
+
+    def _create_smart_routing_config_table(self):
+        """Create smart routing config table."""
+        try:
+            table = self.dynamodb.create_table(
+                TableName=self.smart_routing_config_table_name,
+                KeySchema=[
+                    {"AttributeName": "config_id", "KeyType": "HASH"},
+                ],
+                AttributeDefinitions=[
+                    {"AttributeName": "config_id", "AttributeType": "S"},
+                ],
+                BillingMode="PAY_PER_REQUEST",
+            )
+            table.wait_until_exists()
+            print(f"Created table: {self.smart_routing_config_table_name}")
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ResourceInUseException":
+                print(f"Table already exists: {self.smart_routing_config_table_name}")
+            else:
+                raise
+
 
 class APIKeyManager:
     """Manager for API key operations."""
@@ -206,6 +308,8 @@ class APIKeyManager:
         monthly_budget: Optional[float] = None,
         tpm_limit: Optional[int] = None,
         cache_ttl: Optional[str] = None,
+        routing_strategy: Optional[str] = None,
+        compression_strategy: Optional[str] = None,
     ) -> str:
         """
         Create a new API key.
@@ -252,6 +356,8 @@ class APIKeyManager:
             "deactivated_reason": None,  # Reason for deactivation (e.g., "budget_exceeded")
             "tpm_limit": tpm_limit or 100000,
             "cache_ttl": cache_ttl,
+            "routing_strategy": routing_strategy or "off",
+            "compression_strategy": compression_strategy or "off",
         }
 
         self.table.put_item(Item=item)
@@ -480,6 +586,8 @@ class APIKeyManager:
         is_active: Optional[bool] = None,
         deactivated_reason: Optional[str] = None,
         cache_ttl: Optional[str] = None,
+        routing_strategy: Optional[str] = None,
+        compression_strategy: Optional[str] = None,
     ) -> bool:
         """
         Update API key fields.
@@ -567,6 +675,14 @@ class APIKeyManager:
             else:
                 update_parts.append("cache_ttl = :cache_ttl")
                 expression_values[":cache_ttl"] = cache_ttl
+
+        if routing_strategy is not None:
+            update_parts.append("routing_strategy = :routing_strategy")
+            expression_values[":routing_strategy"] = routing_strategy
+
+        if compression_strategy is not None:
+            update_parts.append("compression_strategy = :compression_strategy")
+            expression_values[":compression_strategy"] = compression_strategy
 
         if not update_parts:
             return False
@@ -1570,3 +1686,337 @@ class UsageStatsManager:
                             print(f"[UsageStatsManager] API key {api_key[:20]}... exceeded budget")
 
         return count
+
+
+class ProviderKeyManager:
+    """Manager for provider API key operations (multi-provider key pool)."""
+
+    def __init__(self, dynamodb_client: DynamoDBClient):
+        self.dynamodb = dynamodb_client.dynamodb
+        self.table = self.dynamodb.Table(dynamodb_client.provider_keys_table_name)
+
+    def create_key(
+        self,
+        provider: str,
+        encrypted_api_key: str,
+        models: List[str],
+        is_enabled: bool = True,
+    ) -> Dict[str, Any]:
+        """Create a new provider key."""
+        key_id = str(uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        item = {
+            "key_id": key_id,
+            "provider": provider,
+            "encrypted_api_key": encrypted_api_key,
+            "models": models,
+            "is_enabled": is_enabled,
+            "status": "available",
+            "created_at": now,
+            "updated_at": now,
+        }
+        self.table.put_item(Item=item)
+        return item
+
+    def get_key(self, key_id: str) -> Optional[Dict[str, Any]]:
+        """Get a provider key by ID."""
+        try:
+            response = self.table.get_item(Key={"key_id": key_id})
+            return response.get("Item")
+        except ClientError:
+            return None
+
+    def list_keys(self) -> List[Dict[str, Any]]:
+        """List all provider keys."""
+        response = self.table.scan()
+        return response.get("Items", [])
+
+    def list_keys_by_provider(self, provider: str) -> List[Dict[str, Any]]:
+        """List provider keys filtered by provider using GSI."""
+        response = self.table.query(
+            IndexName="provider-index",
+            KeyConditionExpression="provider = :provider",
+            ExpressionAttributeValues={":provider": provider},
+        )
+        return response.get("Items", [])
+
+    def update_key(
+        self,
+        key_id: str,
+        models: Optional[List[str]] = None,
+        is_enabled: Optional[bool] = None,
+        status: Optional[str] = None,
+    ) -> bool:
+        """Update a provider key."""
+        update_parts = []
+        expression_values = {}
+
+        if models is not None:
+            update_parts.append("models = :models")
+            expression_values[":models"] = models
+        if is_enabled is not None:
+            update_parts.append("is_enabled = :is_enabled")
+            expression_values[":is_enabled"] = is_enabled
+        if status is not None:
+            update_parts.append("#s = :status")
+            expression_values[":status"] = status
+
+        if not update_parts:
+            return False
+
+        update_parts.append("updated_at = :updated_at")
+        expression_values[":updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        update_expression = "SET " + ", ".join(update_parts)
+        try:
+            update_kwargs = {
+                "Key": {"key_id": key_id},
+                "UpdateExpression": update_expression,
+                "ExpressionAttributeValues": expression_values,
+            }
+            if "#s" in update_expression:
+                update_kwargs["ExpressionAttributeNames"] = {"#s": "status"}
+            self.table.update_item(**update_kwargs)
+            return True
+        except ClientError:
+            return False
+
+    def delete_key(self, key_id: str) -> bool:
+        """Delete a provider key."""
+        try:
+            self.table.delete_item(Key={"key_id": key_id})
+            return True
+        except ClientError:
+            return False
+
+
+class RoutingConfigManager:
+    """Manager for routing rule operations."""
+
+    def __init__(self, dynamodb_client: DynamoDBClient):
+        self.dynamodb = dynamodb_client.dynamodb
+        self.table = self.dynamodb.Table(dynamodb_client.routing_rules_table_name)
+
+    def create_rule(
+        self,
+        rule_name: str,
+        rule_type: str,
+        pattern: str,
+        target_model: str,
+        target_provider: str = "bedrock",
+        priority: Optional[int] = None,
+        is_enabled: bool = True,
+    ) -> Dict[str, Any]:
+        """Create a new routing rule."""
+        rule_id = str(uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+
+        if priority is None:
+            # Auto-assign priority: max existing + 1
+            existing = self.list_rules()
+            priority = max((r.get("priority", 0) for r in existing), default=-1) + 1
+
+        item = {
+            "rule_id": rule_id,
+            "rule_name": rule_name,
+            "rule_type": rule_type,
+            "pattern": pattern,
+            "target_model": target_model,
+            "target_provider": target_provider,
+            "priority": priority,
+            "is_enabled": is_enabled,
+            "created_at": now,
+            "updated_at": now,
+        }
+        self.table.put_item(Item=item)
+        return item
+
+    def get_rule(self, rule_id: str) -> Optional[Dict[str, Any]]:
+        """Get a routing rule by ID."""
+        try:
+            response = self.table.get_item(Key={"rule_id": rule_id})
+            return response.get("Item")
+        except ClientError:
+            return None
+
+    def list_rules(self) -> List[Dict[str, Any]]:
+        """List all routing rules sorted by priority."""
+        response = self.table.scan()
+        items = response.get("Items", [])
+        return sorted(items, key=lambda r: r.get("priority", 0))
+
+    def update_rule(
+        self,
+        rule_id: str,
+        rule_name: Optional[str] = None,
+        rule_type: Optional[str] = None,
+        pattern: Optional[str] = None,
+        target_model: Optional[str] = None,
+        target_provider: Optional[str] = None,
+        is_enabled: Optional[bool] = None,
+    ) -> bool:
+        """Update a routing rule."""
+        update_parts = []
+        expression_values = {}
+        expression_names = {}
+
+        if rule_name is not None:
+            update_parts.append("rule_name = :rule_name")
+            expression_values[":rule_name"] = rule_name
+        if rule_type is not None:
+            update_parts.append("rule_type = :rule_type")
+            expression_values[":rule_type"] = rule_type
+        if pattern is not None:
+            update_parts.append("pattern = :pattern")
+            expression_values[":pattern"] = pattern
+        if target_model is not None:
+            update_parts.append("target_model = :target_model")
+            expression_values[":target_model"] = target_model
+        if target_provider is not None:
+            update_parts.append("target_provider = :target_provider")
+            expression_values[":target_provider"] = target_provider
+        if is_enabled is not None:
+            update_parts.append("is_enabled = :is_enabled")
+            expression_values[":is_enabled"] = is_enabled
+
+        if not update_parts:
+            return False
+
+        update_parts.append("updated_at = :updated_at")
+        expression_values[":updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        update_expression = "SET " + ", ".join(update_parts)
+        try:
+            update_kwargs = {
+                "Key": {"rule_id": rule_id},
+                "UpdateExpression": update_expression,
+                "ExpressionAttributeValues": expression_values,
+            }
+            if expression_names:
+                update_kwargs["ExpressionAttributeNames"] = expression_names
+            self.table.update_item(**update_kwargs)
+            return True
+        except ClientError:
+            return False
+
+    def reorder_rules(self, rule_ids: List[str]) -> bool:
+        """Batch update rule priorities based on ordered list of rule_ids."""
+        try:
+            for priority, rule_id in enumerate(rule_ids):
+                self.table.update_item(
+                    Key={"rule_id": rule_id},
+                    UpdateExpression="SET priority = :p, updated_at = :u",
+                    ExpressionAttributeValues={
+                        ":p": priority,
+                        ":u": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+            return True
+        except ClientError:
+            return False
+
+    def delete_rule(self, rule_id: str) -> bool:
+        """Delete a routing rule."""
+        try:
+            self.table.delete_item(Key={"rule_id": rule_id})
+            return True
+        except ClientError:
+            return False
+
+
+class FailoverConfigManager:
+    """Manager for failover chain operations."""
+
+    def __init__(self, dynamodb_client: DynamoDBClient):
+        self.dynamodb = dynamodb_client.dynamodb
+        self.table = self.dynamodb.Table(dynamodb_client.failover_chains_table_name)
+
+    def create_chain(
+        self,
+        source_model: str,
+        targets: List[Dict[str, str]],
+    ) -> Dict[str, Any]:
+        """Create a new failover chain."""
+        now = datetime.now(timezone.utc).isoformat()
+        item = {
+            "source_model": source_model,
+            "targets": targets,
+            "created_at": now,
+            "updated_at": now,
+        }
+        self.table.put_item(Item=item)
+        return item
+
+    def get_chain(self, source_model: str) -> Optional[Dict[str, Any]]:
+        """Get a failover chain by source model."""
+        try:
+            response = self.table.get_item(Key={"source_model": source_model})
+            return response.get("Item")
+        except ClientError:
+            return None
+
+    def list_chains(self) -> List[Dict[str, Any]]:
+        """List all failover chains."""
+        response = self.table.scan()
+        return response.get("Items", [])
+
+    def update_chain(
+        self,
+        source_model: str,
+        targets: List[Dict[str, str]],
+    ) -> bool:
+        """Update a failover chain's targets."""
+        try:
+            self.table.update_item(
+                Key={"source_model": source_model},
+                UpdateExpression="SET targets = :targets, updated_at = :updated_at",
+                ExpressionAttributeValues={
+                    ":targets": targets,
+                    ":updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            return True
+        except ClientError:
+            return False
+
+    def delete_chain(self, source_model: str) -> bool:
+        """Delete a failover chain."""
+        try:
+            self.table.delete_item(Key={"source_model": source_model})
+            return True
+        except ClientError:
+            return False
+
+
+class SmartRoutingConfigManager:
+    """Manager for smart routing global configuration."""
+
+    def __init__(self, dynamodb_client: DynamoDBClient):
+        self.dynamodb = dynamodb_client.dynamodb
+        self.table = self.dynamodb.Table(dynamodb_client.smart_routing_config_table_name)
+
+    def get_config(self) -> Optional[Dict[str, Any]]:
+        """Get the global smart routing config."""
+        try:
+            response = self.table.get_item(Key={"config_id": "global"})
+            return response.get("Item")
+        except ClientError:
+            return None
+
+    def put_config(
+        self,
+        strong_model: str,
+        weak_model: str,
+        threshold: float = 0.5,
+    ) -> Dict[str, Any]:
+        """Create or update the global smart routing config."""
+        now = datetime.now(timezone.utc).isoformat()
+        item = {
+            "config_id": "global",
+            "strong_model": strong_model,
+            "weak_model": weak_model,
+            "threshold": Decimal(str(threshold)),
+            "updated_at": now,
+        }
+        self.table.put_item(Item=item)
+        return item

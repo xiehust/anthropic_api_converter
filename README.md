@@ -42,7 +42,9 @@
 **典型应用：** 在**Claude Code** 中使用Bedrock 托管的 Qwen3-Coder-480B 进行代码生成，或在使用**Claude Agent SDK**构建生产应用中混合使用不同模型以平衡性能和成本。
 
 ## 功能特性
-
+### Claude Code/Agent SDK 伪装适配
+- **Claude Code/Agent SDK** 会识别是否直连Bedrock，会丢弃很多beta header，导致效果和行为跟使用A\官方API版本可能有所不同，例如出现(max token自动裁剪问题)[https://github.com/anthropics/claude-code/issues/8756]
+该Proxy可以通过更改Base URL和模型 ID映射进行请求伪装，尽可能的还原A\官方版本行为
 ### 核心功能
 - **Anthropic API 兼容性**：完全支持 Anthropic Messages API 格式
 - **双向格式转换**：在 Anthropic 和 Bedrock 格式之间无缝转换

@@ -41,6 +41,9 @@ This lightweight API convertion service enables you to use various large languag
 **Typical Use Cases:** Use **Qwen3-Coder-480B** for code generation in Claude Code, or mix different models in production applications build with **Claude Agent SDK** to balance performance and cost.
 
 ## Features
+### Claude Code/Agent SDK Disguise Adaptation
+
+- **Claude Code/Agent SDK** will detect whether it's directly connected to Bedrock, and will discard many beta headers, causing the behavior and output to potentially differ from using Anthropic's official API. For example, issues such as [max token auto-truncation](https://github.com/anthropics/claude-code/issues/8756) may occur.
 
 ### Core Functionality
 - **Anthropic API Compatibility**: Full support for Anthropic Messages API format

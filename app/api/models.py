@@ -3,12 +3,15 @@ Models API endpoints.
 
 Implements GET /v1/models for listing available Bedrock models.
 """
+import logging
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.core.config import settings
 from app.services.bedrock_service import BedrockService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -59,11 +62,12 @@ async def list_models(
         }
 
     except Exception as e:
+        logger.error(f"Failed to list models: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "type": "internal_error",
-                "message": f"Failed to list models: {str(e)}",
+                "message": "Failed to list models due to an internal error",
             },
         )
 
@@ -111,10 +115,11 @@ async def get_model(
         raise
 
     except Exception as e:
+        logger.error(f"Failed to get model info for {model_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "type": "internal_error",
-                "message": f"Failed to get model info: {str(e)}",
+                "message": "Failed to get model info due to an internal error",
             },
         )

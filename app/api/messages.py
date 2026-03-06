@@ -539,7 +539,7 @@ async def create_message(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail={
                         "type": "api_error",
-                        "message": str(e),
+                        "message": "Code execution service is temporarily unavailable",
                     },
                 )
             except SandboxError as e:
@@ -548,7 +548,7 @@ async def create_message(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail={
                         "type": "api_error",
-                        "message": f"Code execution error: {str(e)}",
+                        "message": "Code execution failed due to an internal error",
                     },
                 )
 
@@ -626,7 +626,7 @@ async def create_message(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail={
                         "type": "api_error",
-                        "message": str(e),
+                        "message": "Code execution service is temporarily unavailable",
                     },
                 )
             except SandboxError as e:
@@ -635,7 +635,7 @@ async def create_message(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail={
                         "type": "api_error",
-                        "message": f"Code execution error: {str(e)}",
+                        "message": "Code execution failed due to an internal error",
                     },
                 )
 
@@ -732,7 +732,7 @@ async def create_message(
                 logger.error(f"Request {request_id}: Web search config error: {e}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"type": "invalid_request_error", "message": str(e)},
+                    detail={"type": "invalid_request_error", "message": "Invalid web search configuration"},
                 )
             except Exception as e:
                 logger.error(f"Request {request_id}: Web search error: {e}")
@@ -831,7 +831,7 @@ async def create_message(
                 logger.error(f"Request {request_id}: Web fetch config error: {e}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"type": "invalid_request_error", "message": str(e)},
+                    detail={"type": "invalid_request_error", "message": "Invalid web fetch configuration"},
                 )
             except Exception as e:
                 logger.error(f"Request {request_id}: Web fetch error: {e}")
@@ -1070,11 +1070,10 @@ async def create_message(
 
     except Exception as e:
         # Record failed usage
-        print(f"\n[ERROR] Exception in request {request_id}")
-        print(f"[ERROR] Type: {type(e).__name__}")
-        print(f"[ERROR] Message: {str(e)}")
-        import traceback
-        print(f"[ERROR] Traceback:\n{traceback.format_exc()}\n")
+        logger.error(
+            f"Exception in request {request_id}: {type(e).__name__}: {e}",
+            exc_info=True,
+        )
 
         usage_tracker.record_usage(
             api_key=api_key_info.get("api_key"),
@@ -1092,7 +1091,7 @@ async def create_message(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "type": "api_error",
-                "message": f"Failed to process request: {str(e)}",
+                "message": f"Internal server error. Request ID: {request_id}",
             },
         )
 
@@ -1322,16 +1321,16 @@ async def _handle_streaming_request(
         success = False
         error_message = str(e)
 
-        print(f"\n[ERROR] Streaming error in request {request_id}")
-        print(f"[ERROR] Type: {type(e).__name__}")
-        print(f"[ERROR] Message: {str(e)}")
-        import traceback
-        print(f"[ERROR] Traceback:\n{traceback.format_exc()}\n")
+        logger.error(
+            f"Streaming error in request {request_id}: {type(e).__name__}: {e}",
+            exc_info=True,
+        )
 
-        # Send error event
+        # Send error event with generic message (details logged server-side)
+        safe_message = f"Internal server error. Request ID: {request_id}"
         error_event = (
             f"event: error\n"
-            f"data: {{'type': 'error', 'error': {{'type': 'internal_error', 'message': '{str(e)}'}}}}\n\n"
+            f"data: {{\"type\": \"error\", \"error\": {{\"type\": \"internal_error\", \"message\": \"{safe_message}\"}}}}\n\n"
         )
         yield error_event
 
@@ -1416,11 +1415,11 @@ async def count_tokens(
         raise
 
     except Exception as e:
-        # Return error response
+        logger.error(f"Failed to count tokens: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "type": "internal_error",
-                "message": f"Failed to count tokens: {str(e)}",
+                "message": "Failed to count tokens due to an internal error",
             },
         )

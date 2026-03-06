@@ -3,6 +3,7 @@ Authentication middleware for API key validation.
 
 Validates API keys from request headers and attaches user information to requests.
 """
+import hmac
 from typing import Callable
 
 from fastapi import HTTPException, Request, status
@@ -76,7 +77,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
 
         # Check master API key first (if configured)
-        if settings.master_api_key and api_key == settings.master_api_key:
+        if settings.master_api_key and hmac.compare_digest(api_key, settings.master_api_key):
             request.state.api_key_info = {
                 "api_key": api_key,
                 "user_id": "master",

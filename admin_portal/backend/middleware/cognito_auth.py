@@ -3,6 +3,7 @@ AWS Cognito Authentication Middleware for Admin Portal.
 
 Validates JWT tokens issued by AWS Cognito User Pool.
 """
+import logging
 import os
 import sys
 from pathlib import Path
@@ -129,11 +130,12 @@ class CognitoAuthMiddleware(BaseHTTPMiddleware):
             request.state.token_claims = claims
 
         except CognitoJWTValidationError as e:
+            logging.getLogger(__name__).warning(f"Cognito JWT validation failed: {e}")
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={
                     "error": "invalid_token",
-                    "message": str(e),
+                    "message": "Authentication token is invalid or expired",
                 },
                 headers={"WWW-Authenticate": "Bearer"},
             )

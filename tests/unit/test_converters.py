@@ -185,6 +185,57 @@ class TestAnthropicToBedrockConverter:
         if "additionalModelRequestFields" in bedrock_request:
             assert "anthropic_beta" not in bedrock_request["additionalModelRequestFields"]
 
+    @patch("app.converters.anthropic_to_bedrock.settings")
+    def test_kimi_model_with_thinking_adds_reasoning_effort(self, mock_settings):
+        """Test that Kimi models get reasoning_effort='high' when thinking is enabled."""
+        mock_settings.enable_extended_thinking = True
+        mock_settings.enable_tool_use = True
+        request = MessageRequest(
+            model="moonshotai.kimi-k2.5",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": "Hello!"}],
+            thinking={"type": "enabled", "budget_tokens": 10000},
+        )
+
+        bedrock_request = self.converter.convert_request(request)
+
+        assert "additionalModelRequestFields" in bedrock_request
+        assert bedrock_request["additionalModelRequestFields"]["reasoning_effort"] == "high"
+
+    @patch("app.converters.anthropic_to_bedrock.settings")
+    def test_kimi_model_without_thinking_no_reasoning_effort(self, mock_settings):
+        """Test that Kimi models without thinking don't get reasoning_effort."""
+        mock_settings.enable_extended_thinking = True
+        mock_settings.enable_tool_use = True
+        request = MessageRequest(
+            model="moonshotai.kimi-k2.5",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": "Hello!"}],
+        )
+
+        bedrock_request = self.converter.convert_request(request)
+
+        if "additionalModelRequestFields" in bedrock_request:
+            assert "reasoning_effort" not in bedrock_request["additionalModelRequestFields"]
+
+    def test_is_kimi_model_detection(self):
+        """Test Kimi model detection for various model ID formats."""
+        converter = AnthropicToBedrockConverter()
+
+        # Should match
+        converter._resolved_model_id = "moonshotai.kimi-k2.5"
+        assert converter._is_kimi_model() is True
+
+        converter._resolved_model_id = "us.moonshotai.kimi-k2.5"
+        assert converter._is_kimi_model() is True
+
+        # Should not match
+        converter._resolved_model_id = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+        assert converter._is_kimi_model() is False
+
+        converter._resolved_model_id = "meta.llama3-8b-instruct-v1:0"
+        assert converter._is_kimi_model() is False
+
 
 class TestBedrockToAnthropicConverter:
     """Test Bedrock to Anthropic conversion."""

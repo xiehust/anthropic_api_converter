@@ -496,4 +496,11 @@ class OpenAICompatService:
         """
         event_type = event.get("type", "unknown")
         event_data = json.dumps(event)
+
+        # Log non-text-delta events (text deltas are too noisy)
+        if event_type != "content_block_delta" or event.get("delta", {}).get("type") != "text_delta":
+            # Truncate long data for logging
+            log_data = event_data if len(event_data) < 500 else event_data[:500] + "...(truncated)"
+            print(f"[OPENAI-COMPAT SSE] >> {event_type}: {log_data}")
+
         return f"event: {event_type}\ndata: {event_data}\n\n"

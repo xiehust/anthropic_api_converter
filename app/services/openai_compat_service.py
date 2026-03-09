@@ -95,10 +95,18 @@ class OpenAICompatService:
         # Extract extra_body (not a standard create() parameter, passed separately)
         extra_body = openai_request.pop("extra_body", None)
 
-        print(f"[OPENAI-COMPAT] Calling Chat Completions API for model: {openai_request.get('model')}")
+        print(f"[OPENAI-COMPAT] Calling Chat Completions API")
+        print(f"  - Model: {openai_request.get('model')}")
         print(f"  - Messages count: {len(openai_request.get('messages', []))}")
+        print(f"  - Has system: {openai_request['messages'][0]['role'] == 'system' if openai_request.get('messages') else False}")
         print(f"  - Has tools: {bool(openai_request.get('tools'))}")
-        print(f"  - Reasoning effort: {openai_request.get('reasoning_effort', 'N/A')}")
+        print(f"  - Tools count: {len(openai_request.get('tools', []))}")
+        print(f"  - max_tokens: {openai_request.get('max_tokens')}")
+        print(f"  - temperature: {openai_request.get('temperature', 'N/A')}")
+        print(f"  - top_p: {openai_request.get('top_p', 'N/A')}")
+        print(f"  - stop: {openai_request.get('stop', 'N/A')}")
+        print(f"  - reasoning_effort: {openai_request.get('reasoning_effort', 'N/A')}")
+        print(f"  - extra_body: {extra_body}")
         print(f"  - Request ID: {request_id}")
 
         try:
@@ -108,7 +116,17 @@ class OpenAICompatService:
             )
             response_dict = response.model_dump()
 
-            print(f"[OPENAI-COMPAT] Response received, converting to Anthropic format")
+            # Log raw OpenAI response details
+            choice = response_dict.get("choices", [{}])[0] if response_dict.get("choices") else {}
+            raw_usage = response_dict.get("usage", {})
+            print(f"[OPENAI-COMPAT] Response received:")
+            print(f"  - OpenAI response ID: {response_dict.get('id')}")
+            print(f"  - Finish reason: {choice.get('finish_reason')}")
+            print(f"  - Has tool_calls: {bool(choice.get('message', {}).get('tool_calls'))}")
+            print(f"  - Content length: {len(choice.get('message', {}).get('content') or '')}")
+            print(f"  - Usage: prompt_tokens={raw_usage.get('prompt_tokens', 0)}, completion_tokens={raw_usage.get('completion_tokens', 0)}, total={raw_usage.get('total_tokens', 0)}")
+            if raw_usage.get("completion_tokens_details"):
+                print(f"  - Completion details: {raw_usage['completion_tokens_details']}")
 
             return self.response_converter.convert_response(
                 response_dict, request.model, message_id
@@ -288,8 +306,18 @@ class OpenAICompatService:
             # Extract extra_body (not a standard create() parameter, passed separately)
             extra_body = openai_request.pop("extra_body", None)
 
-            print(f"[OPENAI-COMPAT STREAM] Starting stream for model: {openai_request.get('model')}")
-            print(f"  - Reasoning effort: {openai_request.get('reasoning_effort', 'N/A')}")
+            print(f"[OPENAI-COMPAT STREAM] Starting stream")
+            print(f"  - Model: {openai_request.get('model')}")
+            print(f"  - Messages count: {len(openai_request.get('messages', []))}")
+            print(f"  - Has system: {openai_request['messages'][0]['role'] == 'system' if openai_request.get('messages') else False}")
+            print(f"  - Has tools: {bool(openai_request.get('tools'))}")
+            print(f"  - Tools count: {len(openai_request.get('tools', []))}")
+            print(f"  - max_tokens: {openai_request.get('max_tokens')}")
+            print(f"  - temperature: {openai_request.get('temperature', 'N/A')}")
+            print(f"  - top_p: {openai_request.get('top_p', 'N/A')}")
+            print(f"  - stop: {openai_request.get('stop', 'N/A')}")
+            print(f"  - reasoning_effort: {openai_request.get('reasoning_effort', 'N/A')}")
+            print(f"  - extra_body: {extra_body}")
 
             # Emit message_start event
             message_start = self.response_converter.create_message_start_event(
@@ -308,13 +336,26 @@ class OpenAICompatService:
                 **({"extra_body": extra_body} if extra_body else {})
             )
 
+            chunk_count = 0
+            total_text_len = 0
+
             for chunk in stream:
                 chunk_dict = chunk.model_dump()
                 choices = chunk_dict.get("choices", [])
 
                 if not choices:
-                    # Usage-only chunk at end of stream
+                    # Usage-only chunk at end of stream — log usage
+                    stream_usage = chunk_dict.get("usage") or {}
+                    if stream_usage:
+                        print(f"[OPENAI-COMPAT STREAM] Final usage chunk:")
+                        print(f"  - prompt_tokens: {stream_usage.get('prompt_tokens', 0)}")
+                        print(f"  - completion_tokens: {stream_usage.get('completion_tokens', 0)}")
+                        print(f"  - total_tokens: {stream_usage.get('total_tokens', 0)}")
+                        if stream_usage.get("completion_tokens_details"):
+                            print(f"  - completion_details: {stream_usage['completion_tokens_details']}")
                     continue
+
+                chunk_count += 1
 
                 choice = choices[0]
                 delta = choice.get("delta", {})
@@ -323,6 +364,7 @@ class OpenAICompatService:
                 # Handle text content delta
                 text_content = delta.get("content")
                 if text_content is not None:
+                    total_text_len += len(text_content)
                     if not text_block_started:
                         # Start a text content block
                         block_start = {
@@ -390,6 +432,12 @@ class OpenAICompatService:
 
                 # Handle finish reason
                 if finish_reason:
+                    print(f"[OPENAI-COMPAT STREAM] Stream finished:")
+                    print(f"  - Finish reason: {finish_reason}")
+                    print(f"  - Chunks received: {chunk_count}")
+                    print(f"  - Total text length: {total_text_len}")
+                    print(f"  - Content blocks: {content_index + 1}")
+                    print(f"  - Tool calls: {current_tool_index + 1 if current_tool_index >= 0 else 0}")
                     # Close any open content blocks
                     if text_block_started or current_tool_index >= 0:
                         block_stop = {

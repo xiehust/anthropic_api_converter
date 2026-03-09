@@ -365,7 +365,18 @@ class OpenAICompatService:
                 text_content = delta.get("content")
                 if text_content is not None:
                     total_text_len += len(text_content)
+
                     if not text_block_started:
+                        # Close open tool block first before starting a new text block
+                        if current_tool_index >= 0:
+                            block_stop = {
+                                "type": "content_block_stop",
+                                "index": content_index,
+                            }
+                            event_queue.put(("event", self._format_sse_event(block_stop)))
+                            content_index += 1
+                            current_tool_index = -1
+
                         # Start a text content block
                         block_start = {
                             "type": "content_block_start",

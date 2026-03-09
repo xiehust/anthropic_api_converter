@@ -101,6 +101,13 @@ class BedrockService:
         self.anthropic_to_bedrock = AnthropicToBedrockConverter(dynamodb_client)
         self.bedrock_to_anthropic = BedrockToAnthropicConverter()
 
+        # Initialize OpenAI-compat service for non-Claude models if enabled
+        self._openai_compat_service = None
+        if settings.enable_openai_compat and settings.openai_api_key and settings.openai_base_url:
+            from app.services.openai_compat_service import OpenAICompatService
+            self._openai_compat_service = OpenAICompatService()
+            print(f"[BEDROCK] OpenAI-compat mode enabled, base_url={settings.openai_base_url}")
+
     def _is_claude_model(self, model_id: str) -> bool:
         """
         Check if the model is a Claude/Anthropic model.
@@ -551,6 +558,11 @@ class BedrockService:
             print(f"[BEDROCK] Using InvokeModel API for Claude model: {request.model}")
             return self._invoke_model_native_sync(request, request_id, anthropic_beta, cache_ttl=cache_ttl)
 
+        # Route to OpenAI-compat service if enabled
+        if self._openai_compat_service:
+            print(f"[BEDROCK] Using OpenAI Chat Completions API for non-Claude model: {request.model}")
+            return self._openai_compat_service.invoke_model_sync(request, request_id)
+
         print(f"[BEDROCK] Converting request to Bedrock format for request {request_id}")
 
         # Convert request to Bedrock format (with beta header mapping)
@@ -901,6 +913,12 @@ class BedrockService:
                     _otel_ctx
                 )
             else:
+                if self._openai_compat_service:
+                    print(f"[BEDROCK STREAM] Using OpenAI Chat Completions API (streaming) for: {request.model}")
+                    async for event in self._openai_compat_service.invoke_model_stream(request, message_id):
+                        yield event
+                    return
+
                 print(f"[BEDROCK STREAM] Converting request to Bedrock format for request {request_id}")
 
                 # Convert request to Bedrock format (with beta header mapping)

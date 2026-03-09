@@ -147,7 +147,7 @@ class Settings(BaseSettings):
     otel_batch_schedule_delay_ms: int = Field(default=5000, alias="OTEL_BATCH_SCHEDULE_DELAY_MS")
 
     # Request Timeouts
-    bedrock_timeout: int = Field(default=600, alias="BEDROCK_TIMEOUT")  # seconds (10 minutes)
+    bedrock_timeout: int = Field(default=1800, alias="BEDROCK_TIMEOUT")  # seconds (10 minutes)
     dynamodb_timeout: int = Field(default=10, alias="DYNAMODB_TIMEOUT")  # seconds
 
     # Bedrock Concurrency Settings
@@ -337,6 +337,35 @@ class Settings(BaseSettings):
         default=100000,
         alias="WEB_FETCH_DEFAULT_MAX_CONTENT_TOKENS",
         description="Default maximum content tokens per fetch"
+    )
+
+    # === OpenAI-Compatible API Settings (Bedrock Mantle) ===
+    # When enabled, non-Claude models use OpenAI Chat Completions API via bedrock-mantle
+    # instead of Bedrock Converse API. Claude models still use InvokeModel API.
+    enable_openai_compat: bool = Field(
+        default=False,
+        alias="ENABLE_OPENAI_COMPAT",
+        description="Use OpenAI Chat Completions API for non-Claude models (via bedrock-mantle)"
+    )
+    openai_api_key: str = Field(
+        default="",
+        alias="OPENAI_API_KEY",
+        description="Bedrock API key for bedrock-mantle endpoint"
+    )
+    openai_base_url: str = Field(
+        default="",
+        alias="OPENAI_BASE_URL",
+        description="Bedrock Mantle endpoint URL (e.g. https://bedrock-mantle.us-east-1.api.aws/v1)"
+    )
+    openai_compat_thinking_high_threshold: int = Field(
+        default=10000,
+        alias="OPENAI_COMPAT_THINKING_HIGH_THRESHOLD",
+        description="budget_tokens >= this → reasoning effort 'high'"
+    )
+    openai_compat_thinking_medium_threshold: int = Field(
+        default=4000,
+        alias="OPENAI_COMPAT_THINKING_MEDIUM_THRESHOLD",
+        description="budget_tokens >= this → reasoning effort 'medium', below → 'low'"
     )
 
     # === Multi-Provider Gateway Feature Flags ===

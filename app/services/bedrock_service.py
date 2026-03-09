@@ -862,6 +862,15 @@ class BedrockService:
         Yields:
             SSE-formatted event strings
         """
+        # Route non-Claude models to OpenAI-compat streaming BEFORE acquiring semaphore
+        # (OpenAI-compat service manages its own semaphore)
+        if not self._is_claude_model(request.model) and self._openai_compat_service:
+            message_id = request_id or f"msg_{uuid4().hex}"
+            print(f"[BEDROCK STREAM] Using OpenAI Chat Completions API (streaming) for: {request.model}")
+            async for event in self._openai_compat_service.invoke_model_stream(request, message_id):
+                yield event
+            return
+
         semaphore = _get_semaphore()
         async with semaphore:
             message_id = request_id or f"msg_{uuid4().hex}"
@@ -913,12 +922,6 @@ class BedrockService:
                     _otel_ctx
                 )
             else:
-                if self._openai_compat_service:
-                    print(f"[BEDROCK STREAM] Using OpenAI Chat Completions API (streaming) for: {request.model}")
-                    async for event in self._openai_compat_service.invoke_model_stream(request, message_id):
-                        yield event
-                    return
-
                 print(f"[BEDROCK STREAM] Converting request to Bedrock format for request {request_id}")
 
                 # Convert request to Bedrock format (with beta header mapping)

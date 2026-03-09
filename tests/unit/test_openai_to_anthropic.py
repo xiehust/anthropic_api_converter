@@ -1,5 +1,4 @@
 """Tests for OpenAI to Anthropic response converter."""
-import json
 import pytest
 
 from app.converters.openai_to_anthropic import OpenAIToAnthropicConverter
@@ -153,7 +152,7 @@ class TestConvertResponse:
 
 
 class TestStreamingEvents:
-    """Tests for streaming event conversion."""
+    """Tests for streaming helper methods."""
 
     def test_create_message_start_event(self, converter):
         event = converter.create_message_start_event("msg_100", "gpt-4")
@@ -167,102 +166,9 @@ class TestStreamingEvents:
         assert msg["model"] == "gpt-4"
         assert msg["usage"] == {"input_tokens": 0, "output_tokens": 0}
 
-    def test_text_delta_chunk(self, converter):
-        chunk = {
-            "choices": [
-                {"delta": {"content": "Hello"}, "finish_reason": None}
-            ]
-        }
-
-        events = converter.convert_stream_chunk(chunk, 0)
-
-        assert len(events) == 1
-        assert events[0]["type"] == "content_block_delta"
-        assert events[0]["index"] == 0
-        assert events[0]["delta"]["type"] == "text_delta"
-        assert events[0]["delta"]["text"] == "Hello"
-
-    def test_tool_call_start_chunk(self, converter):
-        chunk = {
-            "choices": [
-                {
-                    "delta": {
-                        "tool_calls": [
-                            {
-                                "id": "call_001",
-                                "function": {"name": "search", "arguments": ""},
-                            }
-                        ]
-                    },
-                    "finish_reason": None,
-                }
-            ]
-        }
-
-        events = converter.convert_stream_chunk(chunk, 1)
-
-        # Should produce content_block_start (with id) and no input_json_delta (empty arguments)
-        assert len(events) == 1
-        assert events[0]["type"] == "content_block_start"
-        assert events[0]["content_block"]["type"] == "tool_use"
-        assert events[0]["content_block"]["id"] == "call_001"
-        assert events[0]["content_block"]["name"] == "search"
-
-    def test_tool_call_arguments_delta_chunk(self, converter):
-        chunk = {
-            "choices": [
-                {
-                    "delta": {
-                        "tool_calls": [
-                            {"function": {"arguments": '{"query":'}}
-                        ]
-                    },
-                    "finish_reason": None,
-                }
-            ]
-        }
-
-        events = converter.convert_stream_chunk(chunk, 1)
-
-        assert len(events) == 1
-        assert events[0]["type"] == "content_block_delta"
-        assert events[0]["delta"]["type"] == "input_json_delta"
-        assert events[0]["delta"]["partial_json"] == '{"query":'
-
-    def test_finish_reason_chunk(self, converter):
-        chunk = {
-            "choices": [
-                {"delta": {}, "finish_reason": "stop"}
-            ],
-            "usage": {"completion_tokens": 42},
-        }
-
-        events = converter.convert_stream_chunk(chunk, 0)
-
-        assert len(events) == 1
-        assert events[0]["type"] == "message_delta"
-        assert events[0]["delta"]["stop_reason"] == "end_turn"
-        assert events[0]["delta"]["stop_sequence"] is None
-        assert events[0]["usage"]["output_tokens"] == 42
-
-    def test_finish_reason_tool_calls_chunk(self, converter):
-        chunk = {
-            "choices": [{"delta": {}, "finish_reason": "tool_calls"}],
-        }
-
-        events = converter.convert_stream_chunk(chunk, 0)
-
-        assert len(events) == 1
-        assert events[0]["delta"]["stop_reason"] == "tool_use"
-
     def test_create_message_stop_event(self, converter):
         event = converter.create_message_stop_event()
         assert event == {"type": "message_stop"}
-
-    def test_empty_choices_returns_no_events(self, converter):
-        chunk = {"choices": []}
-        events = converter.convert_stream_chunk(chunk, 0)
-        assert events == []
 
 
 class TestErrorEvent:

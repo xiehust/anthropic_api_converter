@@ -7,7 +7,7 @@ in the Anthropic Messages API format expected by clients.
 """
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from app.schemas.anthropic import (
     MessageResponse,
@@ -131,91 +131,6 @@ class OpenAIToAnthropicConverter:
                 "usage": {"input_tokens": 0, "output_tokens": 0},
             },
         }
-
-    def convert_stream_chunk(
-        self, chunk: Dict[str, Any], current_content_index: int
-    ) -> List[Dict[str, Any]]:
-        """Convert an OpenAI streaming chunk to Anthropic SSE events.
-
-        Args:
-            chunk: An OpenAI streaming chunk dict.
-            current_content_index: The current content block index for Anthropic events.
-
-        Returns:
-            A list of Anthropic SSE event dicts.
-        """
-        events: List[Dict[str, Any]] = []
-
-        choices = chunk.get("choices", [])
-        if not choices:
-            return events
-
-        choice = choices[0]
-        delta = choice.get("delta", {})
-        finish_reason = choice.get("finish_reason")
-
-        # Text content delta
-        text_content = delta.get("content")
-        if text_content is not None:
-            events.append(
-                {
-                    "type": "content_block_delta",
-                    "index": current_content_index,
-                    "delta": {"type": "text_delta", "text": text_content},
-                }
-            )
-
-        # Tool call deltas
-        tool_calls = delta.get("tool_calls")
-        if tool_calls:
-            for tc in tool_calls:
-                tc_id = tc.get("id")
-                func = tc.get("function", {})
-
-                # New tool call starts (has an id)
-                if tc_id:
-                    events.append(
-                        {
-                            "type": "content_block_start",
-                            "index": current_content_index,
-                            "content_block": {
-                                "type": "tool_use",
-                                "id": tc_id,
-                                "name": func.get("name", ""),
-                                "input": {},
-                            },
-                        }
-                    )
-
-                # Tool call arguments delta
-                arguments = func.get("arguments")
-                if arguments:
-                    events.append(
-                        {
-                            "type": "content_block_delta",
-                            "index": current_content_index,
-                            "delta": {
-                                "type": "input_json_delta",
-                                "partial_json": arguments,
-                            },
-                        }
-                    )
-
-        # Finish reason → message_delta
-        if finish_reason:
-            stop_reason = self.STOP_REASON_MAP.get(finish_reason, "end_turn")
-            usage = chunk.get("usage", {})
-            events.append(
-                {
-                    "type": "message_delta",
-                    "delta": {"stop_reason": stop_reason, "stop_sequence": None},
-                    "usage": {
-                        "output_tokens": usage.get("completion_tokens", 0)
-                    },
-                }
-            )
-
-        return events
 
     def create_message_stop_event(self) -> Dict[str, Any]:
         """Create a message_stop SSE event for streaming.

@@ -378,8 +378,8 @@ class OpenAICompatService:
                         finish_reason, "end_turn"
                     )
 
-                    # Get usage from chunk if available
-                    usage = chunk_dict.get("usage", {})
+                    # Get usage from chunk if available (may be None explicitly)
+                    usage = chunk_dict.get("usage") or {}
 
                     # Emit message_delta
                     message_delta = {

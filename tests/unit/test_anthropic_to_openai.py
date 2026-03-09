@@ -427,7 +427,8 @@ def test_thinking_high(mock_settings, converter):
         thinking={"type": "enabled", "budget_tokens": 15000},
     )
     result = converter.convert_request(request)
-    assert result["reasoning"] == {"effort": "high"}
+    assert result["reasoning_effort"] == "high"
+    assert result["extra_body"] == {"include_reasoning": True}
 
 
 @patch("app.converters.anthropic_to_openai.settings")
@@ -442,7 +443,8 @@ def test_thinking_medium(mock_settings, converter):
         thinking={"type": "enabled", "budget_tokens": 5000},
     )
     result = converter.convert_request(request)
-    assert result["reasoning"] == {"effort": "medium"}
+    assert result["reasoning_effort"] == "medium"
+    assert result["extra_body"] == {"include_reasoning": True}
 
 
 @patch("app.converters.anthropic_to_openai.settings")
@@ -457,7 +459,8 @@ def test_thinking_low(mock_settings, converter):
         thinking={"type": "enabled", "budget_tokens": 2000},
     )
     result = converter.convert_request(request)
-    assert result["reasoning"] == {"effort": "low"}
+    assert result["reasoning_effort"] == "low"
+    assert result["extra_body"] == {"include_reasoning": True}
 
 
 @patch("app.converters.anthropic_to_openai.settings")
@@ -473,7 +476,8 @@ def test_thinking_at_high_boundary(mock_settings, converter):
         thinking={"type": "enabled", "budget_tokens": 10000},
     )
     result = converter.convert_request(request)
-    assert result["reasoning"] == {"effort": "high"}
+    assert result["reasoning_effort"] == "high"
+    assert result["extra_body"] == {"include_reasoning": True}
 
 
 @patch("app.converters.anthropic_to_openai.settings")
@@ -489,7 +493,8 @@ def test_thinking_at_medium_boundary(mock_settings, converter):
         thinking={"type": "enabled", "budget_tokens": 4000},
     )
     result = converter.convert_request(request)
-    assert result["reasoning"] == {"effort": "medium"}
+    assert result["reasoning_effort"] == "medium"
+    assert result["extra_body"] == {"include_reasoning": True}
 
 
 @patch("app.converters.anthropic_to_openai.settings")
@@ -503,7 +508,7 @@ def test_thinking_disabled_in_settings(mock_settings, converter):
         thinking={"type": "enabled", "budget_tokens": 15000},
     )
     result = converter.convert_request(request)
-    assert "reasoning" not in result
+    assert "reasoning_effort" not in result
 
 
 @patch("app.converters.anthropic_to_openai.settings")
@@ -517,7 +522,7 @@ def test_thinking_type_not_enabled(mock_settings, converter):
         thinking={"type": "disabled"},
     )
     result = converter.convert_request(request)
-    assert "reasoning" not in result
+    assert "reasoning_effort" not in result
 
 
 # ---------------------------------------------------------------------------

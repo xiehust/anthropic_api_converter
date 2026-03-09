@@ -105,11 +105,12 @@ class AnthropicToOpenAIConverter:
         if request.tool_choice is not None:
             result["tool_choice"] = self._convert_tool_choice(request.tool_choice)
 
-        # Thinking → reasoning
+        # Thinking → reasoning_effort (Bedrock Mantle format)
         if request.thinking and settings.enable_extended_thinking:
-            reasoning = self._convert_thinking(request.thinking)
-            if reasoning:
-                result["reasoning"] = reasoning
+            effort = self._convert_thinking_to_effort(request.thinking)
+            if effort:
+                result["reasoning_effort"] = effort
+                result["extra_body"] = {"include_reasoning": True}
 
         return result
 
@@ -333,10 +334,11 @@ class AnthropicToOpenAIConverter:
                 }
         return "auto"
 
-    def _convert_thinking(self, thinking: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Convert Anthropic thinking config to OpenAI reasoning config.
+    def _convert_thinking_to_effort(self, thinking: Dict[str, Any]) -> Optional[str]:
+        """Convert Anthropic thinking config to reasoning effort level.
 
         Maps budget_tokens to effort levels based on configured thresholds.
+        Returns the effort string for Bedrock Mantle's reasoning_effort parameter.
         """
         if thinking.get("type") != "enabled":
             return None
@@ -346,10 +348,8 @@ class AnthropicToOpenAIConverter:
         medium_threshold = settings.openai_compat_thinking_medium_threshold
 
         if budget_tokens >= high_threshold:
-            effort = "high"
+            return "high"
         elif budget_tokens >= medium_threshold:
-            effort = "medium"
+            return "medium"
         else:
-            effort = "low"
-
-        return {"effort": effort}
+            return "low"

@@ -91,13 +91,20 @@ class OpenAICompatService:
         openai_request = self.request_converter.convert_request(request)
         openai_request["stream"] = False
 
+        # Extract extra_body (not a standard create() parameter, passed separately)
+        extra_body = openai_request.pop("extra_body", None)
+
         print(f"[OPENAI-COMPAT] Calling Chat Completions API for model: {openai_request.get('model')}")
         print(f"  - Messages count: {len(openai_request.get('messages', []))}")
         print(f"  - Has tools: {bool(openai_request.get('tools'))}")
+        print(f"  - Reasoning effort: {openai_request.get('reasoning_effort', 'N/A')}")
         print(f"  - Request ID: {request_id}")
 
         try:
-            response = self.client.chat.completions.create(**openai_request)
+            response = self.client.chat.completions.create(
+                **openai_request,
+                **({"extra_body": extra_body} if extra_body else {})
+            )
             response_dict = response.model_dump()
 
             print(f"[OPENAI-COMPAT] Response received, converting to Anthropic format")
@@ -253,7 +260,11 @@ class OpenAICompatService:
             openai_request["stream"] = True
             openai_request["stream_options"] = {"include_usage": True}
 
+            # Extract extra_body (not a standard create() parameter, passed separately)
+            extra_body = openai_request.pop("extra_body", None)
+
             print(f"[OPENAI-COMPAT STREAM] Starting stream for model: {openai_request.get('model')}")
+            print(f"  - Reasoning effort: {openai_request.get('reasoning_effort', 'N/A')}")
 
             # Emit message_start event
             message_start = self.response_converter.create_message_start_event(
@@ -267,7 +278,10 @@ class OpenAICompatService:
             content_index = 0
 
             # Call OpenAI streaming API
-            stream = self.client.chat.completions.create(**openai_request)
+            stream = self.client.chat.completions.create(
+                **openai_request,
+                **({"extra_body": extra_body} if extra_body else {})
+            )
 
             for chunk in stream:
                 chunk_dict = chunk.model_dump()

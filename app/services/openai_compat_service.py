@@ -16,11 +16,12 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, AsyncGenerator, Dict, Optional
 from uuid import uuid4
 
-from openai import OpenAI, OpenAIError
+from openai import APIStatusError, OpenAI, OpenAIError
 
 from app.converters.anthropic_to_openai import AnthropicToOpenAIConverter
 from app.converters.openai_to_anthropic import OpenAIToAnthropicConverter
 from app.core.config import settings
+from app.core.exceptions import BedrockAPIError
 from app.schemas.anthropic import MessageRequest, MessageResponse
 
 logger = logging.getLogger(__name__)
@@ -113,9 +114,33 @@ class OpenAICompatService:
                 response_dict, request.model, message_id
             )
 
-        except OpenAIError as e:
+        except APIStatusError as e:
             print(f"[OPENAI-COMPAT] OpenAI API error: {e}")
-            raise
+            # Map OpenAI HTTP status to Anthropic error types
+            status_to_type = {
+                400: ("invalid_request_error", "invalid_request_error"),
+                401: ("authentication_error", "authentication_error"),
+                403: ("permission_error", "permission_error"),
+                404: ("not_found_error", "not_found_error"),
+                429: ("rate_limit_error", "rate_limit_error"),
+            }
+            error_type, error_code = status_to_type.get(
+                e.status_code, ("api_error", "api_error")
+            )
+            raise BedrockAPIError(
+                error_code=error_code,
+                error_message=str(e.message) if hasattr(e, 'message') else str(e),
+                http_status=e.status_code,
+                error_type=error_type,
+            )
+        except OpenAIError as e:
+            print(f"[OPENAI-COMPAT] OpenAI client error: {e}")
+            raise BedrockAPIError(
+                error_code="api_error",
+                error_message=str(e),
+                http_status=500,
+                error_type="api_error",
+            )
         except Exception as e:
             print(f"[OPENAI-COMPAT] Unexpected error: {e}")
             raise

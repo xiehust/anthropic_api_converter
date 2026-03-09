@@ -105,8 +105,8 @@ class AnthropicToOpenAIConverter:
         if request.tool_choice is not None:
             result["tool_choice"] = self._convert_tool_choice(request.tool_choice)
 
-        # Thinking → reasoning_effort (Bedrock Mantle format)
-        if request.thinking and settings.enable_extended_thinking:
+        # Thinking → reasoning_effort (only for kimi-k2.5 models on Bedrock Mantle)
+        if request.thinking and settings.enable_extended_thinking and self._is_kimi_k25_model(request.model):
             effort = self._convert_thinking_to_effort(request.thinking)
             if effort:
                 result["reasoning_effort"] = effort
@@ -333,6 +333,12 @@ class AnthropicToOpenAIConverter:
                     "function": {"name": tool_choice.get("name", "")},
                 }
         return "auto"
+
+    @staticmethod
+    def _is_kimi_k25_model(model: str) -> bool:
+        """Check if the model is a Kimi K2.5 model."""
+        model_lower = model.lower()
+        return "kimi-k2.5" in model_lower or "kimi_k2.5" in model_lower
 
     def _convert_thinking_to_effort(self, thinking: Dict[str, Any]) -> Optional[str]:
         """Convert Anthropic thinking config to reasoning effort level.

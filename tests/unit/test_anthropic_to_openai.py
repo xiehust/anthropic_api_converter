@@ -412,7 +412,7 @@ def test_mixed_tool_result_and_text(converter):
 
 
 # ---------------------------------------------------------------------------
-# Thinking → reasoning
+# Thinking → reasoning (only for kimi-k2.5 models)
 # ---------------------------------------------------------------------------
 
 @patch("app.converters.anthropic_to_openai.settings")
@@ -422,7 +422,7 @@ def test_thinking_high(mock_settings, converter):
     mock_settings.openai_compat_thinking_medium_threshold = 4000
 
     request = MessageRequest(
-        model="m", max_tokens=100,
+        model="moonshotai.kimi-k2.5", max_tokens=100,
         messages=[{"role": "user", "content": "x"}],
         thinking={"type": "enabled", "budget_tokens": 15000},
     )
@@ -438,7 +438,7 @@ def test_thinking_medium(mock_settings, converter):
     mock_settings.openai_compat_thinking_medium_threshold = 4000
 
     request = MessageRequest(
-        model="m", max_tokens=100,
+        model="moonshotai.kimi-k2.5", max_tokens=100,
         messages=[{"role": "user", "content": "x"}],
         thinking={"type": "enabled", "budget_tokens": 5000},
     )
@@ -454,7 +454,7 @@ def test_thinking_low(mock_settings, converter):
     mock_settings.openai_compat_thinking_medium_threshold = 4000
 
     request = MessageRequest(
-        model="m", max_tokens=100,
+        model="moonshotai.kimi-k2.5", max_tokens=100,
         messages=[{"role": "user", "content": "x"}],
         thinking={"type": "enabled", "budget_tokens": 2000},
     )
@@ -471,7 +471,7 @@ def test_thinking_at_high_boundary(mock_settings, converter):
     mock_settings.openai_compat_thinking_medium_threshold = 4000
 
     request = MessageRequest(
-        model="m", max_tokens=100,
+        model="moonshotai.kimi-k2.5", max_tokens=100,
         messages=[{"role": "user", "content": "x"}],
         thinking={"type": "enabled", "budget_tokens": 10000},
     )
@@ -488,7 +488,7 @@ def test_thinking_at_medium_boundary(mock_settings, converter):
     mock_settings.openai_compat_thinking_medium_threshold = 4000
 
     request = MessageRequest(
-        model="m", max_tokens=100,
+        model="moonshotai.kimi-k2.5", max_tokens=100,
         messages=[{"role": "user", "content": "x"}],
         thinking={"type": "enabled", "budget_tokens": 4000},
     )
@@ -498,12 +498,29 @@ def test_thinking_at_medium_boundary(mock_settings, converter):
 
 
 @patch("app.converters.anthropic_to_openai.settings")
+def test_thinking_not_added_for_non_kimi(mock_settings, converter):
+    """Non kimi-k2.5 models should NOT get reasoning_effort even with thinking enabled."""
+    mock_settings.enable_extended_thinking = True
+    mock_settings.openai_compat_thinking_high_threshold = 10000
+    mock_settings.openai_compat_thinking_medium_threshold = 4000
+
+    request = MessageRequest(
+        model="us.deepseek.r1-v1:0", max_tokens=100,
+        messages=[{"role": "user", "content": "x"}],
+        thinking={"type": "enabled", "budget_tokens": 15000},
+    )
+    result = converter.convert_request(request)
+    assert "reasoning_effort" not in result
+    assert "extra_body" not in result
+
+
+@patch("app.converters.anthropic_to_openai.settings")
 def test_thinking_disabled_in_settings(mock_settings, converter):
     """When extended thinking is disabled in settings, reasoning is not added."""
     mock_settings.enable_extended_thinking = False
 
     request = MessageRequest(
-        model="m", max_tokens=100,
+        model="moonshotai.kimi-k2.5", max_tokens=100,
         messages=[{"role": "user", "content": "x"}],
         thinking={"type": "enabled", "budget_tokens": 15000},
     )
@@ -517,7 +534,7 @@ def test_thinking_type_not_enabled(mock_settings, converter):
     mock_settings.enable_extended_thinking = True
 
     request = MessageRequest(
-        model="m", max_tokens=100,
+        model="moonshotai.kimi-k2.5", max_tokens=100,
         messages=[{"role": "user", "content": "x"}],
         thinking={"type": "disabled"},
     )

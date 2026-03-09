@@ -390,6 +390,9 @@ class OpenAICompatService:
                         tc_id = tc.get("id")
                         func = tc.get("function", {})
 
+                        # Debug: log raw tool call chunk
+                        print(f"[OPENAI-COMPAT STREAM] Raw tool_call chunk: id={tc_id}, func_name={func.get('name')}, args_len={len(func.get('arguments', '') or '')}")
+
                         # New tool call (has an id)
                         if tc_id:
                             # Close text block if open
@@ -405,13 +408,15 @@ class OpenAICompatService:
                             current_tool_index = tc.get("index", current_tool_index + 1)
 
                             # Start tool_use block
+                            tool_name = func.get("name", "")
+                            print(f"[OPENAI-COMPAT STREAM] Starting tool_use block: index={content_index}, id={tc_id}, name={tool_name}")
                             block_start = {
                                 "type": "content_block_start",
                                 "index": content_index,
                                 "content_block": {
                                     "type": "tool_use",
                                     "id": tc_id,
-                                    "name": func.get("name", ""),
+                                    "name": tool_name,
                                     "input": {},
                                 },
                             }

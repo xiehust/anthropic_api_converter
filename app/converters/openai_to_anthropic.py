@@ -60,7 +60,8 @@ class OpenAIToAnthropicConverter:
         content = []
 
         # Reasoning/thinking content (from models with reasoning_effort)
-        reasoning = message.get("reasoning_content")
+        # Bedrock Mantle returns this as "reasoning" (not "reasoning_content")
+        reasoning = message.get("reasoning") or message.get("reasoning_content")
         if reasoning:
             content.append(ThinkingContent(type="thinking", thinking=reasoning))
 

@@ -115,10 +115,10 @@ class OpenAICompatService:
             raw_message = response.choices[0].message if response.choices else None
             print(f"[OPENAI-COMPAT] Raw response object:")
             print(f"  - Message attrs: {[a for a in dir(raw_message) if not a.startswith('_')] if raw_message else 'None'}")
-            print(f"  - Has reasoning_content attr: {hasattr(raw_message, 'reasoning_content') if raw_message else False}")
-            if raw_message and hasattr(raw_message, 'reasoning_content') and raw_message.reasoning_content:
-                print(f"  - reasoning_content length: {len(raw_message.reasoning_content)}")
-                print(f"  - reasoning_content preview: {raw_message.reasoning_content[:200]}...")
+            print(f"  - Has reasoning attr: {hasattr(raw_message, 'reasoning') if raw_message else False}")
+            if raw_message and hasattr(raw_message, 'reasoning') and raw_message.reasoning:
+                print(f"  - reasoning length: {len(raw_message.reasoning)}")
+                print(f"  - reasoning preview: {raw_message.reasoning[:200]}...")
 
             response_dict = response.model_dump()
 
@@ -131,8 +131,9 @@ class OpenAICompatService:
             print(f"  - Message keys: {message_keys}")
             print(f"  - Finish reason: {choice.get('finish_reason')}")
             print(f"  - Has tool_calls: {bool(choice.get('message', {}).get('tool_calls'))}")
-            print(f"  - Has reasoning_content: {bool(choice.get('message', {}).get('reasoning_content'))}")
-            print(f"  - Reasoning length: {len(choice.get('message', {}).get('reasoning_content') or '')}")
+            msg_dict = choice.get('message', {})
+            print(f"  - Has reasoning: {bool(msg_dict.get('reasoning'))}")
+            print(f"  - Reasoning length: {len(msg_dict.get('reasoning') or msg_dict.get('reasoning_content') or '')}")
             print(f"  - Content length: {len(choice.get('message', {}).get('content') or '')}")
             print(f"  - Usage: prompt_tokens={raw_usage.get('prompt_tokens', 0)}, completion_tokens={raw_usage.get('completion_tokens', 0)}, total={raw_usage.get('total_tokens', 0)}")
             if raw_usage.get("completion_tokens_details"):
@@ -373,7 +374,8 @@ class OpenAICompatService:
                 finish_reason = choice.get("finish_reason")
 
                 # Handle reasoning content delta (thinking)
-                reasoning_content = delta.get("reasoning_content")
+                # Bedrock Mantle uses "reasoning" (not "reasoning_content")
+                reasoning_content = delta.get("reasoning") or delta.get("reasoning_content")
                 if reasoning_content is not None:
                     if not thinking_block_started:
                         block_start = {

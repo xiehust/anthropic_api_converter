@@ -126,6 +126,11 @@ class AnthropicToBedrockConverter:
                     del bedrock_request["inferenceConfig"]["maxTokens"]
                     print("[CONVERTER] Removed maxTokens for Nova 2 reasoning mode")
                 print(f"[CONVERTER] Added Nova 2 reasoningConfig with effort: {effort}")
+            elif self._is_kimi_model():
+                # Kimi models use reasoning_effort in additionalModelRequestFields
+                # Only "high" is supported
+                additional_fields["reasoning_effort"] = "high"
+                print("[CONVERTER] Added reasoning_effort='high' for Kimi model")
             else:
                 # Map thinking configuration to Bedrock-specific format for other models
                 thinking_config = self._convert_thinking_config(request.thinking)
@@ -229,6 +234,22 @@ class AnthropicToBedrockConverter:
         model_id_lower = self._resolved_model_id.lower()
         # Match patterns like amazon.nova-pro-2, amazon.nova-lite-2, us.amazon.nova-pro-2, etc.
         return "amazon.nova" in model_id_lower and "-2" in model_id_lower
+
+    def _is_kimi_model(self) -> bool:
+        """
+        Check if the current model is a Moonshot Kimi model.
+
+        Kimi models require reasoning_effort in additionalModelRequestFields to enable thinking.
+        Model IDs include: moonshotai.kimi-k2.5, etc.
+
+        Returns:
+            True if the model is a Kimi model, False otherwise
+        """
+        if not self._resolved_model_id:
+            return False
+
+        model_id_lower = self._resolved_model_id.lower()
+        return "kimi" in model_id_lower or "moonshotai" in model_id_lower
 
     def _supports_beta_header_mapping(self, original_model_id: str) -> bool:
         """

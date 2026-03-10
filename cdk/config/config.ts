@@ -87,6 +87,10 @@ export interface EnvironmentConfig {
   otelTraceContent?: boolean;                // Record prompt/completion content (PII risk)
   otelTraceSamplingRatio?: number;           // Sampling ratio 0.0-1.0
 
+  // OpenAI-Compatible API (Bedrock Mantle) Configuration
+  enableOpenaiCompat: boolean;
+  openaiBaseUrl?: string;                    // e.g., https://bedrock-mantle.us-east-1.api.aws/v1
+
   // Admin Portal Configuration
   adminPortalEnabled: boolean;
   adminPortalCpu: number;           // CPU units (1024 = 1 vCPU)
@@ -185,6 +189,10 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     // otelTraceContent: false,
     // otelTraceSamplingRatio: 1.0,
 
+    // OpenAI-Compatible API (Bedrock Mantle)
+    enableOpenaiCompat: false,
+    // openaiBaseUrl: 'https://bedrock-mantle.us-east-1.api.aws/v1',
+
     // Admin Portal
     adminPortalEnabled: true,
     adminPortalCpu: 1024,          // 1 vCPU (Fargate: 1024 CPU requires 2048-8192 MB memory)
@@ -280,6 +288,10 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     // otelServiceName: 'anthropic-bedrock-proxy-prod',
     // otelTraceContent: false,
     // otelTraceSamplingRatio: 0.1,
+
+    // OpenAI-Compatible API (Bedrock Mantle)
+    enableOpenaiCompat: false,
+    // openaiBaseUrl: 'https://bedrock-mantle.us-east-1.api.aws/v1',
 
     // Admin Portal
     adminPortalEnabled: true,
@@ -379,6 +391,11 @@ export function getConfig(environmentName: string = 'dev'): EnvironmentConfig {
     ? process.env.ENABLE_WEB_FETCH.toLowerCase() === 'true'
     : config.enableWebFetch;
 
+  // Override OpenAI-compat settings from environment variables
+  const enableOpenaiCompat = process.env.ENABLE_OPENAI_COMPAT
+    ? process.env.ENABLE_OPENAI_COMPAT.toLowerCase() === 'true'
+    : config.enableOpenaiCompat;
+
   return {
     ...config,
     platform,
@@ -388,6 +405,8 @@ export function getConfig(environmentName: string = 'dev'): EnvironmentConfig {
     enableTracing,
     enableWebSearch,
     enableWebFetch,
+    enableOpenaiCompat,
+    ...(process.env.OPENAI_BASE_URL && { openaiBaseUrl: process.env.OPENAI_BASE_URL }),
     ...(process.env.OTEL_EXPORTER_OTLP_ENDPOINT && { otelExporterEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT }),
     ...(process.env.OTEL_EXPORTER_OTLP_PROTOCOL && { otelExporterProtocol: process.env.OTEL_EXPORTER_OTLP_PROTOCOL }),
     ...(process.env.OTEL_EXPORTER_OTLP_HEADERS && { otelExporterHeaders: process.env.OTEL_EXPORTER_OTLP_HEADERS }),

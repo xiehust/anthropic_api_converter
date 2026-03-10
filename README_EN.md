@@ -85,6 +85,12 @@ This lightweight API convertion service enables you to use various large languag
   - Fetch limit via `max_uses`; content length limit via `max_content_tokens`
   - Dynamic filtering (`web_fetch_20260209`): Claude can write code to process fetched content (requires Docker sandbox, **ECS deployment needs EC2 launch type**)
   - Supports both streaming and non-streaming responses
+- **OpenAI-Compatible API (Bedrock Mantle)**: Non-Claude models can optionally use Bedrock's OpenAI Chat Completions API via bedrock-mantle endpoint instead of Converse API
+  - Controlled by `ENABLE_OPENAI_COMPAT` environment variable (disabled by default)
+  - Requires `OPENAI_API_KEY` (Bedrock API Key) and `OPENAI_BASE_URL` (e.g., `https://bedrock-mantle.us-east-1.api.aws/v1`)
+  - Automatically maps Anthropic `thinking` to OpenAI `reasoning` (`budget_tokens` → `effort: high/medium/low`)
+  - Supports streaming and non-streaming responses, tool calling, multimodal content
+  - Claude models remain unaffected, still using InvokeModel API
 
 ### Infrastructure
 - **Authentication**: API key-based authentication with DynamoDB storage
@@ -110,7 +116,7 @@ This lightweight API convertion service enables you to use various large languag
 - Qwen3-235b-instruct
 - Kimi 2.5
 - minimax2.1
-- Any other Bedrock models supporting Converse API
+- Any other Bedrock model supporting the Converse API or OpenAI Chat Completions API
 
 ## Usage Cases
 
@@ -963,7 +969,24 @@ ENABLE_DOCUMENT_SUPPORT=True
 PROMPT_CACHING_ENABLED=False
 ENABLE_PROGRAMMATIC_TOOL_CALLING=True  # Requires Docker
 ENABLE_WEB_SEARCH=True                # Requires search provider API key
+ENABLE_OPENAI_COMPAT=False           # Use OpenAI Chat Completions API (non-Claude models)
 DEFAULT_CACHE_TTL=1h                  # Proxy default cache TTL (optional: '5m' or '1h')
+```
+
+#### OpenAI-Compatible API Configuration
+```bash
+# Enable OpenAI-compatible API (only affects non-Claude models)
+ENABLE_OPENAI_COMPAT=False
+
+# Bedrock Mantle API Key
+OPENAI_API_KEY=your-bedrock-api-key
+
+# Bedrock Mantle endpoint URL
+OPENAI_BASE_URL=https://bedrock-mantle.us-east-1.api.aws/v1
+
+# thinking → reasoning mapping thresholds
+OPENAI_COMPAT_THINKING_HIGH_THRESHOLD=10000    # budget_tokens >= this → effort=high
+OPENAI_COMPAT_THINKING_MEDIUM_THRESHOLD=4000   # budget_tokens >= this → effort=medium
 ```
 
 #### Web Search Configuration
@@ -1331,8 +1354,10 @@ anthropic_api_proxy/
        --- messages.py   # Messages API
        --- models.py     # Models API
    --- converters/       # Format converters
-       --- anthropic_to_bedrock.py
-       --- bedrock_to_anthropic.py
+       --- anthropic_to_bedrock.py   # Anthropic → Bedrock Converse
+       --- bedrock_to_anthropic.py   # Bedrock Converse → Anthropic
+       --- anthropic_to_openai.py    # Anthropic → OpenAI Chat Completions
+       --- openai_to_anthropic.py    # OpenAI Chat Completions → Anthropic
    --- core/             # Core functionality
        --- config.py     # Configuration management
        --- logging.py    # Logging setup
@@ -1349,6 +1374,7 @@ anthropic_api_proxy/
        --- web_fetch.py  # Web fetch tool models
    --- services/         # Business logic
        --- bedrock_service.py
+       --- openai_compat_service.py  # OpenAI-compatible API service (Bedrock Mantle)
        --- web_search_service.py  # Web search orchestration service
        --- web_search/            # Search provider module
            --- providers.py       # Tavily/Brave search implementations

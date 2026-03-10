@@ -85,6 +85,12 @@
   - 抓取次数限制：通过 `max_uses` 控制；内容长度限制：通过 `max_content_tokens` 控制
   - 动态过滤（`web_fetch_20260209`）：Claude 可编写代码处理抓取内容（依赖 Docker sandbox，**ECS 部署需使用 EC2 启动类型**）
   - 支持流式和非流式响应
+- **OpenAI 兼容 API（Bedrock Mantle）**：非 Claude 模型可选择通过 Bedrock 的 OpenAI Chat Completions API（bedrock-mantle 端点）进行请求，替代 Converse API
+  - 通过 `ENABLE_OPENAI_COMPAT` 环境变量控制，默认关闭
+  - 需要配置 `OPENAI_API_KEY`（Bedrock API Key）和 `OPENAI_BASE_URL`（如 `https://bedrock-mantle.us-east-1.api.aws/v1`）
+  - 自动将 Anthropic `thinking` 配置映射为 OpenAI `reasoning`（`budget_tokens` → `effort: high/medium/low`）
+  - 支持流式和非流式响应、工具调用、多模态内容
+  - Claude 模型不受影响，仍使用 InvokeModel API
 
 ### 基础设施
 - **身份验证**：基于 API 密钥的身份验证，使用 DynamoDB 存储
@@ -109,7 +115,7 @@
 - Qwen3-235b-instruct
 - Kimi 2.5
 - minimax2.1
-- 任何其他支持 Converse API 的 Bedrock 模型
+- 任何其他支持 Converse API 或 OpenAI Chat Completions API 的 Bedrock 模型
 
 ## 使用场景
 
@@ -982,7 +988,24 @@ ENABLE_DOCUMENT_SUPPORT=True
 PROMPT_CACHING_ENABLED=False
 ENABLE_PROGRAMMATIC_TOOL_CALLING=True  # 需要 Docker
 ENABLE_WEB_SEARCH=True                # 需要搜索提供商 API 密钥
+ENABLE_OPENAI_COMPAT=False           # 使用 OpenAI Chat Completions API（非 Claude 模型）
 DEFAULT_CACHE_TTL=1h                  # 代理默认缓存 TTL（可选：'5m' 或 '1h'）
+```
+
+#### OpenAI 兼容 API 配置
+```bash
+# 启用 OpenAI 兼容 API（仅对非 Claude 模型生效）
+ENABLE_OPENAI_COMPAT=False
+
+# Bedrock Mantle API Key
+OPENAI_API_KEY=your-bedrock-api-key
+
+# Bedrock Mantle 端点 URL
+OPENAI_BASE_URL=https://bedrock-mantle.us-east-1.api.aws/v1
+
+# thinking → reasoning 映射阈值
+OPENAI_COMPAT_THINKING_HIGH_THRESHOLD=10000    # budget_tokens >= 此值 → effort=high
+OPENAI_COMPAT_THINKING_MEDIUM_THRESHOLD=4000   # budget_tokens >= 此值 → effort=medium
 ```
 
 #### Web 搜索配置
@@ -1350,8 +1373,10 @@ anthropic_api_proxy/
 │   │   ├── messages.py   # 消息 API
 │   │   └── models.py     # 模型 API
 │   ├── converters/       # 格式转换器
-│   │   ├── anthropic_to_bedrock.py
-│   │   └── bedrock_to_anthropic.py
+│   │   ├── anthropic_to_bedrock.py   # Anthropic → Bedrock Converse
+│   │   ├── bedrock_to_anthropic.py   # Bedrock Converse → Anthropic
+│   │   ├── anthropic_to_openai.py    # Anthropic → OpenAI Chat Completions
+│   │   └── openai_to_anthropic.py    # OpenAI Chat Completions → Anthropic
 │   ├── core/             # 核心功能
 │   │   ├── config.py     # 配置管理
 │   │   ├── logging.py    # 日志设置
@@ -1368,6 +1393,7 @@ anthropic_api_proxy/
 │   │   └── web_fetch.py  # Web 抓取工具模型
 │   ├── services/         # 业务逻辑
 │   │   ├── bedrock_service.py
+│   │   ├── openai_compat_service.py  # OpenAI 兼容 API 服务（Bedrock Mantle）
 │   │   ├── web_search_service.py  # Web 搜索编排服务
 │   │   ├── web_search/            # 搜索提供商模块
 │   │   │   ├── providers.py       # Tavily/Brave 搜索实现

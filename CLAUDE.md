@@ -39,8 +39,9 @@ black app tests && ruff check app tests && mypy app
 
 - **InvokeModel API** (Claude models): Native Anthropic format, minimal conversion, full beta feature support
 - **Converse API** (non-Claude models): Requires format conversion, unified API for all Bedrock models
+- **OpenAI Chat Completions API** (non-Claude models, optional): When `ENABLE_OPENAI_COMPAT=True`, non-Claude models use Bedrock's OpenAI-compatible endpoint via bedrock-mantle instead of Converse API
 
-**Routing**: If model ID contains "anthropic" or "claude" → InvokeModel; otherwise → Converse.
+**Routing**: If model ID contains "anthropic" or "claude" → InvokeModel; else if `ENABLE_OPENAI_COMPAT` → OpenAI Chat Completions; else → Converse.
 
 > **Detailed conversion flows, content block mapping, and streaming implementation**: see [docs/architecture/detailed-flows.md](docs/architecture/detailed-flows.md)
 
@@ -102,6 +103,7 @@ Each feature has detailed docs in [docs/architecture/features.md](docs/architect
 - **Cache TTL**: Extends `cache_control` with configurable TTL (5m or 1h). Priority: API key → request → env → default.
 - **OpenTelemetry Tracing**: OTEL GenAI semantic conventions, session-based trace grouping. Zero overhead when disabled.
 - **Admin Portal**: Separate FastAPI app for API key/usage/pricing management with Cognito auth.
+- **OpenAI-Compatible API**: Non-Claude models can optionally use Bedrock's OpenAI Chat Completions API via bedrock-mantle endpoint instead of Converse API. Controlled by `ENABLE_OPENAI_COMPAT` flag. Maps `thinking` to OpenAI `reasoning` with configurable effort thresholds.
 
 ## Common Development Tasks
 
@@ -161,6 +163,8 @@ Key CDK files: `cdk/config/config.ts`, `cdk/lib/ecs-stack.ts`, `cdk/scripts/depl
 - `MASTER_API_KEY` — Master key for admin access (or `REQUIRE_API_KEY=False` for dev)
 
 **Feature Flags:** `ENABLE_TOOL_USE`, `ENABLE_EXTENDED_THINKING`, `ENABLE_DOCUMENT_SUPPORT`, `ENABLE_PROGRAMMATIC_TOOL_CALLING`, `ENABLE_WEB_SEARCH`, `ENABLE_WEB_FETCH`, `ENABLE_TRACING`
+
+**OpenAI-Compat:** `ENABLE_OPENAI_COMPAT`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_COMPAT_THINKING_HIGH_THRESHOLD`, `OPENAI_COMPAT_THINKING_MEDIUM_THRESHOLD`
 
 See `.env.example` for full list including PTC, web search, web fetch, cache TTL, tracing, and beta header settings.
 

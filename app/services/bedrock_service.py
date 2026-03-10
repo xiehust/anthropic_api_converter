@@ -101,6 +101,13 @@ class BedrockService:
         self.anthropic_to_bedrock = AnthropicToBedrockConverter(dynamodb_client)
         self.bedrock_to_anthropic = BedrockToAnthropicConverter()
 
+        # Initialize OpenAI-compat service for non-Claude models if enabled
+        self._openai_compat_service = None
+        if settings.enable_openai_compat and settings.openai_api_key and settings.openai_base_url:
+            from app.services.openai_compat_service import OpenAICompatService
+            self._openai_compat_service = OpenAICompatService()
+            print(f"[BEDROCK] OpenAI-compat mode enabled, base_url={settings.openai_base_url}")
+
     def _is_claude_model(self, model_id: str) -> bool:
         """
         Check if the model is a Claude/Anthropic model.
@@ -482,6 +489,11 @@ class BedrockService:
         Raises:
             Exception: If Bedrock API call fails
         """
+        # Route non-Claude models to OpenAI-compat BEFORE acquiring Bedrock semaphore
+        # (OpenAI-compat service manages its own semaphore)
+        if not self._is_claude_model(request.model) and self._openai_compat_service:
+            return await self._openai_compat_service.invoke_model(request, request_id)
+
         semaphore = _get_semaphore()
         async with semaphore:
             loop = asyncio.get_event_loop()
@@ -550,6 +562,11 @@ class BedrockService:
         if self._is_claude_model(request.model):
             print(f"[BEDROCK] Using InvokeModel API for Claude model: {request.model}")
             return self._invoke_model_native_sync(request, request_id, anthropic_beta, cache_ttl=cache_ttl)
+
+        # Route to OpenAI-compat service if enabled
+        if self._openai_compat_service:
+            print(f"[BEDROCK] Using OpenAI Chat Completions API for non-Claude model: {request.model}")
+            return self._openai_compat_service.invoke_model_sync(request, request_id)
 
         print(f"[BEDROCK] Converting request to Bedrock format for request {request_id}")
 
@@ -686,6 +703,8 @@ class BedrockService:
         print(f"  - Has system: {bool(native_request.get('system'))}")
         print(f"  - Has tools: {bool(native_request.get('tools'))}")
         print(f"  - Has thinking: {bool(native_request.get('thinking'))}")
+        print(f"  - max_tokens: {native_request.get('max_tokens')}")
+        print(f"  - thinking: {native_request.get('thinking')}")
         print(f"  - Beta headers: {native_request.get('anthropic_beta', [])}")
 
         # Debug: Log each message's content types for debugging thinking block ordering
@@ -850,6 +869,15 @@ class BedrockService:
         Yields:
             SSE-formatted event strings
         """
+        # Route non-Claude models to OpenAI-compat streaming BEFORE acquiring semaphore
+        # (OpenAI-compat service manages its own semaphore)
+        if not self._is_claude_model(request.model) and self._openai_compat_service:
+            message_id = request_id or f"msg_{uuid4().hex}"
+            print(f"[BEDROCK STREAM] Using OpenAI Chat Completions API (streaming) for: {request.model}")
+            async for event in self._openai_compat_service.invoke_model_stream(request, message_id):
+                yield event
+            return
+
         semaphore = _get_semaphore()
         async with semaphore:
             message_id = request_id or f"msg_{uuid4().hex}"

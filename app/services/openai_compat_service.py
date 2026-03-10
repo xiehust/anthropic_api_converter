@@ -9,7 +9,6 @@ BedrockService for concurrency control and streaming.
 """
 import asyncio
 import json
-import logging
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -23,8 +22,6 @@ from app.converters.openai_to_anthropic import OpenAIToAnthropicConverter
 from app.core.config import settings
 from app.core.exceptions import BedrockAPIError
 from app.schemas.anthropic import MessageRequest, MessageResponse
-
-logger = logging.getLogger(__name__)
 
 # Module-level executor and semaphore (shared across instances, lazy init)
 _openai_executor: Optional[ThreadPoolExecutor] = None
@@ -444,6 +441,15 @@ class OpenAICompatService:
                                 }
                                 event_queue.put(("event", self._format_sse_event(block_stop)))
                                 text_block_started = False
+                                content_index += 1
+
+                            # Close previous tool block if open
+                            elif current_tool_index >= 0:
+                                block_stop = {
+                                    "type": "content_block_stop",
+                                    "index": content_index,
+                                }
+                                event_queue.put(("event", self._format_sse_event(block_stop)))
                                 content_index += 1
 
                             current_tool_index = tc.get("index", current_tool_index + 1)

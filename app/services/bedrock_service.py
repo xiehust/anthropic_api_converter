@@ -489,6 +489,11 @@ class BedrockService:
         Raises:
             Exception: If Bedrock API call fails
         """
+        # Route non-Claude models to OpenAI-compat BEFORE acquiring Bedrock semaphore
+        # (OpenAI-compat service manages its own semaphore)
+        if not self._is_claude_model(request.model) and self._openai_compat_service:
+            return await self._openai_compat_service.invoke_model(request, request_id)
+
         semaphore = _get_semaphore()
         async with semaphore:
             loop = asyncio.get_event_loop()

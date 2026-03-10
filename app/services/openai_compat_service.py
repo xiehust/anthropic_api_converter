@@ -111,37 +111,54 @@ class OpenAICompatService:
                 **openai_request,
                 **({"extra_body": extra_body} if extra_body else {})
             )
-            # Log raw response object attributes (SDK may not include reasoning_content in model_dump)
-            raw_message = response.choices[0].message if response.choices else None
-            print(f"[OPENAI-COMPAT] Raw response object:")
-            print(f"  - Message attrs: {[a for a in dir(raw_message) if not a.startswith('_')] if raw_message else 'None'}")
-            print(f"  - Has reasoning attr: {hasattr(raw_message, 'reasoning') if raw_message else False}")
-            if raw_message and hasattr(raw_message, 'reasoning') and raw_message.reasoning:
-                print(f"  - reasoning length: {len(raw_message.reasoning)}")
-                print(f"  - reasoning preview: {raw_message.reasoning[:200]}...")
-
             response_dict = response.model_dump()
 
-            # Also check if model_dump() includes reasoning_content
+            # Log OpenAI response details
             choice = response_dict.get("choices", [{}])[0] if response_dict.get("choices") else {}
-            message_keys = list(choice.get("message", {}).keys()) if choice.get("message") else []
-            raw_usage = response_dict.get("usage", {})
-            print(f"[OPENAI-COMPAT] Response (model_dump):")
+            msg_dict = choice.get("message", {})
+            raw_usage = response_dict.get("usage") or {}
+            reasoning_text = msg_dict.get("reasoning") or msg_dict.get("reasoning_content") or ""
+            content_text = msg_dict.get("content") or ""
+            tool_calls = msg_dict.get("tool_calls") or []
+
+            print(f"[OPENAI-COMPAT] Response received:")
             print(f"  - OpenAI response ID: {response_dict.get('id')}")
-            print(f"  - Message keys: {message_keys}")
             print(f"  - Finish reason: {choice.get('finish_reason')}")
-            print(f"  - Has tool_calls: {bool(choice.get('message', {}).get('tool_calls'))}")
-            msg_dict = choice.get('message', {})
-            print(f"  - Has reasoning: {bool(msg_dict.get('reasoning'))}")
-            print(f"  - Reasoning length: {len(msg_dict.get('reasoning') or msg_dict.get('reasoning_content') or '')}")
-            print(f"  - Content length: {len(choice.get('message', {}).get('content') or '')}")
+            print(f"  - Has reasoning: {bool(reasoning_text)}")
+            print(f"  - Reasoning length: {len(reasoning_text)}")
+            print(f"  - Content length: {len(content_text)}")
+            print(f"  - Has tool_calls: {bool(tool_calls)}")
+            print(f"  - Tool calls count: {len(tool_calls)}")
+            if tool_calls:
+                for i, tc in enumerate(tool_calls):
+                    func = tc.get("function", {})
+                    print(f"  - Tool call [{i}]: id={tc.get('id')}, name={func.get('name')}, args_len={len(func.get('arguments', ''))}")
             print(f"  - Usage: prompt_tokens={raw_usage.get('prompt_tokens', 0)}, completion_tokens={raw_usage.get('completion_tokens', 0)}, total={raw_usage.get('total_tokens', 0)}")
             if raw_usage.get("completion_tokens_details"):
                 print(f"  - Completion details: {raw_usage['completion_tokens_details']}")
 
-            return self.response_converter.convert_response(
+            # Convert to Anthropic format
+            anthropic_response = self.response_converter.convert_response(
                 response_dict, request.model, message_id
             )
+
+            # Log converted Anthropic response
+            print(f"[OPENAI-COMPAT] Converted to Anthropic format:")
+            print(f"  - Message ID: {anthropic_response.id}")
+            print(f"  - Stop reason: {anthropic_response.stop_reason}")
+            print(f"  - Content blocks: {len(anthropic_response.content)}")
+            for i, block in enumerate(anthropic_response.content):
+                if block.type == "thinking":
+                    print(f"  - Block [{i}]: thinking, length={len(block.thinking)}")
+                elif block.type == "text":
+                    print(f"  - Block [{i}]: text, length={len(block.text)}")
+                elif block.type == "tool_use":
+                    print(f"  - Block [{i}]: tool_use, id={block.id}, name={block.name}")
+                else:
+                    print(f"  - Block [{i}]: {block.type}")
+            print(f"  - Usage: input_tokens={anthropic_response.usage.input_tokens}, output_tokens={anthropic_response.usage.output_tokens}")
+
+            return anthropic_response
 
         except APIStatusError as e:
             print(f"[OPENAI-COMPAT] OpenAI API error: {e}")

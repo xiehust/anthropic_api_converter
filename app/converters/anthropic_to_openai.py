@@ -107,7 +107,7 @@ class AnthropicToOpenAIConverter:
 
         # Thinking → reasoning_effort (Bedrock Mantle format)
         if request.thinking and settings.enable_extended_thinking:
-            if self._is_kimi_k25_model(request.model):
+            if self._is_kimi_k25_model(request.model) or self._is_glm_47_model(request.model):
                 # Kimi K2.5 always uses reasoning_effort="high"
                 result["reasoning_effort"] = "high"
                 result["extra_body"] = {"include_reasoning": True}
@@ -345,6 +345,12 @@ class AnthropicToOpenAIConverter:
         model_lower = model.lower()
         return "kimi-k2.5" in model_lower or "kimi_k2.5" in model_lower
 
+    @staticmethod
+    def _is_glm_47_model(model: str) -> bool:
+        """Check if the model is a glm 4.7 model."""
+        model_lower = model.lower()
+        return "glm-4.7" in model_lower or "glm_4.7" in model_lower
+    
     def _convert_thinking_to_effort(self, thinking: Dict[str, Any]) -> Optional[str]:
         """Convert Anthropic thinking config to reasoning effort level.
 

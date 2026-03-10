@@ -111,13 +111,24 @@ class OpenAICompatService:
                 **openai_request,
                 **({"extra_body": extra_body} if extra_body else {})
             )
+            # Log raw response object attributes (SDK may not include reasoning_content in model_dump)
+            raw_message = response.choices[0].message if response.choices else None
+            print(f"[OPENAI-COMPAT] Raw response object:")
+            print(f"  - Message attrs: {[a for a in dir(raw_message) if not a.startswith('_')] if raw_message else 'None'}")
+            print(f"  - Has reasoning_content attr: {hasattr(raw_message, 'reasoning_content') if raw_message else False}")
+            if raw_message and hasattr(raw_message, 'reasoning_content') and raw_message.reasoning_content:
+                print(f"  - reasoning_content length: {len(raw_message.reasoning_content)}")
+                print(f"  - reasoning_content preview: {raw_message.reasoning_content[:200]}...")
+
             response_dict = response.model_dump()
 
-            # Log raw OpenAI response details
+            # Also check if model_dump() includes reasoning_content
             choice = response_dict.get("choices", [{}])[0] if response_dict.get("choices") else {}
+            message_keys = list(choice.get("message", {}).keys()) if choice.get("message") else []
             raw_usage = response_dict.get("usage", {})
-            print(f"[OPENAI-COMPAT] Response received:")
+            print(f"[OPENAI-COMPAT] Response (model_dump):")
             print(f"  - OpenAI response ID: {response_dict.get('id')}")
+            print(f"  - Message keys: {message_keys}")
             print(f"  - Finish reason: {choice.get('finish_reason')}")
             print(f"  - Has tool_calls: {bool(choice.get('message', {}).get('tool_calls'))}")
             print(f"  - Has reasoning_content: {bool(choice.get('message', {}).get('reasoning_content'))}")

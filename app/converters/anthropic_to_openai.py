@@ -107,10 +107,15 @@ class AnthropicToOpenAIConverter:
 
         # Thinking → reasoning_effort (Bedrock Mantle format)
         if request.thinking and settings.enable_extended_thinking:
-            effort = self._convert_thinking_to_effort(request.thinking)
-            if effort:
-                result["reasoning_effort"] = effort
+            if self._is_kimi_k25_model(request.model):
+                # Kimi K2.5 always uses reasoning_effort="high"
+                result["reasoning_effort"] = "high"
                 result["extra_body"] = {"include_reasoning": True}
+            else:
+                effort = self._convert_thinking_to_effort(request.thinking)
+                if effort:
+                    result["reasoning_effort"] = effort
+                    result["extra_body"] = {"include_reasoning": True}
 
         return result
 

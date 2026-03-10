@@ -120,6 +120,8 @@ class OpenAICompatService:
             print(f"  - OpenAI response ID: {response_dict.get('id')}")
             print(f"  - Finish reason: {choice.get('finish_reason')}")
             print(f"  - Has tool_calls: {bool(choice.get('message', {}).get('tool_calls'))}")
+            print(f"  - Has reasoning_content: {bool(choice.get('message', {}).get('reasoning_content'))}")
+            print(f"  - Reasoning length: {len(choice.get('message', {}).get('reasoning_content') or '')}")
             print(f"  - Content length: {len(choice.get('message', {}).get('content') or '')}")
             print(f"  - Usage: prompt_tokens={raw_usage.get('prompt_tokens', 0)}, completion_tokens={raw_usage.get('completion_tokens', 0)}, total={raw_usage.get('total_tokens', 0)}")
             if raw_usage.get("completion_tokens_details"):

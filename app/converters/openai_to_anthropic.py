@@ -12,6 +12,7 @@ from typing import Any, Dict
 from app.schemas.anthropic import (
     MessageResponse,
     TextContent,
+    ThinkingContent,
     ToolUseContent,
     Usage,
 )
@@ -57,6 +58,11 @@ class OpenAIToAnthropicConverter:
 
         # Build content blocks
         content = []
+
+        # Reasoning/thinking content (from models with reasoning_effort)
+        reasoning = message.get("reasoning_content")
+        if reasoning:
+            content.append(ThinkingContent(type="thinking", thinking=reasoning))
 
         # Text content
         text = message.get("content")

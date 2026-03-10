@@ -326,6 +326,7 @@ class OpenAICompatService:
             event_queue.put(("event", self._format_sse_event(message_start)))
 
             # State tracking
+            thinking_block_started = False
             text_block_started = False
             current_tool_index = -1
             content_index = 0
@@ -361,12 +362,41 @@ class OpenAICompatService:
                 delta = choice.get("delta", {})
                 finish_reason = choice.get("finish_reason")
 
+                # Handle reasoning content delta (thinking)
+                reasoning_content = delta.get("reasoning_content")
+                if reasoning_content is not None:
+                    if not thinking_block_started:
+                        block_start = {
+                            "type": "content_block_start",
+                            "index": content_index,
+                            "content_block": {"type": "thinking", "thinking": ""},
+                        }
+                        event_queue.put(("event", self._format_sse_event(block_start)))
+                        thinking_block_started = True
+
+                    thinking_delta = {
+                        "type": "content_block_delta",
+                        "index": content_index,
+                        "delta": {"type": "thinking_delta", "thinking": reasoning_content},
+                    }
+                    event_queue.put(("event", self._format_sse_event(thinking_delta)))
+
                 # Handle text content delta
                 text_content = delta.get("content")
                 if text_content is not None:
                     total_text_len += len(text_content)
 
                     if not text_block_started:
+                        # Close open thinking block before starting text
+                        if thinking_block_started:
+                            block_stop = {
+                                "type": "content_block_stop",
+                                "index": content_index,
+                            }
+                            event_queue.put(("event", self._format_sse_event(block_stop)))
+                            content_index += 1
+                            thinking_block_started = False
+
                         # Close open tool block first before starting a new text block
                         if current_tool_index >= 0:
                             block_stop = {
@@ -455,7 +485,7 @@ class OpenAICompatService:
                     print(f"  - Content blocks: {content_index + 1}")
                     print(f"  - Tool calls: {current_tool_index + 1 if current_tool_index >= 0 else 0}")
                     # Close any open content blocks
-                    if text_block_started or current_tool_index >= 0:
+                    if thinking_block_started or text_block_started or current_tool_index >= 0:
                         block_stop = {
                             "type": "content_block_stop",
                             "index": content_index,

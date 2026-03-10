@@ -703,6 +703,8 @@ class BedrockService:
         print(f"  - Has system: {bool(native_request.get('system'))}")
         print(f"  - Has tools: {bool(native_request.get('tools'))}")
         print(f"  - Has thinking: {bool(native_request.get('thinking'))}")
+        print(f"  - max_tokens: {native_request.get('max_tokens')}")
+        print(f"  - thinking: {native_request.get('thinking')}")
         print(f"  - Beta headers: {native_request.get('anthropic_beta', [])}")
 
         # Debug: Log each message's content types for debugging thinking block ordering

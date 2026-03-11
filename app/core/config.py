@@ -199,6 +199,7 @@ class Settings(BaseSettings):
     beta_headers_blocklist: List[str] = Field(
         default=[
             "prompt-caching-scope-2026-01-05",
+            "redact-thinking-2026-02-12"
         ],
         alias="BETA_HEADERS_BLOCKLIST",
         description="Beta headers that should NOT be passed to Bedrock (unsupported)",

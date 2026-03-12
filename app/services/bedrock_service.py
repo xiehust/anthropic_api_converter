@@ -15,6 +15,7 @@ import asyncio
 import json
 import queue
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, AsyncGenerator, Dict, Optional
 from uuid import uuid4
@@ -959,6 +960,9 @@ class BedrockService:
                 )
 
             # Consume events from queue asynchronously
+            _ping_interval = 30  # seconds between ping events
+            _last_yield_time = time.monotonic()
+
             try:
                 while True:
                     try:
@@ -980,10 +984,17 @@ class BedrockService:
                         elif msg_type == "event":
                             # data is the SSE-formatted string
                             yield data
+                            _last_yield_time = time.monotonic()
 
                     except queue.Empty:
                         # Queue is empty, yield control to event loop
                         await asyncio.sleep(0.005)  # 5ms sleep to prevent busy waiting
+
+                        # Send ping keep-alive if no events for ping_interval seconds
+                        _now = time.monotonic()
+                        if _now - _last_yield_time >= _ping_interval:
+                            yield self._format_sse_event({"type": "ping"})
+                            _last_yield_time = _now
 
                         # Check if the worker thread has completed unexpectedly
                         if future.done():

@@ -358,6 +358,9 @@ class OpenAICompatService:
             text_block_started = False
             current_tool_index = -1
             content_index = 0
+            final_usage: Dict[str, Any] = {}  # Capture usage from the final usage-only chunk
+            final_stop_reason = "end_turn"  # Captured from finish_reason chunk
+            got_finish_reason = False
 
             # Call OpenAI streaming API
             stream = self.client.chat.completions.create(
@@ -373,9 +376,10 @@ class OpenAICompatService:
                 choices = chunk_dict.get("choices", [])
 
                 if not choices:
-                    # Usage-only chunk at end of stream — log usage
+                    # Usage-only chunk at end of stream — capture and log usage
                     stream_usage = chunk_dict.get("usage") or {}
                     if stream_usage:
+                        final_usage = stream_usage
                         print(f"[OPENAI-COMPAT STREAM] Final usage chunk:")
                         print(f"  - prompt_tokens: {stream_usage.get('prompt_tokens', 0)}")
                         print(f"  - completion_tokens: {stream_usage.get('completion_tokens', 0)}")
@@ -530,27 +534,29 @@ class OpenAICompatService:
                         }
                         event_queue.put(("event", self._format_sse_event(block_stop)))
 
-                    # Map stop reason
-                    stop_reason = self.response_converter.STOP_REASON_MAP.get(
+                    # Map and save stop reason — message_delta deferred until after loop
+                    # so we can include usage from the final usage-only chunk
+                    got_finish_reason = True
+                    final_stop_reason = self.response_converter.STOP_REASON_MAP.get(
                         finish_reason, "end_turn"
                     )
 
-                    # Get usage from chunk if available (may be None explicitly)
-                    usage = chunk_dict.get("usage") or {}
+            # Emit message_delta and message_stop only if we got a proper finish
+            if got_finish_reason:
+                # Usage comes from the final usage-only chunk (after finish_reason)
+                message_delta = {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": final_stop_reason, "stop_sequence": None},
+                    "usage": {
+                        "input_tokens": final_usage.get("prompt_tokens", 0),
+                        "output_tokens": final_usage.get("completion_tokens", 0),
+                    },
+                }
+                event_queue.put(("event", self._format_sse_event(message_delta)))
 
-                    # Emit message_delta
-                    message_delta = {
-                        "type": "message_delta",
-                        "delta": {"stop_reason": stop_reason, "stop_sequence": None},
-                        "usage": {
-                            "output_tokens": usage.get("completion_tokens", 0)
-                        },
-                    }
-                    event_queue.put(("event", self._format_sse_event(message_delta)))
-
-                    # Emit message_stop
-                    message_stop = self.response_converter.create_message_stop_event()
-                    event_queue.put(("event", self._format_sse_event(message_stop)))
+                # Emit message_stop
+                message_stop = self.response_converter.create_message_stop_event()
+                event_queue.put(("event", self._format_sse_event(message_stop)))
 
             event_queue.put(("done", None))
 

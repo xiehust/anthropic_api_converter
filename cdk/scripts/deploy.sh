@@ -234,7 +234,8 @@ if ! aws cloudformation describe-stacks --stack-name CDKToolkit --region "$REGIO
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         cd "$(dirname "$0")/.." || exit 1
-        npx cdk bootstrap "aws://${ACCOUNT_ID}/${REGION}"
+        CDK_PLATFORM="$PLATFORM" CDK_LAUNCH_TYPE="$LAUNCH_TYPE" CDK_ENVIRONMENT="$ENVIRONMENT" \
+            npx cdk bootstrap "aws://${ACCOUNT_ID}/${REGION}"
     else
         echo -e "${RED}Cannot proceed without CDK bootstrap.${NC}"
         exit 1

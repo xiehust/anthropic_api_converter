@@ -353,10 +353,11 @@ export function getConfig(environmentName: string = 'dev'): EnvironmentConfig {
   }
 
   // Get platform from environment variable (set by deploy script)
-  const platform = process.env.CDK_PLATFORM as 'arm64' | 'amd64';
-  if (!platform || !['arm64', 'amd64'].includes(platform)) {
+  // Default to 'arm64' when not specified (e.g., during `cdk bootstrap`)
+  const platform = (process.env.CDK_PLATFORM as 'arm64' | 'amd64') || 'arm64';
+  if (!['arm64', 'amd64'].includes(platform)) {
     throw new Error(
-      `Platform must be specified via CDK_PLATFORM environment variable. Valid values: arm64, amd64. Got: ${platform}`
+      `Platform must be 'arm64' or 'amd64'. Got: ${platform}`
     );
   }
 

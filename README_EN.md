@@ -13,7 +13,8 @@
   <a href="./README.md"><img src="https://img.shields.io/badge/文档-中文-red.svg" alt="中文文档"></a>
   <a href="./README_EN.md"><img src="https://img.shields.io/badge/Docs-English-blue.svg" alt="English Docs"></a>
   <a href=”https://mp.weixin.qq.com/s/mW1RNem5zbAlyvLixSFWOw”><img src=”https://img.shields.io/badge/📚-Tech_Blog-purple.svg” alt=”Tech Blog”></a>
-  <a href=”https://aws.amazon.com/cn/blogs/china/programmatic-tool-calling-agent-using-bedrock-and-ecs-docker-sandbox/”><img src=”https://img.shields.io/badge/📝-AWS_Blog-FF9900.svg” alt=”AWS Blog”></a>
+  <a href=”https://aws.amazon.com/cn/blogs/china/programmatic-tool-calling-agent-using-bedrock-and-ecs-docker-sandbox/”><img src=”https://img.shields.io/badge/📝-AWS_Blog(PTC)-FF9900.svg” alt=”AWS Blog PTC”></a>
+  <a href=”https://aws.amazon.com/cn/blogs/china/based-on-amazon-bedrock-implement-dynamic-filtering-web-search-web-fetch/”><img src=”https://img.shields.io/badge/📝-AWS_Blog(Web_Search)-FF9900.svg” alt=”AWS Blog Web Search”></a>
   <a href=”./cdk/DEPLOYMENT.md”><img src=”https://img.shields.io/badge/🚀-Deployment-orange.svg” alt=”Deployment Guide”></a>
 </p>
 
@@ -26,6 +27,8 @@
 This lightweight API convertion service enables you to use various large language models on AWS Bedrock with the Anthropic SDK without any code changes. Through simple environment variable configuration, you can seamlessly switch between different models like Qwen, DeepSeek, and others in tools such as Claude Code and Claude Agent SDK.
 
 > 📝 **AWS Blog**: [Programmatic Tool Calling Agent Using Amazon Bedrock and ECS Docker Sandbox](https://aws.amazon.com/cn/blogs/china/programmatic-tool-calling-agent-using-bedrock-and-ecs-docker-sandbox/)
+>
+> 📝 **AWS Blog**: [Implement Dynamic Filtering Web Search and Web Fetch on Amazon Bedrock](https://aws.amazon.com/cn/blogs/china/based-on-amazon-bedrock-implement-dynamic-filtering-web-search-web-fetch/)
 
 **Key Advantages:**
 - 🔄 **Zero Code Migration** - Fully compatible with Anthropic API, no code changes required

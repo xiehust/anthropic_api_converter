@@ -109,6 +109,10 @@ export interface EnvironmentConfig {
   logRetentionDays: number;
   enableContainerInsights: boolean;
 
+  // CloudFront Configuration
+  enableCloudFront: boolean;            // Enable CloudFront distribution with HTTPS
+  cloudFrontOriginReadTimeout: number;  // Origin read timeout in seconds (max 180)
+
   // Tags
   tags: { [key: string]: string };
 }
@@ -204,6 +208,10 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
 
     // DynamoDB
     dynamodbBillingMode: 'PAY_PER_REQUEST',
+
+    // CloudFront (HTTPS)
+    enableCloudFront: true,
+    cloudFrontOriginReadTimeout: 180,
 
     // Logging
     logRetentionDays: 7,
@@ -305,6 +313,10 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     // DynamoDB
     dynamodbBillingMode: 'PAY_PER_REQUEST',
 
+    // CloudFront (HTTPS)
+    enableCloudFront: true,
+    cloudFrontOriginReadTimeout: 180,
+
     // Logging
     logRetentionDays: 30,
     enableContainerInsights: true,
@@ -397,6 +409,11 @@ export function getConfig(environmentName: string = 'dev'): EnvironmentConfig {
     ? process.env.ENABLE_OPENAI_COMPAT.toLowerCase() === 'true'
     : config.enableOpenaiCompat;
 
+  // Override CloudFront settings from environment variables
+  const enableCloudFront = process.env.ENABLE_CLOUDFRONT
+    ? process.env.ENABLE_CLOUDFRONT.toLowerCase() === 'true'
+    : config.enableCloudFront;
+
   return {
     ...config,
     platform,
@@ -407,6 +424,7 @@ export function getConfig(environmentName: string = 'dev'): EnvironmentConfig {
     enableWebSearch,
     enableWebFetch,
     enableOpenaiCompat,
+    enableCloudFront,
     ...(process.env.OPENAI_BASE_URL && { openaiBaseUrl: process.env.OPENAI_BASE_URL }),
     ...(process.env.OTEL_EXPORTER_OTLP_ENDPOINT && { otelExporterEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT }),
     ...(process.env.OTEL_EXPORTER_OTLP_PROTOCOL && { otelExporterProtocol: process.env.OTEL_EXPORTER_OTLP_PROTOCOL }),

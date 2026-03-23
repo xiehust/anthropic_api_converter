@@ -84,7 +84,6 @@ export class ECSStack extends cdk.Stack {
       : elbv2.TargetType.IP;
 
     const targetGroup = new elbv2.ApplicationTargetGroup(this, 'TargetGroup', {
-      targetGroupName: `anthropic-proxy-${config.environmentName}-tg`,
       vpc,
       port: config.containerPort,
       protocol: elbv2.ApplicationProtocol.HTTP,
@@ -117,12 +116,10 @@ export class ECSStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    // Generate a short random suffix to prevent role name conflicts
-    const roleSuffix = Math.random().toString(36).substring(2, 8);
-
     // Create Task Execution Role
+    // Note: no explicit roleName — CDK generates a stable, unique name from the construct path.
+    // Explicit names with random suffixes cause replacement on every deploy and orphan old roles.
     const taskExecutionRole = new iam.Role(this, 'TaskExecutionRole', {
-      roleName: `anthropic-proxy-${config.environmentName}-task-execution-${roleSuffix}`,
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy'),
@@ -131,7 +128,6 @@ export class ECSStack extends cdk.Stack {
 
     // Create Task Role
     const taskRole = new iam.Role(this, 'TaskRole', {
-      roleName: `anthropic-proxy-${config.environmentName}-task-${roleSuffix}`,
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
     });
 
@@ -408,10 +404,13 @@ export class ECSStack extends cdk.Stack {
       });
 
       // Admin portal routes with header validation
+      // NOTE: Priorities 15/25 (not 10/20) to avoid conflicts during CloudFormation updates
+      // when transitioning from non-CloudFront rules (priority 10/20) to CloudFront rules.
+      // CloudFormation creates new resources before deleting old ones, so overlapping priorities fail.
       if (config.adminPortalEnabled && this.adminTargetGroup) {
         new elbv2.ApplicationListenerRule(this, 'AdminPortalCloudFrontRule', {
           listener: this.listener,
-          priority: 10,
+          priority: 15,
           conditions: [
             elbv2.ListenerCondition.pathPatterns(['/admin', '/admin/*']),
             elbv2.ListenerCondition.httpHeader('X-CloudFront-Secret', [
@@ -423,7 +422,7 @@ export class ECSStack extends cdk.Stack {
 
         new elbv2.ApplicationListenerRule(this, 'AdminApiCloudFrontRule', {
           listener: this.listener,
-          priority: 20,
+          priority: 25,
           conditions: [
             elbv2.ListenerCondition.pathPatterns(['/api/*']),
             elbv2.ListenerCondition.httpHeader('X-CloudFront-Secret', [
@@ -568,7 +567,6 @@ export class ECSStack extends cdk.Stack {
 
     // Create Fargate Service
     const service = new ecs.FargateService(this, 'Service', {
-      serviceName: `anthropic-proxy-${config.environmentName}`,
       cluster: this.cluster,
       taskDefinition,
       desiredCount: config.ecsDesiredCount,
@@ -787,7 +785,6 @@ export class ECSStack extends cdk.Stack {
     // Note: In bridge networking mode, security groups are applied at EC2 instance level (via ASG),
     // not at the service level. Do not specify securityGroups, vpcSubnets, or assignPublicIp here.
     const service = new ecs.Ec2Service(this, 'Service', {
-      serviceName: `anthropic-proxy-${config.environmentName}`,
       cluster: this.cluster,
       taskDefinition,
       desiredCount: config.ecsDesiredCount,
@@ -946,7 +943,6 @@ export class ECSStack extends cdk.Stack {
 
     // Create Admin Portal Target Group
     const adminTargetGroup = new elbv2.ApplicationTargetGroup(this, 'AdminPortalTargetGroup', {
-      targetGroupName: `admin-portal-${config.environmentName}-tg`,
       vpc,
       port: config.adminPortalContainerPort,
       protocol: elbv2.ApplicationProtocol.HTTP,
@@ -989,7 +985,6 @@ export class ECSStack extends cdk.Stack {
 
     // Create Admin Portal Fargate Service
     const adminService = new ecs.FargateService(this, 'AdminPortalService', {
-      serviceName: `admin-portal-${config.environmentName}`,
       cluster: this.cluster,
       taskDefinition: adminTaskDefinition,
       desiredCount: config.adminPortalMinCapacity,

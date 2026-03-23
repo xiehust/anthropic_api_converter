@@ -338,6 +338,9 @@ export class ECSStack extends cdk.Stack {
           excludePunctuation: true,
           passwordLength: 32,
         },
+        removalPolicy: config.environmentName === 'prod'
+          ? cdk.RemovalPolicy.RETAIN
+          : cdk.RemovalPolicy.DESTROY,
       });
 
       // Create Response Headers Policy with HSTS

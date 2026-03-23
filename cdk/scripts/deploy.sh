@@ -360,8 +360,13 @@ else
     echo -e "${GREEN}Access URLs:${NC}"
     if [[ -n "$CLOUDFRONT_URL" && "$CLOUDFRONT_URL" != "None" ]]; then
         echo -e "  API Proxy (HTTPS): ${CLOUDFRONT_URL}"
-        if [[ -n "$CLOUDFRONT_DOMAIN" && "$CLOUDFRONT_DOMAIN" != "None" ]]; then
-            echo -e "  Admin Portal (HTTPS): https://${CLOUDFRONT_DOMAIN}/admin/"
+        ADMIN_HTTPS_URL=$(aws cloudformation describe-stacks \
+            --stack-name "AnthropicProxy-${ENVIRONMENT}-ECS" \
+            --region "$REGION" \
+            --query 'Stacks[0].Outputs[?OutputKey==`AdminPortalHTTPSURL`].OutputValue' \
+            --output text 2>/dev/null || echo "")
+        if [[ -n "$ADMIN_HTTPS_URL" && "$ADMIN_HTTPS_URL" != "None" ]]; then
+            echo -e "  Admin Portal (HTTPS): ${ADMIN_HTTPS_URL}"
         fi
         echo -e "  ALB (internal HTTP): http://${ALB_DNS}"
     else
@@ -397,7 +402,11 @@ else
         echo -e "  2. Test the health endpoint: curl http://${ALB_DNS}/health"
     fi
     if [[ "$PTC_ENABLED" == "true" ]]; then
-        echo -e "  3. Test PTC health: curl http://${ALB_DNS}/health/ptc"
+        if [[ -n "$CLOUDFRONT_URL" && "$CLOUDFRONT_URL" != "None" ]]; then
+            echo -e "  3. Test PTC health: curl ${CLOUDFRONT_URL}/health/ptc"
+        else
+            echo -e "  3. Test PTC health: curl http://${ALB_DNS}/health/ptc"
+        fi
     fi
     if [[ "$COGNITO_USER_POOL_ID" != "N/A" ]]; then
         echo -e "  4. Create admin user: ./scripts/create-admin-user.sh -e ${ENVIRONMENT} -r ${REGION} --email <admin@example.com>"

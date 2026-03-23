@@ -132,7 +132,7 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     // ECS
     ecsDesiredCount: 1,
     ecsCpu: 1024,          // 1 vCPU
-    ecsMemory: 4096,       // 4 GB
+    ecsMemory: 2048,       // 2 GB
     ecsMinCapacity: 1,
     ecsMaxCapacity: 2,
     ecsTargetCpuUtilization: 70,

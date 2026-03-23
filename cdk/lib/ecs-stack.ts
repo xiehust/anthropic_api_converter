@@ -356,6 +356,11 @@ export class ECSStack extends cdk.Stack {
       });
 
       // Create CloudFront Distribution
+      // NOTE: readTimeout (default 60s, max 180s with quota increase) affects:
+      //   - Streaming: only time-to-first-byte (message_start arrives quickly, so 60s is fine)
+      //   - Non-streaming: entire response generation time (may 504 if Bedrock takes >60s)
+      //   Recommend streaming mode when using CloudFront. For non-streaming with long
+      //   responses, request AWS quota increase via Support Console.
       const distribution = new cloudfront.Distribution(this, 'Distribution', {
         comment: `Anthropic Proxy ${config.environmentName} - HTTPS termination`,
         defaultBehavior: {

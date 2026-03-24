@@ -16,3 +16,4 @@ htmlcov
 node_modules/
 cdk/cdk.context.json
 .worktrees/
+tests_bak/

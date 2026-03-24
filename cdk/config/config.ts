@@ -210,7 +210,7 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     dynamodbBillingMode: 'PAY_PER_REQUEST',
 
     // CloudFront (HTTPS)
-    enableCloudFront: true,
+    enableCloudFront: false,
     cloudFrontOriginReadTimeout: 60,  // Max 60s default; request AWS quota increase for up to 180s
 
     // Logging
@@ -314,7 +314,7 @@ export const environments: { [key: string]: EnvironmentConfigWithoutRuntime } = 
     dynamodbBillingMode: 'PAY_PER_REQUEST',
 
     // CloudFront (HTTPS)
-    enableCloudFront: true,
+    enableCloudFront: false,
     cloudFrontOriginReadTimeout: 60,  // Max 60s default; request AWS quota increase for up to 180s
 
     // Logging

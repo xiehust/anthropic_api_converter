@@ -634,23 +634,16 @@ ECS Tasks (无需修改)
 
 ### 启用方式
 
-CloudFront 在 `dev` 和 `prod` 环境中**默认启用**。部署完成后，输出中会显示 HTTPS URL：
+CloudFront 在 `dev` 和 `prod` 环境中**默认禁用**。通过环境变量启用：
 
 ```bash
-# 部署时自动创建 CloudFront 分发
-./scripts/deploy.sh -e prod -r us-west-2 -p arm64
+# 启用 CloudFront HTTPS 分发
+ENABLE_CLOUDFRONT=true ./scripts/deploy.sh -e prod -r us-west-2 -p arm64
 
 # 部署输出
 # Access URLs:
 #   API Proxy (HTTPS): https://d1234567890.cloudfront.net
 #   Admin Portal (HTTPS): https://d1234567890.cloudfront.net/admin/
-```
-
-通过环境变量覆盖配置中的默认值：
-
-```bash
-# 禁用 CloudFront（回退到 HTTP-only ALB 直连）
-ENABLE_CLOUDFRONT=false ./scripts/deploy.sh -e prod -r us-west-2 -p arm64
 ```
 
 ### 客户端配置
@@ -685,7 +678,7 @@ export ANTHROPIC_API_KEY=sk-xxxx
 
 | 选项 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `enableCloudFront` | boolean | `true` | 启用 CloudFront HTTPS 分发 |
+| `enableCloudFront` | boolean | `false` | 启用 CloudFront HTTPS 分发 |
 | `cloudFrontOriginReadTimeout` | number | `60` | Origin 读取超时（秒），默认最大 60s，申请配额可达 180s |
 
 ### 禁用 CloudFront
@@ -776,7 +769,7 @@ WEB_SEARCH_API_KEY=tvly-your-api-key \
 - 带有 NAT 网关的 VPC
 - ECS Fargate/EC2 集群和服务
 - 应用程序负载均衡器
-- CloudFront HTTPS 分发（默认启用）
+- CloudFront HTTPS 分发（可选，默认禁用）
 - （EC2 模式）Auto Scaling Group 和容量提供程序
 
 部署大约需要 **15-20 分钟**。

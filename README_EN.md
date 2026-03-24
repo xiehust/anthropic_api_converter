@@ -633,23 +633,16 @@ ECS Tasks (unchanged)
 
 ### Enabling CloudFront
 
-CloudFront is **enabled by default** for both `dev` and `prod` environments. After deployment, the output will display HTTPS URLs:
+CloudFront is **disabled by default** for both `dev` and `prod` environments. Enable it via environment variable:
 
 ```bash
-# CloudFront distribution is automatically created during deployment
-./scripts/deploy.sh -e prod -r us-west-2 -p arm64
+# Enable CloudFront HTTPS distribution
+ENABLE_CLOUDFRONT=true ./scripts/deploy.sh -e prod -r us-west-2 -p arm64
 
 # Deployment output
 # Access URLs:
 #   API Proxy (HTTPS): https://d1234567890.cloudfront.net
 #   Admin Portal (HTTPS): https://d1234567890.cloudfront.net/admin/
-```
-
-Override the config default via environment variable:
-
-```bash
-# Disable CloudFront (fall back to HTTP-only direct ALB access)
-ENABLE_CLOUDFRONT=false ./scripts/deploy.sh -e prod -r us-west-2 -p arm64
 ```
 
 ### Client Configuration
@@ -684,7 +677,7 @@ export ANTHROPIC_API_KEY=sk-xxxx
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `enableCloudFront` | boolean | `true` | Enable CloudFront HTTPS distribution |
+| `enableCloudFront` | boolean | `false` | Enable CloudFront HTTPS distribution |
 | `cloudFrontOriginReadTimeout` | number | `60` | Origin read timeout (seconds), default max 60s, up to 180s with quota increase |
 
 ### Disabling CloudFront
@@ -776,7 +769,7 @@ This will deploy:
 - VPC with NAT gateways
 - ECS Fargate/EC2 cluster and service
 - Application Load Balancer
-- CloudFront HTTPS distribution (enabled by default)
+- CloudFront HTTPS distribution (optional, disabled by default)
 - (EC2 mode) Auto Scaling Group and Capacity Provider
 
 Deployment takes approximately **15-20 minutes**.

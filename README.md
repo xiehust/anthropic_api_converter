@@ -39,6 +39,7 @@
 - 🌐 **Web Fetch** - 支持 Anthropic `web_fetch_20250910` / `web_fetch_20260209`，无需额外 API Key 即可抓取网页与 PDF 内容
 - 💰 **成本优化** - 灵活使用 Bedrock 上的开源模型，显著降低推理成本
 - 🔐 **企业级** - 内置 API 密钥管理、速率限制、使用追踪和监控指标
+- 🔒 **HTTPS 加密** - 内置 CloudFront HTTPS 终端，无需自定义域名即可加密所有 API 流量
 - ☁️ **云原生** - 一键部署到 AWS ECS，自动扩展，高可用架构
 - 🎯 **场景广泛** - 适用于开发工具代理、应用集成、模型评测等多种场景
 
@@ -603,8 +604,86 @@ OTEL_TRACE_SAMPLING_RATIO=1.0
 | **VPC Endpoints** | 生产环境配置 Bedrock、DynamoDB、ECR、CloudWatch 私有端点，优化成本和安全性 |
 | **Auto Scaling** | 基于 CPU/内存利用率和请求数自动扩缩容（最小 2，最大 10） |
 | **DynamoDB Tables** | API Keys、Usage、Model Mapping 三张表，PAY_PER_REQUEST 计费 |
-| **Secrets Manager** | 安全存储 Master API Key |
+| **CloudFront** | HTTPS 终端，AWS 托管 TLS 证书，ALB 前置访问控制 |
+| **Secrets Manager** | 安全存储 Master API Key 和 CloudFront 验证密钥 |
 | **CloudWatch Logs** | 集中式日志管理，生产环境启用 Container Insights |
+
+## CloudFront HTTPS 加密
+
+代理服务内置 CloudFront 分发，为所有 API 流量提供 HTTPS 加密。使用 AWS 托管的 `*.cloudfront.net` 证书，**无需自定义域名或 ACM 证书**即可启用 HTTPS。
+
+### 架构
+
+```
+客户端 (Anthropic SDK)
+    │
+    ▼ HTTPS (443)
+CloudFront (*.cloudfront.net)
+    │  - AWS 托管 TLS 证书
+    │  - 添加 X-CloudFront-Secret 验证头
+    │  - HSTS 安全响应头
+    │
+    ▼ HTTP (80, 内部网络)
+ALB (现有)
+    │  - 验证 X-CloudFront-Secret
+    │  - 拒绝直接访问（返回 403）
+    │
+    ▼ HTTP (8000)
+ECS Tasks (无需修改)
+```
+
+### 启用方式
+
+CloudFront 在 `dev` 和 `prod` 环境中**默认禁用**。通过环境变量启用：
+
+```bash
+# 启用 CloudFront HTTPS 分发
+ENABLE_CLOUDFRONT=true ./scripts/deploy.sh -e prod -r us-west-2 -p arm64
+
+# 部署输出
+# Access URLs:
+#   API Proxy (HTTPS): https://d1234567890.cloudfront.net
+#   Admin Portal (HTTPS): https://d1234567890.cloudfront.net/admin/
+```
+
+### 客户端配置
+
+启用 CloudFront 后，将 `ANTHROPIC_BASE_URL` 更新为 HTTPS URL：
+
+```bash
+export CLAUDE_CODE_USE_BEDROCK=0
+export ANTHROPIC_BASE_URL=https://d1234567890.cloudfront.net
+export ANTHROPIC_API_KEY=sk-xxxx
+```
+
+### 安全机制
+
+| 机制 | 说明 |
+|------|------|
+| **HTTPS 加密** | 客户端到 CloudFront 全程 TLS 加密，保护 API Key 和请求数据 |
+| **ALB 访问控制** | ALB 仅接受携带 `X-CloudFront-Secret` 头的请求，拒绝直接访问 |
+| **HSTS** | 强制浏览器使用 HTTPS（`Strict-Transport-Security: max-age=31536000`） |
+| **Secret 自动生成** | Secrets Manager 自动生成 32 位随机验证密钥 |
+
+### 流式与非流式注意事项
+
+| 模式 | CloudFront 行为 | 建议 |
+|------|----------------|------|
+| **流式**（`"stream": true`） | CloudFront 原生支持 SSE，实时转发。超时仅影响首字节时间（`message_start` 通常秒级返回） | **推荐使用** |
+| **非流式** | 超时覆盖整个响应生成时间。默认 60 秒，超时返回 504 | 长响应场景建议切换为流式模式 |
+
+> **提示**：如需支持超过 60 秒的非流式请求，可通过 AWS Support Console 申请提升 CloudFront Origin Read Timeout 配额（最高 180 秒）。
+
+### 配置选项
+
+| 选项 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `enableCloudFront` | boolean | `false` | 启用 CloudFront HTTPS 分发 |
+| `cloudFrontOriginReadTimeout` | number | `60` | Origin 读取超时（秒），默认最大 60s，申请配额可达 180s |
+
+### 禁用 CloudFront
+
+设置 `enableCloudFront: false`（或 `ENABLE_CLOUDFRONT=false`）并重新部署即可回退到 HTTP-only ALB 直连模式。
 
 ## 部署选项快速入门
 
@@ -690,6 +769,7 @@ WEB_SEARCH_API_KEY=tvly-your-api-key \
 - 带有 NAT 网关的 VPC
 - ECS Fargate/EC2 集群和服务
 - 应用程序负载均衡器
+- CloudFront HTTPS 分发（可选，默认禁用）
 - （EC2 模式）Auto Scaling Group 和容量提供程序
 
 部署大约需要 **15-20 分钟**。
@@ -700,8 +780,9 @@ WEB_SEARCH_API_KEY=tvly-your-api-key \
 
 ```text
 Access URLs:
-  API Proxy: http://anthropic-proxy-prod-alb-xxxx.us-west-2.elb.amazonaws.com
-  Admin Portal: http://anthropic-proxy-prod-alb-xxxx.us-west-2.elb.amazonaws.com/admin/
+  API Proxy (HTTPS): https://d1234567890.cloudfront.net
+  Admin Portal (HTTPS): https://d1234567890.cloudfront.net/admin/
+  API Proxy (HTTP, internal): http://anthropic-proxy-prod-alb-xxxx.us-west-2.elb.amazonaws.com
 
 Cognito (Admin Portal Authentication):
   User Pool ID: us-west-2_xxxxxxxxx

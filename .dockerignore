@@ -25,7 +25,8 @@ htmlcov/
 *.swo
 *~
 .DS_Store
-
+tests/captures/
+tests/input.log.json
 # Git
 .git/
 .gitignore

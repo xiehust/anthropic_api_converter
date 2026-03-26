@@ -22,6 +22,13 @@
 
 </div>
 
+## ⚠️注意，当前的repo已经迁移到aws samples官方仓库:
+请前往：
+https://github.com/aws-samples/sample-bedrock-api-proxy#
+
+这个repo将来不久后归档。
+
+
 ## 项目简介
 
 这是一个轻量级的 API 转换服务，让你无需修改代码即可在 Anthropic SDK 中使用 AWS Bedrock 上的各种大语言模型。通过简单的环境变量配置，即可在 Claude Code、Claude Agent SDK 等工具中切换使用 Qwen3、DeepSeek 等不同模型。
